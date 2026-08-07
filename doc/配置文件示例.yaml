@@ -1,0 +1,69 @@
+# 领星同步机 — 配置文件示例
+# 完整字段说明见 doc/03-config.md
+# 此文件进 git（config.yaml 不进 git，gitignore）
+
+# ===== 服务配置 =====
+server:
+  port: 7799
+  secret: "change_this_key"
+
+# ===== 数据库 =====
+database:
+  host: "127.0.0.1"
+  port: 3306
+  user: "lingsync_rw"
+  password: "your_password"
+  db: "lingsync"
+  max_open: 20
+  max_idle: 5
+  conn_timeout_sec: 10
+
+# ===== 领星账号 =====
+# quota_group 默认等于 id；同公司多 app_key 设相同 quota_group 共享限流桶
+accounts:
+  - id: "sc_us"
+    name: "自营-美国"
+    quota_group: "sc_us"
+    app_key: "your_app_key"
+    app_secret: "your_app_secret"
+
+# ===== 接口同步任务 =====
+# rate 字段从领星官方接口文档 Rate Limit 区块原样抄写，不猜测
+endpoints:
+  - name: sc_sales_orders
+    display: "SC 销售订单"
+    account: "sc_us"
+    url: "/openapi/erp/sc/orders/list"
+    table: "ls_sales_orders"
+    record_id_fields: ["order_id"]   # 唯一键；复合主键用多个元素
+    rate:
+      bucket: 5                      # 令牌桶容量（=1 → 串行）
+      interval_ms: 200               # 单店铺调用最小间隔 ms
+      multi_interval_ms: 1000        # 多店铺调用最小间隔 ms
+      dimension: "account+path"      # 领星限流维度
+    cron: "*/10 * * * *"
+    enabled: true
+    window_days: 7
+    extra_params:
+      type: 1                        # FBA=1, FBM=2
+
+  - name: sc_inventory
+    display: "SC FBA 库存"
+    account: "sc_us"
+    url: "/openapi/erp/sc/inventory/list"
+    table: "ls_inventory"
+    record_id_fields: ["fnsku"]
+    rate:
+      bucket: 1                      # bucket=1 → 强制串行翻页
+      interval_ms: 1000
+      multi_interval_ms: 10000
+      dimension: "account+path"
+    cron: "0 */2 * * *"
+    enabled: true
+    window_days: 0                   # 0 = 全量
+
+# ===== 日志留存 =====
+retention:
+  task_logs_days: 90
+  tasks_days: 365
+  cleanup_cron: "0 3 * * *"

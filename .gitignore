@@ -1,0 +1,21 @@
+.DS_Store
+.claude/
+
+# Go 运行产物
+code/config.yaml
+code/lingxing-sync
+code/lingxing-sync.exe
+code/logs/
+*.log
+
+# 过程文件与测试数据
+doc/task_plan.md
+doc/progress.md
+doc/findings.md
+doc/core/task_plan.md
+doc/core/progress.md
+doc/core/findings.md
+doc/core/lessons.md
+**/mock*
+**/*mock*
+doc/core/LINGXING_API_INTEGRATION.md
