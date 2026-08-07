@@ -245,6 +245,110 @@ func QuerySIDsForAccount(db *sqlx.DB, accountID string) ([]string, error) {
 	return sids, nil
 }
 
+// QueryEnabledSIDsForAccount 是 iterate_by_store 真正使用的「账号级同步闸门」。
+//
+// 语义（见 migrations/004）：store_sync_selection 里该账号
+//   - 一行都没有  → 从未配置 → 返回 ls_stores 全部 sid（向后兼容，与 QuerySIDsForAccount 等价）；
+//   - 至少有一行  → 已配置 → 只返回 enabled=1 且仍存在于 ls_stores 的 sid（INNER JOIN 天然剔除已删店铺）。
+//
+// 该闸门在 endpoint.StoreSids 白名单与 per-trigger storeSids 之上游：先过账号级开关，
+// 再过每接口白名单，最后与手动触发交集。返回顺序按 sid 升序，与 QuerySIDsForAccount 一致。
+func QueryEnabledSIDsForAccount(db *sqlx.DB, accountID string) ([]string, error) {
+	var configured int
+	if err := db.Get(&configured,
+		"SELECT COUNT(*) FROM store_sync_selection WHERE account_id = ?", accountID); err != nil {
+		return nil, fmt.Errorf("db.QueryEnabledSIDsForAccount: 查选择表行数 (account=%s) 失败: %w",
+			accountID, err)
+	}
+	if configured == 0 {
+		// 未配置：退回全放行，行为等价 QuerySIDsForAccount。
+		return QuerySIDsForAccount(db, accountID)
+	}
+	var sids []string
+	const q = `
+SELECT s.sid
+FROM ls_stores s
+JOIN store_sync_selection sel
+  ON sel.account_id = s.account_id AND sel.sid = s.sid
+WHERE s.account_id = ? AND sel.enabled = 1
+ORDER BY s.sid ASC`
+	if err := db.Select(&sids, q, accountID); err != nil {
+		return nil, fmt.Errorf("db.QueryEnabledSIDsForAccount: 查启用店铺 (account=%s) 失败: %w",
+			accountID, err)
+	}
+	return sids, nil
+}
+
+// LoadStoreSelection 读某账号的店铺选择态，供配置页给复选框回填初值。
+//
+// 返回 (sid→enabled 映射, configured, error)：
+//   - configured=false 表示该账号从未保存过选择（表中无行）；调用方据此决定默认勾选策略；
+//   - configured=true  时，映射里没有某 sid 表示该新店铺尚未纳入上次保存 → 视作未勾选。
+func LoadStoreSelection(db *sqlx.DB, accountID string) (map[string]bool, bool, error) {
+	type row struct {
+		SID     string `db:"sid"`
+		Enabled bool   `db:"enabled"`
+	}
+	var rows []row
+	const q = "SELECT sid, enabled FROM store_sync_selection WHERE account_id = ?"
+	if err := db.Select(&rows, q, accountID); err != nil {
+		return nil, false, fmt.Errorf("db.LoadStoreSelection: 查选择表 (account=%s) 失败: %w",
+			accountID, err)
+	}
+	m := make(map[string]bool, len(rows))
+	for _, r := range rows {
+		m[r.SID] = r.Enabled
+	}
+	return m, len(rows) > 0, nil
+}
+
+// SaveStoreSelection 覆盖式保存某账号的店铺选择（HTTP handler 单独写，与单写者原则不冲突：
+// store_sync_selection 不是 sync_tasks，worker 只读不写）。
+//
+// enabledSIDs 是「勾选参与同步」的 sid 集合；allSIDs 是配置页当前展示的该账号全部店铺 sid。
+// 事务内先删该账号旧行，再对 allSIDs 每个都写一行（在 enabledSIDs 里→1，否则→0），
+// 从而用「有行」表达「已配置」，用 enabled 表达勾选与否。allSIDs 为空则只清空该账号选择。
+func SaveStoreSelection(db *sqlx.DB, accountID string, allSIDs, enabledSIDs []string) error {
+	enabled := make(map[string]struct{}, len(enabledSIDs))
+	for _, sid := range enabledSIDs {
+		enabled[sid] = struct{}{}
+	}
+
+	tx, err := db.Beginx()
+	if err != nil {
+		return fmt.Errorf("db.SaveStoreSelection: 开事务 (account=%s) 失败: %w", accountID, err)
+	}
+	defer func() { _ = tx.Rollback() }() // 已 Commit 后 Rollback 是 no-op
+
+	if _, err := tx.Exec("DELETE FROM store_sync_selection WHERE account_id = ?", accountID); err != nil {
+		return fmt.Errorf("db.SaveStoreSelection: 清账号旧选择 (account=%s) 失败: %w", accountID, err)
+	}
+
+	if len(allSIDs) > 0 {
+		placeholders := make([]string, 0, len(allSIDs))
+		vals := make([]any, 0, len(allSIDs)*3)
+		for _, sid := range allSIDs {
+			flag := 0
+			if _, ok := enabled[sid]; ok {
+				flag = 1
+			}
+			placeholders = append(placeholders, "(?, ?, ?)")
+			vals = append(vals, accountID, sid, flag)
+		}
+		stmt := "INSERT INTO store_sync_selection (account_id, sid, enabled) VALUES " +
+			strings.Join(placeholders, ", ")
+		if _, err := tx.Exec(stmt, vals...); err != nil {
+			return fmt.Errorf("db.SaveStoreSelection: 写新选择 (account=%s, %d 行) 失败: %w",
+				accountID, len(allSIDs), err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("db.SaveStoreSelection: 提交事务 (account=%s) 失败: %w", accountID, err)
+	}
+	return nil
+}
+
 // StoreSummary 是配置页展示的一条本地店铺摘要。SyncedAt 是本地最近写入时间，
 // 不代表上游领星的实时店铺状态。
 type StoreSummary struct {
@@ -257,6 +361,9 @@ type StoreSummary struct {
 	Status        string    `db:"status" json:"status"`
 	HasAdsSetting bool      `db:"has_ads_setting" json:"has_ads_setting"`
 	SyncedAt      time.Time `db:"synced_at" json:"synced_at"`
+	// Enabled 不来自 ls_stores（db:"-" 让 sqlx 跳过），由 handler 结合 store_sync_selection 注解：
+	// 该账号从未保存选择 → 全部 true（默认全勾）；已保存 → 仅 enabled=1 的店铺为 true。
+	Enabled bool `db:"-" json:"enabled"`
 }
 
 // ListStoresForAccount 返回账号在本地 ls_stores 中的全部店铺，以及最近一条

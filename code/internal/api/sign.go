@@ -87,4 +87,3 @@ func aesECBEncrypt(data, key []byte) ([]byte, error) {
 	}
 	return encrypted, nil
 }
-

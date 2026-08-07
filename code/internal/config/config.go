@@ -31,19 +31,19 @@ type Server struct {
 
 // Database 是 MySQL 连接参数。
 type Database struct {
-	Host            string `yaml:"host"`
-	Port            int    `yaml:"port"`
-	User            string `yaml:"user"`
-	Password        string `yaml:"password"`
-	DB              string `yaml:"db"`
-	MaxOpen         int    `yaml:"max_open"`
-	MaxIdle         int    `yaml:"max_idle"`
-	ConnTimeoutSec  int    `yaml:"conn_timeout_sec"`
+	Host           string `yaml:"host"`
+	Port           int    `yaml:"port"`
+	User           string `yaml:"user"`
+	Password       string `yaml:"password"`
+	DB             string `yaml:"db"`
+	MaxOpen        int    `yaml:"max_open"`
+	MaxIdle        int    `yaml:"max_idle"`
+	ConnTimeoutSec int    `yaml:"conn_timeout_sec"`
 }
 
 // Account 是一个领星账号（按 app_key 分组）。
 type Account struct {
-	ID         string `yaml:"id"`          // 本系统内部 ID，写入每条数据的 account_id 列
+	ID         string `yaml:"id"` // 本系统内部 ID，写入每条数据的 account_id 列
 	Name       string `yaml:"name"`
 	QuotaGroup string `yaml:"quota_group"` // 限流分组；空则等于 ID
 	AppKey     string `yaml:"app_key"`
@@ -69,18 +69,18 @@ type Rate struct {
 
 // Endpoint 是一个「账号+接口」的同步任务定义。
 type Endpoint struct {
-	Name           string            `yaml:"name"`             // 全局唯一任务标识
-	Display        string            `yaml:"display"`          // UI 展示名
-	Account        string            `yaml:"account"`          // 必须匹配某个 Account.ID
-	Path           string            `yaml:"path"`             // 领星 API Path（原样抄）
-	Method         string            `yaml:"method"`           // GET / POST
-	Table          string            `yaml:"table"`            // 目标数据表名
-	RecordIDFields []string          `yaml:"record_id_fields"` // 唯一键字段数组（复合主键用多元素）
-	Rate           Rate              `yaml:"rate"`
-	Cron           string            `yaml:"cron"`
-	Enabled        bool              `yaml:"enabled"`
-	WindowDays     int               `yaml:"window_days"` // 0=全量；>0=滚动 N 天
-	ExtraParams    map[string]any    `yaml:"extra_params"`
+	Name           string         `yaml:"name"`             // 全局唯一任务标识
+	Display        string         `yaml:"display"`          // UI 展示名
+	Account        string         `yaml:"account"`          // 必须匹配某个 Account.ID
+	Path           string         `yaml:"path"`             // 领星 API Path（原样抄）
+	Method         string         `yaml:"method"`           // GET / POST
+	Table          string         `yaml:"table"`            // 目标数据表名
+	RecordIDFields []string       `yaml:"record_id_fields"` // 唯一键字段数组（复合主键用多元素）
+	Rate           Rate           `yaml:"rate"`
+	Cron           string         `yaml:"cron"`
+	Enabled        bool           `yaml:"enabled"`
+	WindowDays     int            `yaml:"window_days"` // 0=全量；>0=滚动 N 天
+	ExtraParams    map[string]any `yaml:"extra_params"`
 
 	// 多店铺迭代（宪法 §10）
 	IsStoreSource  bool     `yaml:"is_store_source"`  // true=店铺来源接口，启动优先同步

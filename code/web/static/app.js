@@ -258,8 +258,9 @@ window.syncManage = function () {
     runningList: [],
     recentTasks: [],
     needRestart: false,   // 结构性变更后显示重启横幅
-    editing: null,        // 正在内联编辑的 endpoint name
-    editBuf: {},          // 编辑缓冲
+    // 定时调度：内联直接编辑（无「编辑」按钮）。scheduleBaseline[name] 存该行加载/保存后的
+    // 基线快照，用于「整行 dirty 判定 + 取消回滚」（复用店铺选择的 baseline 模式，保持一致）。
+    scheduleBaseline: {},
     showAddForm: false,
     addForm: { name: '', display: '', account: '', path: '', method: 'GET', table: '', record_id_fields: '', cron: '', bucket: 1, interval_ms: 200, multi_interval_ms: 0 },
     polling: null,        // T3：5s 轮询句柄（仅手动 Tab 启用）
@@ -302,7 +303,10 @@ window.syncManage = function () {
       // 完整配置（含 cron/rate/store_sids/iterate_by_store），定时调度 Tab 与 T1/T2 都依赖它
       const cfg = await window.apiGet('/api/config').catch(window.toastError);
       if (cfg) {
-        this.schedule = cfg.endpoints || [];
+        // 归一化每行：保证 rate 存在、补 store_sids_text 供内联输入；随后建立 dirty 基线。
+        this.schedule = (cfg.endpoints || []).map(e => this.normalizeRow(e));
+        this.scheduleBaseline = {};
+        for (const e of this.schedule) this.scheduleBaseline[e.name] = this.rowSnap(e);
         // 保留 iterate_by_store/window_days：T1 分组与 T2 网格判定都需要
         this.endpoints = this.schedule.map(e => ({
           name: e.name, display: e.display, account_id: e.account,
@@ -466,39 +470,58 @@ window.syncManage = function () {
       return ({ success: '成功', running: '运行中', error: '失败', cancelled: '已取消' })[status] || status;
     },
 
-    // ---- 定时调度：内联编辑 cron / bucket / interval / store_sids ----
-    startEdit(e) {
-      this.editing = e.name;
-      this.editBuf = {
-        cron: e.cron || '',
-        bucket: e.rate ? e.rate.bucket : 1,
-        interval_ms: e.rate ? e.rate.interval_ms : 200,
-        store_sids_text: (e.store_sids || []).join(',')
-      };
+    // ---- 定时调度：内联直接编辑（cron / bucket / interval / store_sids / enabled）----
+    // 归一化一行，使内联输入可直接 x-model 绑定：保证 rate 对象存在、补 store_sids_text。
+    normalizeRow(e) {
+      const row = Object.assign({}, e);
+      row.rate = Object.assign({ bucket: 1, interval_ms: 200 }, e.rate || {});
+      row.store_sids_text = (e.store_sids || []).join(',');
+      return row;
     },
-    cancelEdit() { this.editing = null; this.editBuf = {}; },
-    async saveEdit(e) {
-      const sids = (this.editBuf.store_sids_text || '').split(',').map(s => s.trim()).filter(Boolean);
+    // 该行「可编辑字段」的可比较快照，用于 dirty 判定与取消回滚（复用店铺选择的基线模式）。
+    rowSnap(e) {
+      return JSON.stringify({
+        cron: e.cron || '',
+        bucket: e.rate ? Number(e.rate.bucket) : 1,
+        interval_ms: e.rate ? Number(e.rate.interval_ms) : 0,
+        store_sids_text: (e.store_sids_text || '').split(',').map(s => s.trim()).filter(Boolean).join(','),
+        enabled: !!e.enabled
+      });
+    },
+    // 整行是否有未保存改动：当前快照 ≠ 基线快照。任意字段（含勾选启用）变化即为脏。
+    rowDirty(e) {
+      const base = this.scheduleBaseline[e.name];
+      return base !== undefined && this.rowSnap(e) !== base;
+    },
+    // 取消：回滚该行到基线（cron/bucket/interval/store_sids_text/enabled）。
+    revertRow(e) {
+      const base = this.scheduleBaseline[e.name];
+      if (base === undefined) return;
+      const b = JSON.parse(base);
+      e.cron = b.cron;
+      e.rate.bucket = b.bucket;
+      e.rate.interval_ms = b.interval_ms;
+      e.store_sids_text = b.store_sids_text;
+      e.enabled = b.enabled;
+    },
+    // 保存该行：沿用既有契约 PUT /api/endpoints/{name}；成功后仅更新本行基线（不整表 reload，
+    // 避免连带丢弃其他行的未保存编辑）。
+    async saveRow(e) {
+      const sids = (e.store_sids_text || '').split(',').map(s => s.trim()).filter(Boolean);
+      // 后端 DisallowUnknownFields：剔除仅前端用的 store_sids_text 辅助字段。
       const body = Object.assign({}, e, {
-        cron: this.editBuf.cron,
-        rate: Object.assign({}, e.rate, { bucket: Number(this.editBuf.bucket), interval_ms: Number(this.editBuf.interval_ms) }),
+        rate: Object.assign({}, e.rate),
         store_sids: sids
       });
+      delete body.store_sids_text;
       const r = await window.apiPut('/api/endpoints/' + encodeURIComponent(e.name), body).catch(window.toastError);
       if (r) {
         if (r.need_restart) { this.needRestart = true; window.toast('info', r.message || '已保存，需重启生效'); }
         else window.toast('success', r.message || '已热加载生效');
-        this.cancelEdit();
-        await this.load();
-      }
-    },
-    async toggleEnable(e) {
-      const body = Object.assign({}, e, { enabled: !e.enabled });
-      const r = await window.apiPut('/api/endpoints/' + encodeURIComponent(e.name), body).catch(window.toastError);
-      if (r) {
-        if (r.need_restart) this.needRestart = true;
-        window.toast('success', (e.enabled ? '已停用 ' : '已启用 ') + (e.display || e.name));
-        await this.load();
+        // 以规范化后的当前值刷新本行（store_sids 数组与文本对齐），并把基线设为当前 → dirty 归零。
+        e.store_sids = sids;
+        e.store_sids_text = sids.join(',');
+        this.scheduleBaseline[e.name] = this.rowSnap(e);
       }
     },
     async deleteEndpoint(e) {
@@ -681,7 +704,6 @@ window.dataSources = function () {
   return {
     endpoints: [],
     connOpen: false,
-    egress: { ip: null, checked_at: null, error: null },
     expanded: null,
     metaLoading: false,
     columns: [],
@@ -690,8 +712,6 @@ window.dataSources = function () {
     async load() {
       const eps = await window.apiGet('/api/endpoints').catch(window.toastError);
       this.endpoints = eps || [];
-      const egress = await window.apiGet('/api/egress-ip').catch(window.toastError);
-      if (egress) this.egress = egress;
     },
     accountOf(e) { return e.account_id || '—'; },
     async toggleExpand(idx) {
@@ -739,9 +759,14 @@ window.settingsApi = function () {
     newForm: { id: '', name: '', quota_group: '', app_key: '', app_secret: '' },
     storeSummary: { total: 0, last_synced_at: null, items: [] },
     storesLoading: false,
+    storeSel: {},          // sid -> bool，复选框工作态
+    storeSelBaseline: {},  // 上次加载/保存后的基线，用于 dirty 判定与取消回滚
+    storeSaving: false,
     needRestart: false,
+    egress: { ip: null, checked_at: null, error: null }, // 同步机出口 IP（从数据源页迁入）
 
     async load() {
+      this.loadEgress(); // 出口 IP 独立拉取（走外网，慢也不阻塞主配置加载）
       const [settings, cfg] = await Promise.all([
         window.apiGet('/api/settings').catch(window.toastError),
         window.apiGet('/api/config').catch(window.toastError)
@@ -775,6 +800,8 @@ window.settingsApi = function () {
       this.selectedAccountId = '';
       this.accountForm = { id: '', name: '', quota_group: '', app_key: '', app_secret: '' };
       this.storeSummary = { total: 0, last_synced_at: null, items: [] };
+      this.storeSel = {};
+      this.storeSelBaseline = {};
     },
     get selectedAccount() { return this.accounts.find(a => a.id === this.selectedAccountId) || null; },
     get schedules() { return this.endpoints.filter(e => e.account === this.selectedAccountId); },
@@ -785,6 +812,10 @@ window.settingsApi = function () {
     statusClass(a) {
       if (!a || !a.token_known) return 'bg-slate-100 text-slate-600';
       return a.token_valid ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700';
+    },
+    async loadEgress() {
+      const egress = await window.apiGet('/api/egress-ip').catch(window.toastError);
+      if (egress) this.egress = egress;
     },
     async testDB() {
       const r = await window.apiPost('/api/settings/test-db', {}).catch(window.toastError);
@@ -851,7 +882,40 @@ window.settingsApi = function () {
       this.storesLoading = true;
       const d = await window.apiGet('/api/accounts/' + encodeURIComponent(this.selectedAccountId) + '/stores').catch(window.toastError);
       this.storesLoading = false;
-      if (d) this.storeSummary = d;
+      if (!d) return;
+      this.storeSummary = d;
+      // 用后端注解的 enabled 回填复选框；预先给每个 sid 建键，x-model 才有稳定的响应式属性。
+      const sel = {};
+      (d.items || []).forEach(s => { sel[s.sid] = !!s.enabled; });
+      this.storeSel = sel;
+      this.storeSelBaseline = Object.assign({}, sel);
+    },
+    get storeSelectedCount() {
+      return Object.values(this.storeSel).filter(Boolean).length;
+    },
+    get storeDirty() {
+      const cur = this.storeSel, base = this.storeSelBaseline;
+      const keys = new Set([...Object.keys(cur), ...Object.keys(base)]);
+      for (const k of keys) {
+        if (!!cur[k] !== !!base[k]) return true;
+      }
+      return false;
+    },
+    cancelStoreSelection() {
+      this.storeSel = Object.assign({}, this.storeSelBaseline);
+    },
+    async saveStoreSelection() {
+      if (!this.selectedAccountId || this.storeSaving) return;
+      const sids = Object.keys(this.storeSel).filter(sid => this.storeSel[sid]);
+      this.storeSaving = true;
+      const r = await window.apiPost(
+        '/api/accounts/' + encodeURIComponent(this.selectedAccountId) + '/stores/selection',
+        { sids }
+      ).catch(window.toastError);
+      this.storeSaving = false;
+      if (!r) return;
+      window.toast('success', r.message || '店铺同步选择已保存');
+      await this.loadStores(); // 以后端为准刷新，基线同步归零 dirty
     },
     async saveSchedule(schedule) {
       const body = Object.assign({}, schedule, {

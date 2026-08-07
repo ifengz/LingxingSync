@@ -1,11 +1,16 @@
 {{/* API 配置：只管理 LingxingSync 已有账号、接口 Cron/限流和本地店铺摘要。 */}}
 
 {{define "content"}}
-<div x-data="settingsApi()" x-init="load()" class="max-w-7xl mx-auto">
-  <div class="flex flex-col gap-3 mb-5 md:flex-row md:items-center md:justify-between">
-    <div>
-      <h1 class="text-xl font-semibold text-slate-900">API 配置</h1>
-      <p class="mt-1 text-sm text-slate-500">账号连接、定时任务与本地店铺摘要</p>
+<div x-data="settingsApi()" x-init="load()" class="mx-auto max-w-6xl">
+  <div class="mb-5 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+    <div class="flex items-center gap-3">
+      <div class="flex h-10 w-10 items-center justify-center rounded-lg bg-brand-50 text-brand-600">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+      </div>
+      <div>
+        <h1 class="text-lg font-bold text-slate-800">API 配置</h1>
+        <p class="mt-0.5 text-xs text-slate-500">账号连接、定时任务与本地店铺摘要</p>
+      </div>
     </div>
     <div class="flex items-center gap-2">
       <span :class="info.db_connected ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'"
@@ -14,6 +19,32 @@
       <button @click="load()" class="border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 px-3 py-1.5 rounded text-sm">刷新配置</button>
       <button @click="testDB()" class="border border-brand-600 text-brand-700 hover:bg-brand-50 px-3 py-1.5 rounded text-sm">测试数据库</button>
     </div>
+  </div>
+
+  <!-- 同步机出口 IP（从数据源页迁入；系统级信息，与账号无关）-->
+  <div class="mb-4 overflow-hidden rounded-lg border border-slate-200 bg-white">
+    <div class="flex items-center gap-2 border-b border-slate-200 px-4 py-3">
+      <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20Z"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>
+      <h2 class="text-sm font-bold text-slate-700">同步机出口 IP</h2>
+      <span class="text-xs text-slate-400">加入领星 IP 白名单时使用</span>
+    </div>
+    <table class="w-full text-sm">
+      <thead class="border-b border-slate-200 bg-slate-50 text-xs font-bold text-slate-500">
+        <tr><th class="px-4 py-2.5 text-left">出口 IP</th><th class="px-4 py-2.5 text-left">检查时间</th><th class="px-4 py-2.5 text-left">状态</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="px-4 py-3 font-mono font-bold text-slate-800" x-text="egress.ip || '未获取'"></td>
+          <td class="px-4 py-3 text-slate-600" x-text="fmtTime(egress.checked_at)"></td>
+          <td class="px-4 py-3">
+            <span :class="egress.error ? 'bg-red-50 text-red-700' : 'bg-emerald-50 text-emerald-700'" class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-bold">
+              <span :class="egress.error ? 'bg-red-500' : 'bg-emerald-500'" class="h-1.5 w-1.5 rounded-full"></span>
+              <span x-text="egress.error || '正常'"></span>
+            </span>
+          </td>
+        </tr>
+      </tbody>
+    </table>
   </div>
 
   <div x-show="needRestart" x-cloak class="mb-4 flex flex-col gap-2 rounded border border-amber-200 bg-amber-50 px-4 py-3 text-amber-900 sm:flex-row sm:items-center sm:justify-between">
@@ -138,9 +169,16 @@
         <div class="flex flex-col gap-2 border-b border-slate-200 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h3 class="text-sm font-semibold text-slate-800">店铺目录摘要</h3>
-            <p class="mt-1 text-xs text-slate-400">读取本地 `ls_stores`，不修改店铺参与同步状态。</p>
+            <p class="mt-1 text-xs text-slate-400">
+              勾选参与后续同步的店铺，保存后仅所选店铺会被拉取。
+              <span class="text-slate-500">已选 <span class="font-medium text-slate-700" x-text="storeSelectedCount"></span> / <span x-text="storeSummary.items.length"></span></span>
+            </p>
           </div>
-          <button @click="loadStores()" :disabled="storesLoading" class="self-start border border-slate-300 text-slate-700 hover:bg-slate-50 disabled:opacity-50 px-3 py-1.5 rounded text-sm sm:self-auto" x-text="storesLoading ? '读取中...' : '刷新摘要'"></button>
+          <div class="flex items-center gap-2 self-start sm:self-auto">
+            <button @click="loadStores()" :disabled="storesLoading || storeSaving" class="border border-slate-300 text-slate-700 hover:bg-slate-50 disabled:opacity-50 px-3 py-1.5 rounded text-sm" x-text="storesLoading ? '读取中...' : '刷新摘要'"></button>
+            <button @click="cancelStoreSelection()" :disabled="!storeDirty || storeSaving" class="border border-slate-300 text-slate-700 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed px-3 py-1.5 rounded text-sm">取消</button>
+            <button @click="saveStoreSelection()" :disabled="!storeDirty || storeSaving" class="border border-brand-600 bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-50 disabled:cursor-not-allowed px-3 py-1.5 rounded text-sm" x-text="storeSaving ? '保存中...' : '保存'"></button>
+          </div>
         </div>
         <div class="overflow-x-auto">
           <table class="min-w-full text-sm">
@@ -152,6 +190,7 @@
                 <th class="px-4 py-2.5 font-medium">国家</th>
                 <th class="px-4 py-2.5 font-medium">状态</th>
                 <th class="px-4 py-2.5 font-medium">本地写入</th>
+                <th class="px-4 py-2.5 font-medium text-right">参与同步</th>
               </tr>
             </thead>
             <tbody class="divide-y divide-slate-100">
@@ -163,10 +202,14 @@
                   <td class="px-4 py-3 text-slate-600" x-text="store.country || '-'"></td>
                   <td class="px-4 py-3 text-slate-600" x-text="store.status || '-'"></td>
                   <td class="px-4 py-3 text-slate-500" x-text="fmtTime(store.synced_at)"></td>
+                  <td class="px-4 py-3 text-right">
+                    <input type="checkbox" x-model="storeSel[store.sid]"
+                           class="h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-600 cursor-pointer">
+                  </td>
                 </tr>
               </template>
               <tr x-show="!storesLoading && storeSummary.items.length === 0">
-                <td colspan="6" class="px-4 py-8 text-center text-sm text-slate-400">暂无本地店铺记录</td>
+                <td colspan="7" class="px-4 py-8 text-center text-sm text-slate-400">暂无本地店铺记录</td>
               </tr>
             </tbody>
           </table>

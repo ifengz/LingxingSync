@@ -35,6 +35,7 @@ func (s *Server) registerConfigRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/accounts/{id}", s.apiUpdateAccount)
 	mux.HandleFunc("DELETE /api/accounts/{id}", s.apiDeleteAccount)
 	mux.HandleFunc("GET /api/accounts/{id}/stores", s.apiAccountStores)
+	mux.HandleFunc("POST /api/accounts/{id}/stores/selection", s.apiSaveStoreSelection)
 	mux.HandleFunc("POST /api/endpoints", s.apiCreateEndpoint)
 	mux.HandleFunc("PUT /api/endpoints/{name}", s.apiUpdateEndpoint)
 	mux.HandleFunc("DELETE /api/endpoints/{name}", s.apiDeleteEndpoint)
@@ -192,6 +193,7 @@ type accountStoresOut struct {
 	AccountID    string            `json:"account_id"`
 	Total        int               `json:"total"`
 	LastSyncedAt *time.Time        `json:"last_synced_at"`
+	Configured   bool              `json:"configured"` // 该账号是否已保存过店铺同步选择（false=从未配置，前端默认全勾）
 	Items        []db.StoreSummary `json:"items"`
 }
 
@@ -370,11 +372,73 @@ func (s *Server) apiAccountStores(w http.ResponseWriter, r *http.Request) {
 		errJSON(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
+	// 用 store_sync_selection 注解每个店铺的 enabled（复选框回填初值）：
+	//   该账号从未保存过选择（configured=false）→ 全部默认勾选（与「空=全放行」一致）；
+	//   已保存 → 映射里 enabled=1 的为勾选，未出现的新店铺视作未勾选。
+	sel, configured, serr := db.LoadStoreSelection(s.dbx, id)
+	if serr != nil {
+		errJSON(w, http.StatusServiceUnavailable, serr.Error())
+		return
+	}
+	for i := range items {
+		if !configured {
+			items[i].Enabled = true
+			continue
+		}
+		items[i].Enabled = sel[items[i].SID]
+	}
 	okJSON(w, accountStoresOut{
 		AccountID:    id,
 		Total:        len(items),
 		LastSyncedAt: lastSyncedAt,
+		Configured:   configured,
 		Items:        items,
+	})
+}
+
+// apiSaveAccountStores 覆盖式保存某账号的「店铺参与同步」选择。
+// 请求体 {sids:[...]} 是勾选参与同步的店铺；后端以本地 ls_stores 的当前店铺全集为准，
+// 对每个店铺写一行（在 sids 里→enabled=1，否则→0），前端传来的未知 sid 自动忽略。
+// 只写 store_sync_selection（系统表），不碰 ls_* 数据表，不触发同步。
+func (s *Server) apiSaveStoreSelection(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if s.cfg == nil || s.cfg.FindAccount(id) == nil {
+		errJSON(w, http.StatusNotFound, "未找到账号: "+id)
+		return
+	}
+	var in struct {
+		SIDs []string `json:"sids"`
+	}
+	if err := decodeJSON(r, &in); err != nil {
+		errJSON(w, http.StatusBadRequest, "请求体格式错误: "+err.Error())
+		return
+	}
+	// 全集以本地 ls_stores 为准，杜绝前端伪造 sid 越权写入。
+	allSIDs, err := db.QuerySIDsForAccount(s.dbx, id)
+	if err != nil {
+		errJSON(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	// 勾选集与全集取交集（忽略不存在于本地的 sid）。
+	valid := make(map[string]struct{}, len(allSIDs))
+	for _, sid := range allSIDs {
+		valid[sid] = struct{}{}
+	}
+	enabled := make([]string, 0, len(in.SIDs))
+	for _, sid := range in.SIDs {
+		if _, ok := valid[sid]; ok {
+			enabled = append(enabled, sid)
+		}
+	}
+	if err := db.SaveStoreSelection(s.dbx, id, allSIDs, enabled); err != nil {
+		errJSON(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	okJSON(w, map[string]any{
+		"account_id": id,
+		"total":      len(allSIDs),
+		"enabled":    len(enabled),
+		"message":    fmt.Sprintf("已保存：%d 个店铺参与后续同步", len(enabled)),
 	})
 }
 

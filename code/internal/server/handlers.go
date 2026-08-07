@@ -381,7 +381,7 @@ func (s *Server) apiSyncTrigger(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if w0.Status().Status == "disabled" {
-		errJSON(w, http.StatusConflict, "接口已禁用，请先在同步管理的定时调度中启用: "+name)
+		errJSON(w, http.StatusConflict, "接口已禁用，请先在同步配置的定时调度中启用: "+name)
 		return
 	}
 	var in syncTriggerIn

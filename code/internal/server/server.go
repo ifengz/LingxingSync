@@ -123,8 +123,8 @@ func sharedFuncs() template.FuncMap {
 		"listItems": func() []navItem {
 			return []navItem{
 				{Key: "settings_api", Href: "/settings/api", Label: "API配置"},
-				{Key: "sync_center", Href: "/", Label: "同步中心"},
-				{Key: "sync_manage", Href: "/sync", Label: "同步管理"},
+				{Key: "sync_center", Href: "/", Label: "概览"},
+				{Key: "sync_manage", Href: "/sync", Label: "同步配置"},
 				{Key: "logs", Href: "/logs", Label: "同步日志"},
 				{Key: "datasources", Href: "/datasources", Label: "数据源"},
 			}
