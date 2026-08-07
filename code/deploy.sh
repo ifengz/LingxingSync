@@ -16,8 +16,10 @@ BRANCH="${BRANCH:-main}"
 APP="${APP:-lingxing-sync}"
 PORT="${PORT:-7799}"
 
-# Go 可能不在 WebHook 的 PATH 里，显式补上常见安装路径
-export PATH="/usr/local/go/bin:/usr/local/bin:${PATH}"
+# Go 与 supervisorctl 可能不在 WebHook/脚本的 PATH 里，显式补上常见安装路径。
+# 宝塔把 supervisor 装在面板 pyenv 里（/www/server/panel/pyenv/bin），非标准 PATH，
+# 交互式终端能找到但脚本环境找不到，故在此显式加入。
+export PATH="/usr/local/go/bin:/usr/local/bin:/www/server/panel/pyenv/bin:${PATH}"
 # Go 编译缓存/模块目录，避免落到 www 用户没权限的地方
 export GOCACHE="${GOCACHE:-${CODE_DIR}/.gocache}"
 
