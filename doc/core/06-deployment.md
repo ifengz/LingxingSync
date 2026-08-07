@@ -180,7 +180,7 @@ curl http://127.0.0.1:7799/api/status
 
 ```bash
 # 实时日志
-tail -f /www/wwwroot/lingxing-sync/logs/stdout.log
+tail -f /www/wwwroot/lingxing-sync/code/logs/stdout.log
 
 # 宝塔面板：软件商店 → Supervisor → 对应进程 → 日志
 ```
