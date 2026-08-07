@@ -54,6 +54,11 @@ func TestFetchMapsVCStoreFields(t *testing.T) {
 	if got["sid"] != "13461850906074624" || got["store_name"] != "clicktech-India vc" || got["country"] != "IN" || got["store_type"] != "VC" {
 		t.Fatalf("VC store mapping = %#v", got)
 	}
+	// VC 接口不返回 has_ads_setting，但 ls_stores 该列 NOT NULL，
+	// normalizeStoreRows 必须补默认值 0，否则 UpsertRows 会写 NULL 失败。
+	if got["has_ads_setting"] != int64(0) {
+		t.Fatalf("VC has_ads_setting default = %#v, want int64(0)", got["has_ads_setting"])
+	}
 }
 
 func TestFetchRejectsVCStoreWithoutStoreID(t *testing.T) {

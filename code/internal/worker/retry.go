@@ -16,16 +16,24 @@ package worker
 import (
 	"context"
 	"errors"
+	"log"
 	"net/http"
 	"net/url"
+	"time"
+
+	"lingxing-sync/internal/api"
 )
 
 // 抓取重试参数。故意用常量而非配置：重试是「抗抖动」而非「调优旋钮」，
-// 加配置项反而违背 §3「加接口极简单」。如需按接口调，再提到 config 层。
+// 加配置项反而违背 §3「加接口极简单」。此取舍与最高价值同语言参考仓
+// QQiot/lingxing 一致——它把 retryCount/waitTime 写死进 client，不做 per-endpoint
+// 覆盖，只对 429 / 限流 / token 过期码重试（见 otherlingxinggithub.md §1/§3）。
+// 如需按接口调，再提到 config 层。
 const (
 	// maxFetchRetries 是单页抓取失败后的最大重试次数（不含首次）。
 	maxFetchRetries = 3
-	// fetchRetryBaseDelayMs 是指数退避的基数：第 n 次重试等待 base*2^(n-1) ms。
+	// fetchRetryBaseDelayMs 是指数退避的基数：第 n 次重试等待 base*2^n ms
+	// （attempt 从 0 计：0→base, 1→2*base, 2→4*base）。
 	fetchRetryBaseDelayMs = 500
 )
 
@@ -58,4 +66,56 @@ func retryableFetchFailure(ctx context.Context, httpStatus int, err error) bool 
 	}
 	// 其余（4xx 客户端错误、业务契约错误）不重试，fail-loud。
 	return false
+}
+
+// backoffDelay 返回第 attempt 次重试前的退避时长（attempt 从 0 计）：base * 2^attempt。
+// 不加随机抖动——单进程内同 (quota_group,path) 已由 limiter 串行/令牌桶天然错开，
+// 退避只为给上游喘息，无需再抖动去同步化。
+func backoffDelay(attempt int) time.Duration {
+	d := time.Duration(fetchRetryBaseDelayMs) * time.Millisecond
+	for i := 0; i < attempt; i++ {
+		d *= 2
+	}
+	return d
+}
+
+// fetchPageWithRetry 抓取一页，对「可恢复失败」做指数退避重试。
+//
+// 宪法「各接口独立」：整个重试完全内包在本 worker 这一次翻页里，退避 sleep 只阻塞
+// 自己这个 goroutine，绝不牵动别的接口。
+//
+// 关键约束（用户明确要求 + otherlingxinggithub.md §3）：每次尝试（含每次重试）都先过
+// 同一个 (quota_group,path) limiter.Wait——退避叠加在限流之上，重试绝不绕开限流去踩
+// 踏上游配额。ctx 取消/超时在退避与限流等待处都会即时返回，不续命。
+//
+// 返回最后一次尝试的 (result, httpStatus, apiCode, durationMs, err)。durationMs 是含
+// 所有重试与退避的墙钟耗时（落 sync_task_logs 时体现真实代价）。
+func (w *EndpointWorker) fetchPageWithRetry(ctx context.Context, limiter *Limiter, method, path string, params map[string]any) (*api.FetchResult, int, int, int, error) {
+	start := time.Now()
+	for attempt := 0; ; attempt++ {
+		// 每次尝试前都要过限流器（重试也不例外）。
+		if werr := limiter.Wait(ctx); werr != nil {
+			return nil, 0, 0, int(time.Since(start).Milliseconds()), werr
+		}
+
+		result, httpStatus, apiCode, err := w.Client.Fetch(ctx, method, path, params)
+		if err == nil {
+			return result, httpStatus, apiCode, int(time.Since(start).Milliseconds()), nil
+		}
+
+		// 不可重试，或已到最大重试次数：把最后一次错误抛回调用方 fail-loud。
+		if attempt >= maxFetchRetries || !retryableFetchFailure(ctx, httpStatus, err) {
+			return nil, httpStatus, apiCode, int(time.Since(start).Milliseconds()), err
+		}
+
+		// 可恢复失败且仍有重试额度：退避后再来。退避期间监听 ctx，取消则立刻返回。
+		delay := backoffDelay(attempt)
+		log.Printf("[worker:%s] 抓取可恢复失败，第 %d/%d 次重试前退避 %s: %v (http=%d)",
+			w.Endpoint.Name, attempt+1, maxFetchRetries, delay, err, httpStatus)
+		select {
+		case <-ctx.Done():
+			return nil, httpStatus, apiCode, int(time.Since(start).Milliseconds()), ctx.Err()
+		case <-time.After(delay):
+		}
+	}
 }

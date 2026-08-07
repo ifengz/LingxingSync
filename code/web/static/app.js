@@ -262,7 +262,9 @@ window.syncManage = function () {
     // 基线快照，用于「整行 dirty 判定 + 取消回滚」（复用店铺选择的 baseline 模式，保持一致）。
     scheduleBaseline: {},
     showAddForm: false,
-    addForm: { name: '', display: '', account: '', path: '', method: 'GET', table: '', record_id_fields: '', cron: '', bucket: 1, interval_ms: 200, multi_interval_ms: 0 },
+    // 保守限流默认：桶 1 / 间隔 1000ms（对齐 otherlingxinggithub.md §3「业务 API ≥0.6s」留足余量）。
+    // extra_params_text 是 JSON 文本输入，保存时解析成对象；解析失败拦截不发请求。
+    addForm: { name: '', display: '', account: '', path: '', method: 'GET', table: '', record_id_fields: '', cron: '', bucket: 1, interval_ms: 1000, multi_interval_ms: 0, window_days: 0, iterate_by_store: false, store_param_name: '', extra_params_text: '' },
     polling: null,        // T3：5s 轮询句柄（仅手动 Tab 启用）
 
     // Alpine 自动调一次（早于模板里的 x-init="load()"）。
@@ -273,9 +275,19 @@ window.syncManage = function () {
           for (const acc of this.storeAccounts) this.ensureStores(acc);
         });
       }
-      // T3：默认手动 Tab，进入即每 5s 轮询「最近同步任务」+ 运行态。
+      // 概览「添加接口」深链：/sync?tab=schedule&add=1 → 直接落到定时调度 Tab 并展开添加表单。
+      // 不复制表单到概览，只把用户引导到唯一的添加入口（CLAUDE.md：不重复配置逻辑）。
+      const q = new URLSearchParams(window.location.search);
+      if (q.get('tab') === 'schedule') this.tab = 'schedule';
+      if (q.get('add') === '1') { this.tab = 'schedule'; this.showAddForm = true; }
+      // T3：仅手动 Tab 轮询「最近同步任务」+ 运行态；schedule Tab 不轮询，避免无谓请求。
       // 轮询失败由 loadRunning/loadRecentTasks 内的 toastError 静默吞掉。
-      this.startPolling();
+      if (this.tab === 'manual') this.startPolling();
+    },
+    // blankAddForm 返回添加表单的初始/重置态：与 data 里的 addForm 初值保持一致，
+    // 保存成功后调用它清空表单（保守限流默认桶 1 / 间隔 1000ms）。
+    blankAddForm() {
+      return { name: '', display: '', account: '', path: '', method: 'GET', table: '', record_id_fields: '', cron: '', bucket: 1, interval_ms: 1000, multi_interval_ms: 0, window_days: 0, iterate_by_store: false, store_param_name: '', extra_params_text: '' };
     },
     destroy() {
       // Alpine 组件卸载时清 timer，避免切页泄漏
@@ -535,20 +547,36 @@ window.syncManage = function () {
       if (!f.name || !f.account || !f.path || !f.table || !f.record_id_fields || !f.cron) {
         window.toast('warn', '请填写 标识/账号/Path/表/唯一键/Cron'); return;
       }
+      // extra_params 选填：留空 = 不带固定参数；填了必须是合法 JSON 对象（如 {"type":1}）。
+      let extraParams;
+      const raw = (f.extra_params_text || '').trim();
+      if (raw) {
+        try {
+          extraParams = JSON.parse(raw);
+        } catch (e) {
+          window.toast('warn', 'extra_params 不是合法 JSON：' + e.message); return;
+        }
+        if (extraParams === null || typeof extraParams !== 'object' || Array.isArray(extraParams)) {
+          window.toast('warn', 'extra_params 必须是 JSON 对象，如 {"type":1}'); return;
+        }
+      }
       const body = {
         name: f.name, display: f.display || f.name, account: f.account,
         path: f.path, method: f.method, table: f.table,
         record_id_fields: f.record_id_fields.split(',').map(s => s.trim()).filter(Boolean),
-        cron: f.cron, enabled: true, window_days: 0,
+        cron: f.cron, enabled: true, window_days: Number(f.window_days) || 0,
         rate: { bucket: Number(f.bucket), interval_ms: Number(f.interval_ms), multi_interval_ms: Number(f.multi_interval_ms), dimension: 'account+path' },
+        iterate_by_store: !!f.iterate_by_store,
+        store_param_name: f.iterate_by_store ? (f.store_param_name || '') : '',
         store_sids: []
       };
+      if (extraParams) body.extra_params = extraParams;
       const r = await window.apiPost('/api/endpoints', body).catch(window.toastError);
       if (r) {
         if (r.need_restart) this.needRestart = true;
         window.toast('success', r.message || '已添加，需重启生效');
         this.showAddForm = false;
-        this.addForm = { name: '', display: '', account: '', path: '', method: 'GET', table: '', record_id_fields: '', cron: '', bucket: 1, interval_ms: 200, multi_interval_ms: 0 };
+        this.addForm = this.blankAddForm();
         await this.load();
       }
     },
@@ -765,7 +793,9 @@ window.settingsApi = function () {
     storeSelBaseline: {},  // 上次加载/保存后的基线，用于 dirty 判定与取消回滚
     storeSaving: false,
     needRestart: false,
-    egress: { ip: null, checked_at: null, error: null }, // 同步机出口 IP（从数据源页迁入）
+    egress: { ip: null, source: null, sources: [], checked_at: null, error: null }, // 同步机出口 IP（从数据源页迁入）
+    egressTestSource: '',  // 下拉选中的探测源
+    egressTesting: false,
 
     async load() {
       this.loadEgress(); // 出口 IP 独立拉取（走外网，慢也不阻塞主配置加载）
@@ -818,7 +848,21 @@ window.settingsApi = function () {
     },
     async loadEgress() {
       const egress = await window.apiGet('/api/egress-ip').catch(window.toastError);
-      if (egress) this.egress = egress;
+      if (egress) {
+        this.egress = egress;
+        if (!this.egressTestSource && egress.sources && egress.sources.length) {
+          this.egressTestSource = egress.sources[0];
+        }
+      }
+    },
+    async testEgressSource() {
+      if (!this.egressTestSource || this.egressTesting) return;
+      this.egressTesting = true;
+      const r = await window.apiGet('/api/egress-ip?source=' + encodeURIComponent(this.egressTestSource)).catch(window.toastError);
+      this.egressTesting = false;
+      if (!r) return;
+      this.egress = r;
+      window.toast(r.ip ? 'success' : 'error', r.ip ? ('出口 IP: ' + r.ip) : (r.error || '探测失败'));
     },
     async testDB() {
       const r = await window.apiPost('/api/settings/test-db', {}).catch(window.toastError);

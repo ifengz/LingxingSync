@@ -82,3 +82,29 @@ endpoints:
 		t.Fatal("duplicate quota_group+path was accepted")
 	}
 }
+
+func TestConflictingLimiterKey(t *testing.T) {
+	// 两个账号共享同一 quota_group，故同 path 会落到同一个限流桶。
+	cfg := &Config{
+		Accounts: []Account{
+			{ID: "key1", QuotaGroup: "sc_us", AppKey: "k1", AppSecret: "s1"},
+			{ID: "key2", QuotaGroup: "sc_us", AppKey: "k2", AppSecret: "s2"},
+		},
+		Endpoints: []Endpoint{
+			{Name: "orders", Account: "key1", Path: "/orders"},
+		},
+	}
+
+	// 同分组同 path（即便账号不同）→ 冲突，命中已有 orders。
+	if owner, dup := cfg.ConflictingLimiterKey(Endpoint{Name: "orders_dup", Account: "key2", Path: "/orders"}); !dup || owner != "orders" {
+		t.Fatalf("shared quota_group + same path: got (%q,%v), want (\"orders\",true)", owner, dup)
+	}
+	// 同账号不同 path → 不冲突。
+	if _, dup := cfg.ConflictingLimiterKey(Endpoint{Name: "inv", Account: "key1", Path: "/inventory"}); dup {
+		t.Fatal("different path should not conflict")
+	}
+	// 同名（更新自身）→ 豁免，不把自己判成冲突。
+	if _, dup := cfg.ConflictingLimiterKey(Endpoint{Name: "orders", Account: "key1", Path: "/orders"}); dup {
+		t.Fatal("same-name endpoint (update) must be exempt from self-conflict")
+	}
+}

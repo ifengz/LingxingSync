@@ -81,47 +81,6 @@ type Rate struct {
 	Dimension       string `yaml:"dimension"`         // 限流维度，通常 "account+path"
 }
 
-// Retry 是单个接口「单次请求」的重试策略。宪法「各接口独立」硬要求的一部分：
-// 重试完全内包在该 endpoint 自己的 Worker 里，只重试**可恢复**的失败（网络错误、
-// HTTP 429、HTTP 5xx），业务合同错误（4xx / 领星非 0 code）绝不重试；每次重试前
-// 仍要重新经过该接口自己的 limiter（参考 otherlingxinggithub.md §3 指数退避）。
-//
-// 空零值经 withDefaults 补全为保守默认，既有接口无需改配置即可获得重试能力。
-type Retry struct {
-	MaxAttempts  int `yaml:"max_attempts"`   // 单页最大尝试次数（含首次）；<=1 表示不重试
-	BackoffMs    int `yaml:"backoff_ms"`     // 首次退避基数（毫秒），随尝试次数指数增长
-	MaxBackoffMs int `yaml:"max_backoff_ms"` // 退避上限（毫秒），封顶指数增长
-}
-
-// 重试默认值（保守）：最多 3 次尝试、1s 起退避、封顶 30s。
-const (
-	DefaultRetryMaxAttempts  = 3
-	DefaultRetryBackoffMs    = 1000
-	DefaultRetryMaxBackoffMs = 30000
-)
-
-// withDefaults 返回补全零值后的 Retry：任一字段为 0（YAML 未填）都退回保守默认，
-// 这样既有 endpoint 不改配置也自动拥有重试能力。MaxAttempts<0 归一到 0（不重试）。
-func (r Retry) withDefaults() Retry {
-	out := r
-	if out.MaxAttempts == 0 {
-		out.MaxAttempts = DefaultRetryMaxAttempts
-	}
-	if out.MaxAttempts < 0 {
-		out.MaxAttempts = 0
-	}
-	if out.BackoffMs <= 0 {
-		out.BackoffMs = DefaultRetryBackoffMs
-	}
-	if out.MaxBackoffMs <= 0 {
-		out.MaxBackoffMs = DefaultRetryMaxBackoffMs
-	}
-	if out.MaxBackoffMs < out.BackoffMs {
-		out.MaxBackoffMs = out.BackoffMs
-	}
-	return out
-}
-
 // Endpoint 是一个「账号+接口」的同步任务定义。
 type Endpoint struct {
 	Name           string         `yaml:"name"`             // 全局唯一任务标识
@@ -132,7 +91,6 @@ type Endpoint struct {
 	Table          string         `yaml:"table"`            // 目标数据表名
 	RecordIDFields []string       `yaml:"record_id_fields"` // 唯一键字段数组（复合主键用多元素）
 	Rate           Rate           `yaml:"rate"`
-	Retry          Retry          `yaml:"retry"` // 单接口重试策略（空零值经 Load 补全为保守默认）
 	Cron           string         `yaml:"cron"`
 	Enabled        bool           `yaml:"enabled"`
 	WindowDays     int            `yaml:"window_days"` // 0=全量；>0=滚动 N 天
@@ -143,6 +101,11 @@ type Endpoint struct {
 	IterateByStore bool     `yaml:"iterate_by_store"` // true=对每个 sid 跑一次
 	StoreParamName string   `yaml:"store_param_name"` // 迭代时注入的参数名，默认 sid
 	StoreSids      []string `yaml:"store_sids"`       // 店铺白名单：空=同步该账号全部 sid；非空=只同步列出的 sid（仅 iterate_by_store 生效）
+
+	// 探测模式（临时）：true 时不要求目标表存在，worker 跳过建表断言与 Upsert，
+	// 仅把领星返回的原始 JSON 存进 sync_task_logs.error_raw，用于摸清真实字段名后再正式建表。
+	// 去掉 probe（或 false）即恢复正式同步。非生产运行态，仅在接入新接口时使用。
+	Probe bool `yaml:"probe"`
 }
 
 // Retention 是日志留存策略。
@@ -192,11 +155,6 @@ func Load(path string) (*Config, error) {
 			c.Accounts[i].ConnectionCheck = DefaultConnectionCheck()
 		}
 	}
-	// 每个接口的重试策略补全保守默认：既有接口 YAML 里没写 retry: 也自动获得重试能力，
-	// 无需回头改配置（对应 CLAUDE.md「加接口极简单」+ otherlingxinggithub.md §3）。
-	for i := range c.Endpoints {
-		c.Endpoints[i].Retry = c.Endpoints[i].Retry.withDefaults()
-	}
 	if err := c.validate(); err != nil {
 		return nil, err
 	}
@@ -245,8 +203,9 @@ func (c *Config) validate() error {
 		if e.Path == "" || e.Method == "" || e.Table == "" {
 			return fmt.Errorf("endpoint %s 缺 path/method/table", e.Name)
 		}
-		if len(e.RecordIDFields) == 0 {
-			return fmt.Errorf("endpoint %s 缺 record_id_fields", e.Name)
+		// 探测模式放松：record_id_fields 可空（表还没建，主键未定）。
+		if !e.Probe && len(e.RecordIDFields) == 0 {
+			return fmt.Errorf("endpoint %s 缺 record_id_fields（或改用 probe:true 探测字段）", e.Name)
 		}
 		if e.Rate.Bucket <= 0 || e.Rate.IntervalMs <= 0 || e.Rate.Dimension == "" {
 			return fmt.Errorf("endpoint %s 的 rate.bucket/interval_ms/dimension 必填且 >0", e.Name)
@@ -257,16 +216,17 @@ func (c *Config) validate() error {
 		key := c.limiterKey(e)
 		if owner, dup := limiterKeyOwner[key]; dup {
 			return fmt.Errorf("endpoint %s 与 %s 的限流键 (quota_group=%s, path=%s) 重复；换 path 或换 quota_group，勿共享同一限流桶",
-				e.Name, owner, c.quotaGroupOf(e.Account), e.Path)
+				e.Name, owner, c.QuotaGroupOf(e.Account), e.Path)
 		}
 		limiterKeyOwner[key] = e.Name
 	}
 	return nil
 }
 
-// quotaGroupOf 返回某 endpoint 账号生效的限流分组：账号存在则取其 QuotaGroupOrID，
+// QuotaGroupOf 返回某 endpoint 账号生效的限流分组：账号存在则取其 QuotaGroupOrID，
 // 否则退回原始 account 字段（此时上游已因 account 不存在报错，仅作兜底不 panic）。
-func (c *Config) quotaGroupOf(accountID string) string {
+// 导出供 server 层拼装「限流键冲突」的用户可读报错。
+func (c *Config) QuotaGroupOf(accountID string) string {
 	if a := c.FindAccount(accountID); a != nil {
 		return a.QuotaGroupOrID()
 	}
@@ -277,7 +237,26 @@ func (c *Config) quotaGroupOf(accountID string) string {
 // 内部的 key 拼法保持一致（quotaGroup + "|" + path），保证「配置校验」与「运行时共享桶」
 // 判定同一件事。
 func (c *Config) limiterKey(e Endpoint) string {
-	return c.quotaGroupOf(e.Account) + "|" + e.Path
+	return c.QuotaGroupOf(e.Account) + "|" + e.Path
+}
+
+// ConflictingLimiterKey 返回 cfg 中已存在的、与 e 共享同一 (quota_group, path) 限流键的
+// 接口名；无冲突返回 ("", false)。给 server 层「创建/更新接口」做前置校验，让用户在写盘前
+// 就拿到干净的报错（不带 validate 的 "校验新配置:" 包装前缀）。与 validate() 复用同一套
+// limiterKey 逻辑，保证「前置校验」与「落盘校验」判定完全一致。
+//
+// 忽略与 e 同名的接口：更新场景下 e 自身已在 cfg.Endpoints 里，不能把自己判成冲突。
+func (c *Config) ConflictingLimiterKey(e Endpoint) (string, bool) {
+	key := c.limiterKey(e)
+	for _, other := range c.Endpoints {
+		if other.Name == e.Name {
+			continue
+		}
+		if c.limiterKey(other) == key {
+			return other.Name, true
+		}
+	}
+	return "", false
 }
 
 // FindAccount 按 ID 查找账号，找不到返回 nil。

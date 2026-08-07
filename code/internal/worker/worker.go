@@ -17,8 +17,11 @@ package worker
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
+	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -80,14 +83,19 @@ type EndpointWorker struct {
 
 // New 构造一个 EndpointWorker。
 // 启动断言：调 db.GetTableColumns 缓存 Columns，缺表返回 error（fail-loud）。
+// 例外：endpoint.Probe=true 时跳过建表断言（探测模式，表尚未建，仅摸字段名）。
 // 限流器从 Limiters 注册表取（同 (quota_group, path) 共享）。
 func New(ep config.Endpoint, acc config.Account, client *api.Client, dbx *sqlx.DB, reg *LimiterRegistry) (*EndpointWorker, error) {
-	cols, err := db.GetTableColumns(dbx, ep.Table)
-	if err != nil {
-		return nil, fmt.Errorf("worker %s: 读表 %s 列定义失败: %w", ep.Name, ep.Table, err)
-	}
-	if len(cols) == 0 {
-		return nil, fmt.Errorf("worker %s: 表 %s 无列定义（建表了吗？）", ep.Name, ep.Table)
+	var cols []string
+	if !ep.Probe {
+		c, err := db.GetTableColumns(dbx, ep.Table)
+		if err != nil {
+			return nil, fmt.Errorf("worker %s: 读表 %s 列定义失败: %w", ep.Name, ep.Table, err)
+		}
+		if len(c) == 0 {
+			return nil, fmt.Errorf("worker %s: 表 %s 无列定义（建表了吗？）", ep.Name, ep.Table)
+		}
+		cols = c
 	}
 	// 预热限流器（同 key 共享桶，Get 即创建）
 	reg.Get(acc.QuotaGroupOrID(), ep.Path, ep.Rate.Bucket, ep.Rate.IntervalMs)
@@ -380,13 +388,6 @@ func (w *EndpointWorker) fetchAllPages(ctx context.Context, taskID int64, params
 			return totalRecords, pages, false
 		}
 
-		// 限流（每页前等）
-		if err := limiter.Wait(ctx); err != nil {
-			// ctx 取消
-			log.Printf("[worker:%s] 限流等待被取消: %v", w.Endpoint.Name, err)
-			return totalRecords, pages, false
-		}
-
 		// 注入分页参数（拷贝避免复用底层 map）
 		pageParams := make(map[string]any, len(params)+2)
 		for k, v := range params {
@@ -395,38 +396,11 @@ func (w *EndpointWorker) fetchAllPages(ctx context.Context, taskID int64, params
 		pageParams["offset"] = offset
 		pageParams["length"] = pageSize
 
-		// 抓取（含可恢复失败重试）：网络抖动/429/5xx 退避重试，退避期间仍走
-		// 同一个 (quota_group,path) 桶，避免重试风暴踩踏限流。4xx/业务错/取消
-		// 不重试（见 retryableFetchFailure），fail-loud 交由下方错误分支处理。
-		start := time.Now()
-		var (
-			result     *api.FetchResult
-			httpStatus int
-			apiCode    int
-			err        error
-		)
-		for attempt := 0; ; attempt++ {
-			result, httpStatus, apiCode, err = w.Client.Fetch(ctx, w.Endpoint.Method, w.Endpoint.Path, pageParams)
-			if err == nil || attempt >= maxFetchRetries || !retryableFetchFailure(ctx, httpStatus, err) {
-				break
-			}
-			backoff := time.Duration(fetchRetryBaseDelayMs*(1<<attempt)) * time.Millisecond
-			log.Printf("[worker:%s] Fetch 可恢复失败 offset=%d attempt=%d/%d: %v (http=%d code=%d)，%v 后重试",
-				w.Endpoint.Name, offset, attempt+1, maxFetchRetries, err, httpStatus, apiCode, backoff)
-			select {
-			case <-ctx.Done():
-				err = ctx.Err()
-			case <-time.After(backoff):
-				// 退避后重新过桶，保持限流语义。
-				if werr := limiter.Wait(ctx); werr != nil {
-					err = werr
-				}
-			}
-			if ctx.Err() != nil {
-				break
-			}
-		}
-		durationMs := int(time.Since(start).Milliseconds())
+		// 抓取（含限流 + 可恢复失败重试）：每次尝试（含每次重试）都先过同一个
+		// (quota_group,path) 桶；网络抖动/429/5xx 指数退避重试，4xx/业务错/取消
+		// 不重试（见 fetchPageWithRetry / retryableFetchFailure），fail-loud 交由
+		// 下方错误分支处理。整个重试内包在本 goroutine，绝不牵动别的接口。
+		result, httpStatus, apiCode, durationMs, err := w.fetchPageWithRetry(ctx, limiter, w.Endpoint.Method, w.Endpoint.Path, pageParams)
 
 		// 错误处理：记日志后中止本接口
 		if err != nil {
@@ -434,6 +408,18 @@ func (w *EndpointWorker) fetchAllPages(ctx context.Context, taskID int64, params
 			log.Printf("[worker:%s] Fetch 出错 offset=%d: %v (http=%d code=%d)",
 				w.Endpoint.Name, offset, err, httpStatus, apiCode)
 			return totalRecords, pages, false
+		}
+
+		// 探测模式：不落库，把原始响应 JSON 存进 task_logs.error_raw 供读字段名。
+		// 首页样本足够（字段名前后页一致），存一页即停。
+		if w.Endpoint.Probe {
+			sample := probeSample(result)
+			_ = db.InsertTaskLog(w.DB, taskID, pages+1, httpStatus, apiCode, len(result.List), durationMs, sample)
+			log.Printf("[worker:%s] 探测模式 offset=%d: 抓到 %d 行，原始 JSON 已存 task_logs",
+				w.Endpoint.Name, offset, len(result.List))
+			totalRecords += len(result.List)
+			pages++
+			return totalRecords, pages, true
 		}
 
 		// 落库（空列表跳过）
@@ -456,6 +442,26 @@ func (w *EndpointWorker) fetchAllPages(ctx context.Context, taskID int64, params
 		}
 		offset += pageSize
 	}
+}
+
+// probeSample 把探测模式抓到的结果拼成一段可读字符串存进 task_logs.error_raw，
+// 便于离线读出领星返回的真实字段名。包含：首行样本 + 全量字段名清单 + 原始 JSON。
+func probeSample(result *api.FetchResult) string {
+	var sb strings.Builder
+	sb.WriteString("PROBE sample\n")
+	if len(result.List) > 0 {
+		keys := make([]string, 0, len(result.List[0]))
+		for k := range result.List[0] {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		sb.WriteString("fields=" + strings.Join(keys, ",") + "\n")
+		if b, err := json.Marshal(result.List[0]); err == nil {
+			sb.WriteString("first_row=" + string(b) + "\n")
+		}
+	}
+	sb.WriteString("raw=" + string(result.Raw))
+	return sb.String()
 }
 
 // baseParams 构造一个店铺无关的基础参数集合：

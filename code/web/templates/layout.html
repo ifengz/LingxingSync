@@ -11,7 +11,7 @@
     提供 toast / confirm / apiGet / apiPost 等全局能力（见 web/static/app.js）。
 */}}
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" class="tw-booting">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -37,7 +37,29 @@
   <script src="/static/app.js"></script>
   <style>
     [x-cloak]{display:none!important}
+    /* 防 FOUC：Tailwind CDN 是运行时编译器，样式注入前先藏住整页，就绪后淡入。
+       切卡时浏览器保持旧页可见直到新页 reveal，裸 HTML 那一帧不会露出。 */
+    html.tw-booting{visibility:hidden}
+    html{opacity:0;transition:opacity .12s ease-in}
+    html.tw-ready{opacity:1}
   </style>
+  <script>
+    // Tailwind Play CDN 编译完成后会触发 window 'load'（脚本、样式注入都已完成）。
+    // 双保险：load 事件 + 最长 800ms 兜底，避免 CDN 异常时整页永久隐藏。
+    (function () {
+      var revealed = false;
+      function reveal() {
+        if (revealed) return;
+        revealed = true;
+        var h = document.documentElement;
+        h.classList.remove('tw-booting');
+        // 下一帧再加 ready，确保 visibility 先恢复再触发 opacity 过渡
+        requestAnimationFrame(function () { h.classList.add('tw-ready'); });
+      }
+      window.addEventListener('load', reveal);
+      setTimeout(reveal, 800);
+    })();
+  </script>
 </head>
 <body class="bg-slate-50 text-slate-900 min-h-screen" x-data="AppRoot()">
 

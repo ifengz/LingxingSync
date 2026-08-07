@@ -34,7 +34,10 @@
       </thead>
       <tbody>
         <tr>
-          <td class="px-4 py-3 font-mono font-bold text-slate-800" x-text="egress.ip || '未获取'"></td>
+          <td class="px-4 py-3">
+            <span class="font-mono font-bold text-slate-800" x-text="egress.ip || '未获取'"></span>
+            <span x-show="egress.source" class="ml-2 text-xs font-normal text-slate-400" x-text="'via ' + egress.source"></span>
+          </td>
           <td class="px-4 py-3 text-slate-600" x-text="fmtTime(egress.checked_at)"></td>
           <td class="px-4 py-3">
             <span :class="egress.error ? 'bg-red-50 text-red-700' : 'bg-emerald-50 text-emerald-700'" class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-bold">
@@ -45,6 +48,17 @@
         </tr>
       </tbody>
     </table>
+    <div class="flex flex-wrap items-center gap-2 border-t border-slate-100 px-4 py-3">
+      <span class="text-xs text-slate-500">指定探测源测试：</span>
+      <select x-model="egressTestSource" class="min-w-0 flex-1 rounded border border-slate-300 px-2.5 py-1.5 font-mono text-xs focus:border-brand-600 focus:outline-none">
+        <template x-for="src in (egress.sources || [])" :key="src">
+          <option :value="src" x-text="src"></option>
+        </template>
+      </select>
+      <button @click="testEgressSource()" :disabled="egressTesting || !egressTestSource"
+              class="whitespace-nowrap border border-brand-600 text-brand-700 hover:bg-brand-50 disabled:cursor-not-allowed disabled:opacity-50 px-3 py-1.5 rounded text-xs"
+              x-text="egressTesting ? '测试中...' : '测试此源'"></button>
+    </div>
   </div>
 
   <div x-show="needRestart" x-cloak class="mb-4 flex flex-col gap-2 rounded border border-amber-200 bg-amber-50 px-4 py-3 text-amber-900 sm:flex-row sm:items-center sm:justify-between">

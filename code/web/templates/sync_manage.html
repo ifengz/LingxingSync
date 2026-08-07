@@ -327,6 +327,26 @@
             <label class="mb-1 block text-xs font-medium text-slate-500">多店铺间隔 ms</label>
             <input type="number" x-model.number="addForm.multi_interval_ms" class="w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm focus:border-brand-600 focus:outline-none focus:ring-1 focus:ring-brand-600/30">
           </div>
+          <div>
+            <label class="mb-1 block text-xs font-medium text-slate-500">回看天数 window_days</label>
+            <input type="number" min="0" x-model.number="addForm.window_days" placeholder="0=全量" class="w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm focus:border-brand-600 focus:outline-none focus:ring-1 focus:ring-brand-600/30">
+          </div>
+          <div>
+            <label class="mb-1 block text-xs font-medium text-slate-500">按店铺迭代</label>
+            <label class="inline-flex h-[34px] cursor-pointer items-center gap-2 text-sm text-slate-700">
+              <input type="checkbox" x-model="addForm.iterate_by_store" class="h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-600/30">
+              <span x-text="addForm.iterate_by_store ? '每个 sid 跑一次' : '单次全量'"></span>
+            </label>
+          </div>
+          <div x-show="addForm.iterate_by_store" x-cloak>
+            <label class="mb-1 block text-xs font-medium text-slate-500">店铺参数名</label>
+            <input x-model="addForm.store_param_name" placeholder="默认 sid" class="w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm focus:border-brand-600 focus:outline-none focus:ring-1 focus:ring-brand-600/30">
+          </div>
+        </div>
+        <div>
+          <label class="mb-1 block text-xs font-medium text-slate-500">额外参数 extra_params（JSON，可空）</label>
+          <textarea x-model="addForm.extra_params_text" rows="2" placeholder='如 {"type": 1}' class="w-full rounded-md border border-slate-300 px-2 py-1.5 font-mono text-sm focus:border-brand-600 focus:outline-none focus:ring-1 focus:ring-brand-600/30"></textarea>
+          <p class="mt-1 text-xs text-slate-400">限流默认桶 1 / 间隔 1000ms（保守，参考领星「业务 API ≥0.6s」；最终以官方文档为准）。重试为固定策略（网络/429/5xx 指数退避），无需配置。</p>
         </div>
         <div class="flex justify-end gap-2">
           <button @click="addEndpoint()" class="rounded-md bg-brand-600 px-4 py-1.5 text-sm font-bold text-white hover:bg-brand-700">保存</button>

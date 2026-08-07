@@ -31,11 +31,22 @@ var storeMappings = map[string]storeMapping{
 	},
 }
 
+// storeDefaults 补充 ls_stores 中 NOT NULL 列的默认值。
+// 不同店铺接口返回字段不同：SC 返回 has_ads_setting，VC 不返回。
+// ls_stores.has_ads_setting 是 NOT NULL，缺失时 UpsertRows 会写 NULL 导致 MySQL 报错，
+// 因此在这里按接口补默认值。
+var storeDefaults = map[string]map[string]any{
+	"/basicOpen/platformAuth/vcSeller/pageList": {
+		"has_ads_setting": int64(0),
+	},
+}
+
 func normalizeStoreRows(path string, rows []map[string]any) error {
 	mapping, ok := storeMappings[path]
 	if !ok {
 		return nil
 	}
+	defaults := storeDefaults[path]
 	for i, row := range rows {
 		for _, field := range mapping.fields {
 			value, exists := row[field.source]
@@ -45,6 +56,11 @@ func normalizeStoreRows(path string, rows []map[string]any) error {
 			row[field.target] = value
 		}
 		row["store_type"] = mapping.storeType
+		for col, val := range defaults {
+			if _, exists := row[col]; !exists {
+				row[col] = val
+			}
+		}
 	}
 	return nil
 }

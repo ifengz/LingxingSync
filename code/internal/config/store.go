@@ -183,7 +183,6 @@ func ClassifyChange(oldCfg, newCfg *Config) ChangeKind {
 		if oldE.Enabled != newE.Enabled ||
 			oldE.Cron != newE.Cron ||
 			!reflect.DeepEqual(oldE.Rate, newE.Rate) ||
-			!reflect.DeepEqual(oldE.Retry, newE.Retry) ||
 			oldE.WindowDays != newE.WindowDays ||
 			!reflect.DeepEqual(oldE.ExtraParams, newE.ExtraParams) ||
 			!reflect.DeepEqual(oldE.StoreSids, newE.StoreSids) {

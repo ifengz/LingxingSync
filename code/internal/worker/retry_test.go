@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/url"
 	"testing"
+	"time"
 )
 
 func TestRetryableFetchFailureOnlyRetriesRecoverableFailures(t *testing.T) {
@@ -36,5 +37,17 @@ func TestRetryableFetchFailureOnlyRetriesRecoverableFailures(t *testing.T) {
 				t.Fatalf("retryableFetchFailure(status=%d, err=%v) = %v, want %v", tt.httpStatus, tt.err, got, tt.want)
 			}
 		})
+	}
+}
+
+// backoffDelay 必须是指数退避：base * 2^attempt（attempt 从 0 计）。
+// 常量固定，不随接口配置变（与 QQiot/lingxing 的 client 级写死一致）。
+func TestBackoffDelayIsExponential(t *testing.T) {
+	base := time.Duration(fetchRetryBaseDelayMs) * time.Millisecond
+	want := []time.Duration{base, 2 * base, 4 * base, 8 * base}
+	for attempt, w := range want {
+		if got := backoffDelay(attempt); got != w {
+			t.Fatalf("backoffDelay(%d) = %v, want %v", attempt, got, w)
+		}
 	}
 }

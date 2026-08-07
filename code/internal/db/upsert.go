@@ -12,6 +12,7 @@
 package db
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -114,7 +115,9 @@ func UpsertRows(db *sqlx.DB, table string, rows []map[string]any, allowedCols []
 			}
 			// 领星偶尔把数字字符串化，这里不强行转型——交给 driver 处理；
 			// 类型不兼容时 Exec 会报错，符合 fail-loud。
-			vals = append(vals, v)
+			// 例外：slice/map（领星 JSON 字段，如 afn_fulfillable_quantity_multi）
+			// 须先 JSON 序列化为字符串，driver 才能写入 JSON 列，否则报 unsupported type。
+			vals = append(vals, normalizeUpsertValue(v))
 		}
 		_ = i // 仅占位，避免 unused 警告
 	}
@@ -124,6 +127,29 @@ func UpsertRows(db *sqlx.DB, table string, rows []map[string]any, allowedCols []
 			table, len(rows), len(cols), err)
 	}
 	return nil
+}
+
+// normalizeUpsertValue 处理领星返回值到 driver 可写入的形态。
+//
+// 唯一转换：slice/map（领星的 JSON 数组/对象字段，如多站点可售量
+// afn_fulfillable_quantity_multi）先 JSON 序列化为字符串，否则 driver 报
+// "unsupported type"、无法写入 MySQL JSON 列。
+//
+// 其余一切（数字、字符串、bool、nil）原样透传——不改名、不转型，
+// 类型不兼容时交给 Exec fail-loud（宪法：不静默兜底、不写脏数据）。
+func normalizeUpsertValue(v any) any {
+	switch v.(type) {
+	case []any, map[string]any:
+		b, err := json.Marshal(v)
+		if err != nil {
+			// 序列化失败极罕见（领星 JSON 已能 unmarshal 成这些类型）；
+			// 兜底为 nil→SQL NULL，避免 driver 直接崩，同时不写脏数据。
+			return nil
+		}
+		return string(b)
+	default:
+		return v
+	}
 }
 
 // buildUpsertColumns 把 allowedCols 规整成最终写入列：

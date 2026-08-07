@@ -498,8 +498,8 @@ func (s *Server) apiSaveVCStoreProfile(w http.ResponseWriter, r *http.Request) {
 	okJSON(w, map[string]any{"account_id": id, "sid": sid, "profile_id": profileID, "message": message})
 }
 
-// apiAccountStoreSync 触发该账号唯一的店铺来源接口。前端不传 endpoint 名，避免把
-// 账号页的“店铺目录”错误绑定到其他业务接口。
+// apiAccountStoreSync 触发该账号全部店铺来源接口（如 SC + VC 各一个）。前端不传 endpoint 名，
+// 避免把账号页的"店铺目录"错误绑定到其他业务接口。多个 store source 全部触发，各自独立排队。
 func (s *Server) apiAccountStoreSync(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	cfg := s.cfg
@@ -511,35 +511,40 @@ func (s *Server) apiAccountStoreSync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	name := ""
+	var names []string
 	for _, ep := range cfg.Endpoints {
 		if ep.Account != id || !ep.IsStoreSource {
 			continue
 		}
-		if name != "" {
-			errJSON(w, http.StatusConflict, "该账号配置了多个店铺目录接口，无法确定刷新目标: "+id)
-			return
-		}
-		name = ep.Name
+		names = append(names, ep.Name)
 	}
-	if name == "" {
+	if len(names) == 0 {
 		errJSON(w, http.StatusConflict, "该账号未配置店铺目录接口: "+id)
 		return
 	}
-	w0 := s.reg.Get(name)
-	if w0 == nil {
-		errJSON(w, http.StatusConflict, "店铺目录接口尚未就绪，请重启后重试: "+name)
-		return
+	queued := make([]string, 0, len(names))
+	skipped := make([]string, 0)
+	for _, name := range names {
+		w0 := s.reg.Get(name)
+		if w0 == nil {
+			skipped = append(skipped, name+"(未就绪)")
+			continue
+		}
+		if w0.Status().Status == "disabled" {
+			skipped = append(skipped, name+"(已禁用)")
+			continue
+		}
+		if !w0.TriggerManual(nil) {
+			skipped = append(skipped, name+"(运行中)")
+			continue
+		}
+		queued = append(queued, name)
 	}
-	if w0.Status().Status == "disabled" {
-		errJSON(w, http.StatusConflict, "店铺目录接口已禁用，请在同步配置中启用: "+name)
-		return
+	msg := "店铺目录刷新已加入队列: " + strings.Join(queued, ", ")
+	if len(skipped) > 0 {
+		msg += "；跳过: " + strings.Join(skipped, ", ")
 	}
-	if !w0.TriggerManual(nil) {
-		errJSON(w, http.StatusConflict, "店铺目录刷新任务已在运行或队列中，请在同步日志查看结果: "+name)
-		return
-	}
-	okJSON(w, map[string]any{"message": "店铺目录刷新已加入队列，请在同步日志查看结果: " + name, "endpoint": name, "queued": true})
+	okJSON(w, map[string]any{"message": msg, "endpoints": queued, "queued": len(queued) > 0})
 }
 
 // apiSaveAccountStores 覆盖式保存某账号的「店铺参与同步」选择。
@@ -620,6 +625,15 @@ func (s *Server) apiCreateEndpoint(w http.ResponseWriter, r *http.Request) {
 	}
 	if snap.FindAccount(in.Account) == nil {
 		errJSON(w, http.StatusBadRequest, "account 不存在: "+in.Account)
+		return
+	}
+	// 限流键 (quota_group, path) 不得与现有接口重复：否则两个接口共享同一个 rate.Limiter
+	// 桶，一个翻页占满配额会拖慢另一个——正是「各接口独立、互不牵连」要杜绝的（CLAUDE.md §1.1）。
+	// 在此 fail-loud 拦住，比等 Save→validate 报错更早、消息更直白（不带「校验新配置」前缀）。
+	if owner, dup := snap.ConflictingLimiterKey(dtoToEndpoint(in)); dup {
+		errJSON(w, http.StatusBadRequest, fmt.Sprintf(
+			"限流键 (quota_group=%s, path=%s) 已被接口 %s 占用；换 path 或换 quota_group，勿共享同一限流桶",
+			snap.QuotaGroupOf(in.Account), in.Path, owner))
 		return
 	}
 	// fail-loud：目标表必须已建好（宪法 §5）。Worker 启动时 GetTableColumns 会读不到列
