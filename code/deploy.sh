@@ -55,13 +55,18 @@ else
 fi
 
 log "5/5 健康检查（:${PORT}/api/status）"
+# 认 200 或 401 都算「服务活着」：
+#   - 未配 server.secret 时 /api/status 返回 200；
+#   - 配了 secret 时，不带 X-Sync-Secret 头会被中间件挡成 401——
+#     但 401 恰恰证明 HTTP server 已起、鉴权中间件在工作，是有效存活信号。
+# 真正的宕机表现为连接拒绝（curl 返回 000），不会是 200/401。
 sleep 2
 for i in 1 2 3 4 5; do
   code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://127.0.0.1:${PORT}/api/status" || echo 000)"
-  if [ "${code}" = "200" ]; then
-    log "部署完成 ✅  服务已就绪（HTTP 200），当前版本 ${AFTER}"
+  if [ "${code}" = "200" ] || [ "${code}" = "401" ]; then
+    log "部署完成 ✅  服务已就绪（HTTP ${code}），当前版本 ${AFTER}"
     exit 0
   fi
   sleep 2
 done
-fail "服务重启后 /api/status 未返回 200（当前 ${code}），请查 supervisor 日志"
+fail "服务重启后 /api/status 未就绪（当前 ${code}，期望 200/401），请查 supervisor 日志"
