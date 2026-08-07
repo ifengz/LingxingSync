@@ -26,6 +26,9 @@ accounts:
     quota_group: "sc_us"
     app_key: "your_app_key"
     app_secret: "your_app_secret"
+    connection_check:
+      cron: "*/20 * * * *"       # 真实获取 OpenAPI Token 并主动续租
+      enabled: true
 
 # ===== 接口同步任务 =====
 # rate 字段从领星官方接口文档 Rate Limit 区块原样抄写，不猜测

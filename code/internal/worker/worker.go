@@ -395,8 +395,37 @@ func (w *EndpointWorker) fetchAllPages(ctx context.Context, taskID int64, params
 		pageParams["offset"] = offset
 		pageParams["length"] = pageSize
 
+		// 抓取（含可恢复失败重试）：网络抖动/429/5xx 退避重试，退避期间仍走
+		// 同一个 (quota_group,path) 桶，避免重试风暴踩踏限流。4xx/业务错/取消
+		// 不重试（见 retryableFetchFailure），fail-loud 交由下方错误分支处理。
 		start := time.Now()
-		result, httpStatus, apiCode, err := w.Client.Fetch(ctx, w.Endpoint.Method, w.Endpoint.Path, pageParams)
+		var (
+			result     *api.FetchResult
+			httpStatus int
+			apiCode    int
+			err        error
+		)
+		for attempt := 0; ; attempt++ {
+			result, httpStatus, apiCode, err = w.Client.Fetch(ctx, w.Endpoint.Method, w.Endpoint.Path, pageParams)
+			if err == nil || attempt >= maxFetchRetries || !retryableFetchFailure(ctx, httpStatus, err) {
+				break
+			}
+			backoff := time.Duration(fetchRetryBaseDelayMs*(1<<attempt)) * time.Millisecond
+			log.Printf("[worker:%s] Fetch 可恢复失败 offset=%d attempt=%d/%d: %v (http=%d code=%d)，%v 后重试",
+				w.Endpoint.Name, offset, attempt+1, maxFetchRetries, err, httpStatus, apiCode, backoff)
+			select {
+			case <-ctx.Done():
+				err = ctx.Err()
+			case <-time.After(backoff):
+				// 退避后重新过桶，保持限流语义。
+				if werr := limiter.Wait(ctx); werr != nil {
+					err = werr
+				}
+			}
+			if ctx.Err() != nil {
+				break
+			}
+		}
 		durationMs := int(time.Since(start).Milliseconds())
 
 		// 错误处理：记日志后中止本接口

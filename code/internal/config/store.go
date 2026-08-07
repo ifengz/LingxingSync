@@ -154,7 +154,6 @@ func ClassifyChange(oldCfg, newCfg *Config) ChangeKind {
 			return ChangeRestart
 		}
 	}
-
 	oldEndpoints := endpointsByName(oldCfg.Endpoints)
 	newEndpoints := endpointsByName(newCfg.Endpoints)
 	if endpointNameSetChanged(oldEndpoints, newEndpoints) {
@@ -173,12 +172,18 @@ func ClassifyChange(oldCfg, newCfg *Config) ChangeKind {
 			return ChangeRestart
 		}
 	}
+	for id, oldA := range oldAccounts {
+		if !reflect.DeepEqual(oldA.ConnectionCheck, newAccounts[id].ConnectionCheck) {
+			return ChangeHot
+		}
+	}
 
 	for name, oldE := range oldEndpoints {
 		newE := newEndpoints[name]
 		if oldE.Enabled != newE.Enabled ||
 			oldE.Cron != newE.Cron ||
 			!reflect.DeepEqual(oldE.Rate, newE.Rate) ||
+			!reflect.DeepEqual(oldE.Retry, newE.Retry) ||
 			oldE.WindowDays != newE.WindowDays ||
 			!reflect.DeepEqual(oldE.ExtraParams, newE.ExtraParams) ||
 			!reflect.DeepEqual(oldE.StoreSids, newE.StoreSids) {

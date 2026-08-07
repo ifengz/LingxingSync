@@ -30,9 +30,11 @@ import (
 
 // Scheduler 包装 robfig/cron，负责按配置驱动 worker。
 type Scheduler struct {
-	cron *cron.Cron
-	reg  *Registry
-	dbx  *sqlx.DB // retention 清理用（db.CleanupOld 需要 db 句柄）
+	cron            *cron.Cron
+	reg             *Registry
+	dbx             *sqlx.DB // retention 清理用（db.CleanupOld 需要 db 句柄）
+	connectionCheck func(context.Context, string) error
+	ctx             context.Context
 
 	// mu 保护 cfg 与 entries：Start 时单线程写入本无需加锁，但 Rebuild（热加载）
 	// 之后 entries 可能被并发重建/回填，加锁避免并发读写 map。
@@ -40,7 +42,8 @@ type Scheduler struct {
 	cfg *config.Config
 	// entryID → worker，用于回填 nextRunAt（robfig/cron v3 的 Entry 不带自定义 tag，
 	// 无法反查 endpoint name，故自己维护映射）。
-	entries map[cron.EntryID]*EndpointWorker
+	entries           map[cron.EntryID]*EndpointWorker
+	connectionEntries map[cron.EntryID]struct{}
 }
 
 // NewScheduler 构造调度器。不立即启动 cron。
@@ -49,15 +52,17 @@ type Scheduler struct {
 //   - cfg：配置（取 Endpoints 的 Cron、Retention 的 CleanupCron）
 //   - reg：worker 注册表（按 endpoint.Name 取 worker）
 //   - dbx：数据库句柄，retention cron 调 db.CleanupOld 时用
-func NewScheduler(cfg *config.Config, reg *Registry, dbx *sqlx.DB) *Scheduler {
+func NewScheduler(cfg *config.Config, reg *Registry, dbx *sqlx.DB, connectionCheck func(context.Context, string) error) *Scheduler {
 	return &Scheduler{
 		cron: cron.New(cron.WithChain(
 			cron.Recover(cron.DefaultLogger), // 防止 cron job 内 panic 让整个调度器崩溃
 		)),
-		reg:     reg,
-		cfg:     cfg,
-		dbx:     dbx,
-		entries: make(map[cron.EntryID]*EndpointWorker),
+		reg:               reg,
+		cfg:               cfg,
+		dbx:               dbx,
+		connectionCheck:   connectionCheck,
+		entries:           make(map[cron.EntryID]*EndpointWorker),
+		connectionEntries: make(map[cron.EntryID]struct{}),
 	}
 }
 
@@ -66,9 +71,13 @@ func NewScheduler(cfg *config.Config, reg *Registry, dbx *sqlx.DB) *Scheduler {
 //
 // 注册失败（cron 表达式非法）立即返回 error（启动期 fail-loud）。
 func (s *Scheduler) Start(ctx context.Context) error {
+	s.ctx = ctx
 	// 1. 每个 endpoint 一个 cron 任务（注册逻辑与 Rebuild 共用，见 registerEndpointJobsLocked）
 	s.mu.Lock()
 	err := s.registerEndpointJobsLocked(s.cfg)
+	if err == nil {
+		err = s.registerConnectionCheckJobsLocked(s.cfg)
+	}
 	s.mu.Unlock()
 	if err != nil {
 		return err
@@ -92,6 +101,30 @@ func (s *Scheduler) Start(ctx context.Context) error {
 	// 3. Start 之后再回填每个 worker 的 nextRunAt（此时 cron 已算出 Next）
 	s.backfillNextRuns()
 
+	return nil
+}
+
+func (s *Scheduler) registerConnectionCheckJobsLocked(cfg *config.Config) error {
+	for _, account := range cfg.Accounts {
+		if !account.ConnectionCheck.Enabled {
+			continue
+		}
+		if s.connectionCheck == nil {
+			return fmt.Errorf("账号 %s 启用了连接续租计划，但未注入执行器", account.ID)
+		}
+		accountID := account.ID
+		entryID, err := s.cron.AddFunc(account.ConnectionCheck.Cron, func() {
+			ctx, cancel := context.WithTimeout(s.ctx, 10*time.Second)
+			defer cancel()
+			if err := s.connectionCheck(ctx, accountID); err != nil {
+				log.Printf("[scheduler] 自动测试连接/续租失败 account=%s: %v", accountID, err)
+			}
+		})
+		if err != nil {
+			return fmt.Errorf("注册连接续租 cron 失败 account=%s spec=%q: %w", accountID, account.ConnectionCheck.Cron, err)
+		}
+		s.connectionEntries[entryID] = struct{}{}
+	}
 	return nil
 }
 
@@ -143,9 +176,16 @@ func (s *Scheduler) Rebuild(cfg *config.Config) error {
 	for entryID := range s.entries {
 		s.cron.Remove(entryID)
 	}
+	for entryID := range s.connectionEntries {
+		s.cron.Remove(entryID)
+	}
 	s.entries = make(map[cron.EntryID]*EndpointWorker)
+	s.connectionEntries = make(map[cron.EntryID]struct{})
 	s.cfg = cfg
 	err := s.registerEndpointJobsLocked(cfg)
+	if err == nil {
+		err = s.registerConnectionCheckJobsLocked(cfg)
+	}
 	s.mu.Unlock()
 	if err != nil {
 		return err

@@ -251,6 +251,9 @@ func (c *Client) fetchOnce(ctx context.Context, method, path string, params map[
 	if err != nil {
 		return nil, resp.StatusCode, ar.Code.asInt(), fmt.Errorf("lingxing fetch: parse data: %w, body=%s", err, truncateForLog(raw))
 	}
+	if err := normalizeStoreRows(path, result.List); err != nil {
+		return nil, resp.StatusCode, ar.Code.asInt(), fmt.Errorf("lingxing fetch: map store fields: %w, body=%s", err, truncateForLog(raw))
+	}
 	result.Raw = raw
 	return result, resp.StatusCode, ar.Code.asInt(), nil
 }

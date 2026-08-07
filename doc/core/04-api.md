@@ -262,7 +262,7 @@ HTTP 状态码：`200` = ok；`400` = 参数错误；`500` = 内部错误。
   "ok": true,
   "data": {
     "accounts": [
-      { "id": "sc_us", "name": "自营-美国", "quota_group": "sc_us", "app_key": "ak_123", "app_secret": "abcd****wxyz" }
+      { "id": "sc_us", "name": "自营-美国", "quota_group": "sc_us", "app_key": "ak_123", "app_secret": "abcd****wxyz", "connection_check": { "cron": "*/20 * * * *", "enabled": true } }
     ],
     "endpoints": [ { "name": "sc_stores", "display": "SC 店铺列表", "account": "sc_us", "path": "...", "method": "GET", "table": "ls_stores", "record_id_fields": ["sid"], "rate": {...}, "cron": "...", "enabled": true, "store_sids": [] } ]
   }
@@ -274,6 +274,12 @@ HTTP 状态码：`200` = ok；`400` = 参数错误；`500` = 内部错误。
 
 ### PUT /api/accounts/:id
 更新账号。app_secret 传空串则保留原值（避免脱敏值覆盖真值）。
+
+### PUT /api/accounts/:id/connection-check
+保存该账号的自动测试连接/Token 续租计划。body 为 `{ "cron": "*/20 * * * *", "enabled": true }`；Cron 必须为合法 5 段表达式，成功后热重建调度。
+
+### POST /api/accounts/:id/stores/sync
+触发该账号唯一的 `is_store_source: true` 店铺目录接口。账号没有或有多个店铺来源接口时返回 409；接口 Cron、限流与启停仍由 `/sync` 管理。
 
 ### DELETE /api/accounts/:id
 删除账号。**若仍有 endpoint 引用该账号 → 409 拦截**，返回引用列表，不级联删除。

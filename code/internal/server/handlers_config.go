@@ -23,6 +23,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/robfig/cron/v3"
+
 	"lingxing-sync/internal/api"
 	"lingxing-sync/internal/config"
 	"lingxing-sync/internal/db"
@@ -33,8 +35,11 @@ func (s *Server) registerConfigRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/config", s.apiGetConfig)
 	mux.HandleFunc("POST /api/accounts", s.apiCreateAccount)
 	mux.HandleFunc("PUT /api/accounts/{id}", s.apiUpdateAccount)
+	mux.HandleFunc("PUT /api/accounts/{id}/connection-check", s.apiUpdateConnectionCheck)
 	mux.HandleFunc("DELETE /api/accounts/{id}", s.apiDeleteAccount)
 	mux.HandleFunc("GET /api/accounts/{id}/stores", s.apiAccountStores)
+	mux.HandleFunc("PUT /api/accounts/{id}/stores/{sid}/vc-profile", s.apiSaveVCStoreProfile)
+	mux.HandleFunc("POST /api/accounts/{id}/stores/sync", s.apiAccountStoreSync)
 	mux.HandleFunc("POST /api/accounts/{id}/stores/selection", s.apiSaveStoreSelection)
 	mux.HandleFunc("POST /api/endpoints", s.apiCreateEndpoint)
 	mux.HandleFunc("PUT /api/endpoints/{name}", s.apiUpdateEndpoint)
@@ -52,11 +57,17 @@ func (s *Server) registerConfigRoutes(mux *http.ServeMux) {
 
 // accountDTO 是账号的 HTTP 输入输出结构。
 type accountDTO struct {
-	ID         string `json:"id"`
-	Name       string `json:"name"`
-	QuotaGroup string `json:"quota_group"`
-	AppKey     string `json:"app_key"`
-	AppSecret  string `json:"app_secret"`
+	ID              string             `json:"id"`
+	Name            string             `json:"name"`
+	QuotaGroup      string             `json:"quota_group"`
+	AppKey          string             `json:"app_key"`
+	AppSecret       string             `json:"app_secret"`
+	ConnectionCheck connectionCheckDTO `json:"connection_check"`
+}
+
+type connectionCheckDTO struct {
+	Cron    string `json:"cron"`
+	Enabled bool   `json:"enabled"`
 }
 
 func accountToDTO(a config.Account) accountDTO {
@@ -66,6 +77,9 @@ func accountToDTO(a config.Account) accountDTO {
 		QuotaGroup: a.QuotaGroup,
 		AppKey:     a.AppKey,
 		AppSecret:  a.AppSecret,
+		ConnectionCheck: connectionCheckDTO{
+			Cron: a.ConnectionCheck.Cron, Enabled: a.ConnectionCheck.Enabled,
+		},
 	}
 }
 
@@ -78,12 +92,17 @@ func accountsToDTO(as []config.Account) []accountDTO {
 }
 
 func dtoToAccount(d accountDTO) config.Account {
+	check := config.DefaultConnectionCheck()
+	if d.ConnectionCheck.Cron != "" {
+		check = config.ConnectionCheck{Cron: d.ConnectionCheck.Cron, Enabled: d.ConnectionCheck.Enabled}
+	}
 	return config.Account{
-		ID:         d.ID,
-		Name:       d.Name,
-		QuotaGroup: d.QuotaGroup,
-		AppKey:     d.AppKey,
-		AppSecret:  d.AppSecret,
+		ID:              d.ID,
+		Name:            d.Name,
+		QuotaGroup:      d.QuotaGroup,
+		AppKey:          d.AppKey,
+		AppSecret:       d.AppSecret,
+		ConnectionCheck: check,
 	}
 }
 
@@ -319,6 +338,30 @@ func (s *Server) apiUpdateAccount(w http.ResponseWriter, r *http.Request) {
 	s.applyConfigWrite(w, old, snap, "账号已更新: "+id)
 }
 
+// apiUpdateConnectionCheck 保存账号级的连接检查/Token 续租计划。
+func (s *Server) apiUpdateConnectionCheck(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var in connectionCheckDTO
+	if err := decodeJSON(r, &in); err != nil {
+		errJSON(w, http.StatusBadRequest, "请求体格式错误: "+err.Error())
+		return
+	}
+	if _, err := cron.ParseStandard(in.Cron); err != nil {
+		errJSON(w, http.StatusBadRequest, "Cron 表达式无效: "+err.Error())
+		return
+	}
+
+	old := s.store.Current()
+	snap := s.store.Snapshot()
+	acc := snap.FindAccount(id)
+	if acc == nil {
+		errJSON(w, http.StatusNotFound, "未找到账号: "+id)
+		return
+	}
+	acc.ConnectionCheck = config.ConnectionCheck{Cron: in.Cron, Enabled: in.Enabled}
+	s.applyConfigWrite(w, old, snap, "连接续租计划已更新: "+id)
+}
+
 // ---------------------------------------------------------------------------
 // API: DELETE /api/accounts/{id}
 // ---------------------------------------------------------------------------
@@ -394,6 +437,109 @@ func (s *Server) apiAccountStores(w http.ResponseWriter, r *http.Request) {
 		Configured:   configured,
 		Items:        items,
 	})
+}
+
+func findVCStoreForProfile(items []db.StoreSummary, sid string) (db.StoreSummary, int, error) {
+	for _, item := range items {
+		if item.SID != sid {
+			continue
+		}
+		if item.StoreType != "VC" {
+			return db.StoreSummary{}, http.StatusBadRequest, fmt.Errorf("店铺 %s 不是 VC 店铺", sid)
+		}
+		return item, http.StatusOK, nil
+	}
+	return db.StoreSummary{}, http.StatusNotFound, fmt.Errorf("未找到店铺: %s", sid)
+}
+
+// apiSaveVCStoreProfile 只允许给当前账号实际存在的 VC 店铺保存人工 Profile ID。
+// 空 profile_id 删除映射；SC 店铺和未知 sid 不写库。
+func (s *Server) apiSaveVCStoreProfile(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	sid := r.PathValue("sid")
+	if s.cfg == nil || s.cfg.FindAccount(id) == nil {
+		errJSON(w, http.StatusNotFound, "未找到账号: "+id)
+		return
+	}
+	var in struct {
+		ProfileID *string `json:"profile_id"`
+	}
+	if err := decodeJSON(r, &in); err != nil {
+		errJSON(w, http.StatusBadRequest, "请求体格式错误: "+err.Error())
+		return
+	}
+	if in.ProfileID == nil {
+		errJSON(w, http.StatusBadRequest, "profile_id 不能为空；清除映射请传空字符串")
+		return
+	}
+
+	items, _, err := db.ListStoresForAccount(s.dbx, id)
+	if err != nil {
+		errJSON(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	if _, status, err := findVCStoreForProfile(items, sid); err != nil {
+		errJSON(w, status, err.Error())
+		return
+	}
+	profileID := strings.TrimSpace(*in.ProfileID)
+	if len(profileID) > 32 {
+		errJSON(w, http.StatusBadRequest, "profile_id 长度不能超过 32")
+		return
+	}
+	if err := db.SaveVCStoreProfile(s.dbx, id, sid, profileID); err != nil {
+		errJSON(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	message := "VC 广告 Profile ID 已保存"
+	if profileID == "" {
+		message = "VC 广告 Profile ID 已清除"
+	}
+	okJSON(w, map[string]any{"account_id": id, "sid": sid, "profile_id": profileID, "message": message})
+}
+
+// apiAccountStoreSync 触发该账号唯一的店铺来源接口。前端不传 endpoint 名，避免把
+// 账号页的“店铺目录”错误绑定到其他业务接口。
+func (s *Server) apiAccountStoreSync(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	cfg := s.cfg
+	if s.store != nil {
+		cfg = s.store.Current()
+	}
+	if cfg == nil || cfg.FindAccount(id) == nil {
+		errJSON(w, http.StatusNotFound, "未找到账号: "+id)
+		return
+	}
+
+	name := ""
+	for _, ep := range cfg.Endpoints {
+		if ep.Account != id || !ep.IsStoreSource {
+			continue
+		}
+		if name != "" {
+			errJSON(w, http.StatusConflict, "该账号配置了多个店铺目录接口，无法确定刷新目标: "+id)
+			return
+		}
+		name = ep.Name
+	}
+	if name == "" {
+		errJSON(w, http.StatusConflict, "该账号未配置店铺目录接口: "+id)
+		return
+	}
+	w0 := s.reg.Get(name)
+	if w0 == nil {
+		errJSON(w, http.StatusConflict, "店铺目录接口尚未就绪，请重启后重试: "+name)
+		return
+	}
+	if w0.Status().Status == "disabled" {
+		errJSON(w, http.StatusConflict, "店铺目录接口已禁用，请在同步配置中启用: "+name)
+		return
+	}
+	if !w0.TriggerManual(nil) {
+		errJSON(w, http.StatusConflict, "店铺目录刷新任务已在运行或队列中，请在同步日志查看结果: "+name)
+		return
+	}
+	okJSON(w, map[string]any{"message": "店铺目录刷新已加入队列，请在同步日志查看结果: " + name, "endpoint": name, "queued": true})
 }
 
 // apiSaveAccountStores 覆盖式保存某账号的「店铺参与同步」选择。

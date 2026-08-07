@@ -35,12 +35,18 @@ accounts:
     quota_group: "sc_us"         # 限流分组（默认 = id；同公司多 app_key 设相同值共享配额）
     app_key: "your_app_key_sc"
     app_secret: "your_app_secret_sc"
+    connection_check:             # 账号级 OpenAPI 连通性检查与 Token 主动续租
+      cron: "*/20 * * * *"
+      enabled: true
 
   - id: "vc_de"
     name: "联营-德国"
     quota_group: "vc_de"
     app_key: "your_app_key_vc"
     app_secret: "your_app_secret_vc"
+    connection_check:
+      cron: "*/20 * * * *"
+      enabled: true
 
 # ===== 接口同步任务 =====
 endpoints:

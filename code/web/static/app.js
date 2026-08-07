@@ -753,12 +753,14 @@ window.settingsApi = function () {
   return {
     info: { version: '', uptime_sec: 0, db_connected: false, base_url: '' },
     accounts: [],
-    endpoints: [],
     selectedAccountId: '',
     accountForm: { id: '', name: '', quota_group: '', app_key: '', app_secret: '' },
     newForm: { id: '', name: '', quota_group: '', app_key: '', app_secret: '' },
+    connectionCheck: { cron: '', enabled: false },
     storeSummary: { total: 0, last_synced_at: null, items: [] },
     storesLoading: false,
+    storeSyncing: false,
+    profileSaving: {},
     storeSel: {},          // sid -> bool，复选框工作态
     storeSelBaseline: {},  // 上次加载/保存后的基线，用于 dirty 判定与取消回滚
     storeSaving: false,
@@ -778,7 +780,6 @@ window.settingsApi = function () {
       };
       const statusByID = new Map((settings.accounts || []).map(a => [a.id, a]));
       this.accounts = (cfg.accounts || []).map(a => Object.assign({}, a, statusByID.get(a.id) || {}));
-      this.endpoints = cfg.endpoints || [];
       const next = this.accounts.find(a => a.id === this.selectedAccountId) || this.accounts[0];
       if (next) {
         await this.selectAccount(next.id);
@@ -794,17 +795,19 @@ window.settingsApi = function () {
         id: account.id, name: account.name, quota_group: account.quota_group || account.id,
         app_key: account.app_key || '', app_secret: ''
       };
+      this.connectionCheck = Object.assign({ cron: '*/20 * * * *', enabled: true }, account.connection_check || {});
       return this.loadStores();
     },
     selectNew() {
       this.selectedAccountId = '';
       this.accountForm = { id: '', name: '', quota_group: '', app_key: '', app_secret: '' };
+      this.connectionCheck = { cron: '', enabled: false };
       this.storeSummary = { total: 0, last_synced_at: null, items: [] };
+      this.profileSaving = {};
       this.storeSel = {};
       this.storeSelBaseline = {};
     },
     get selectedAccount() { return this.accounts.find(a => a.id === this.selectedAccountId) || null; },
-    get schedules() { return this.endpoints.filter(e => e.account === this.selectedAccountId); },
     statusText(a) {
       if (!a || !a.token_known) return '未验证';
       return a.token_valid ? 'Token 有效' : 'Token 失效';
@@ -842,6 +845,17 @@ window.settingsApi = function () {
       if (!r) return;
       if (r.need_restart) this.needRestart = true;
       window.toast('success', r.message || '连接配置已保存');
+      await this.load();
+    },
+    async saveConnectionCheck() {
+      if (!this.selectedAccountId || !this.connectionCheck.cron) {
+        window.toast('warn', '请填写 Cron 表达式');
+        return;
+      }
+      const body = { cron: this.connectionCheck.cron, enabled: !!this.connectionCheck.enabled };
+      const r = await window.apiPut('/api/accounts/' + encodeURIComponent(this.selectedAccountId) + '/connection-check', body).catch(window.toastError);
+      if (!r) return;
+      window.toast('success', r.message || '连接续租计划已保存');
       await this.load();
     },
     async removeAccount(a) {
@@ -890,6 +904,26 @@ window.settingsApi = function () {
       this.storeSel = sel;
       this.storeSelBaseline = Object.assign({}, sel);
     },
+    async syncStores() {
+      if (!this.selectedAccountId || this.storeSyncing) return;
+      this.storeSyncing = true;
+      const r = await window.apiPost('/api/accounts/' + encodeURIComponent(this.selectedAccountId) + '/stores/sync', {}).catch(window.toastError);
+      this.storeSyncing = false;
+      if (r) window.toast('success', r.message || '店铺目录刷新已加入队列');
+    },
+    async saveVCProfile(store) {
+      if (!this.selectedAccountId || !store || store.store_type !== 'VC' || this.profileSaving[store.sid]) return;
+      const profileID = (store.profile_id || '').trim();
+      this.profileSaving[store.sid] = true;
+      const r = await window.apiPut(
+        '/api/accounts/' + encodeURIComponent(this.selectedAccountId) + '/stores/' + encodeURIComponent(store.sid) + '/vc-profile',
+        { profile_id: profileID }
+      ).catch(window.toastError);
+      this.profileSaving[store.sid] = false;
+      if (!r) return;
+      store.profile_id = r.profile_id || '';
+      window.toast('success', r.message || 'VC 广告 Profile ID 已保存');
+    },
     get storeSelectedCount() {
       return Object.values(this.storeSel).filter(Boolean).length;
     },
@@ -916,18 +950,6 @@ window.settingsApi = function () {
       if (!r) return;
       window.toast('success', r.message || '店铺同步选择已保存');
       await this.loadStores(); // 以后端为准刷新，基线同步归零 dirty
-    },
-    async saveSchedule(schedule) {
-      const body = Object.assign({}, schedule, {
-        rate: Object.assign({}, schedule.rate),
-        record_id_fields: (schedule.record_id_fields || []).slice(),
-        store_sids: (schedule.store_sids || []).slice(),
-        extra_params: Object.assign({}, schedule.extra_params || {})
-      });
-      const r = await window.apiPut('/api/endpoints/' + encodeURIComponent(schedule.name), body).catch(window.toastError);
-      if (!r) return;
-      window.toast('success', r.message || 'Cron 已保存');
-      await this.load();
     },
     async restartNow() {
       const ok = await window.syncConfirm('立即重启进程使结构性变更生效？重启期间短暂不可用。', '重启');

@@ -355,6 +355,7 @@ type StoreSummary struct {
 	SID           string    `db:"sid" json:"sid"`
 	StoreType     string    `db:"store_type" json:"store_type"`
 	StoreName     string    `db:"store_name" json:"store_name"`
+	ProfileID     string    `db:"profile_id" json:"profile_id"`
 	SellerID      string    `db:"seller_id" json:"seller_id"`
 	MarketplaceID string    `db:"marketplace_id" json:"marketplace_id"`
 	Country       string    `db:"country" json:"country"`
@@ -370,18 +371,21 @@ type StoreSummary struct {
 // 本地写入时间。账号没有店铺时返回空切片和 nil，不把空数据视作错误。
 func ListStoresForAccount(db *sqlx.DB, accountID string) ([]StoreSummary, *time.Time, error) {
 	const q = `
-SELECT sid,
-       COALESCE(store_type, '') AS store_type,
-       COALESCE(store_name, '') AS store_name,
-       COALESCE(seller_id, '') AS seller_id,
-       COALESCE(marketplace_id, '') AS marketplace_id,
-       COALESCE(country, '') AS country,
-       COALESCE(status, '') AS status,
-       has_ads_setting,
-       synced_at
-FROM ls_stores
-WHERE account_id = ?
-ORDER BY store_name, sid`
+SELECT s.sid,
+       COALESCE(s.store_type, '') AS store_type,
+       COALESCE(s.store_name, '') AS store_name,
+       CASE WHEN s.store_type = 'VC' THEN COALESCE(p.profile_id, '') ELSE '' END AS profile_id,
+       COALESCE(s.seller_id, '') AS seller_id,
+       COALESCE(s.marketplace_id, '') AS marketplace_id,
+       COALESCE(s.country, '') AS country,
+       COALESCE(s.status, '') AS status,
+       s.has_ads_setting,
+       s.synced_at
+FROM ls_stores s
+LEFT JOIN vc_store_profiles p
+  ON p.account_id = s.account_id AND p.sid = s.sid AND s.store_type = 'VC'
+WHERE s.account_id = ?
+ORDER BY s.store_name, s.sid`
 
 	items := make([]StoreSummary, 0)
 	if err := db.Select(&items, q, accountID); err != nil {
@@ -395,6 +399,26 @@ ORDER BY store_name, sid`
 		}
 	}
 	return items, last, nil
+}
+
+// SaveVCStoreProfile 保存或清除人工确认的 VC 广告 Profile ID。
+// 店铺归属与类型由 HTTP handler 在调用前用 ls_stores 验证。
+func SaveVCStoreProfile(db *sqlx.DB, accountID, sid, profileID string) error {
+	profileID = strings.TrimSpace(profileID)
+	if profileID == "" {
+		if _, err := db.Exec("DELETE FROM vc_store_profiles WHERE account_id = ? AND sid = ?", accountID, sid); err != nil {
+			return fmt.Errorf("db.SaveVCStoreProfile: 清除映射 (account=%s sid=%s) 失败: %w", accountID, sid, err)
+		}
+		return nil
+	}
+	const q = `
+INSERT INTO vc_store_profiles (account_id, sid, profile_id)
+VALUES (?, ?, ?)
+ON DUPLICATE KEY UPDATE profile_id = VALUES(profile_id)`
+	if _, err := db.Exec(q, accountID, sid, profileID); err != nil {
+		return fmt.Errorf("db.SaveVCStoreProfile: 保存映射 (account=%s sid=%s) 失败: %w", accountID, sid, err)
+	}
+	return nil
 }
 
 // CleanupOld 按留存策略删旧记录（retention 定时任务调用）。

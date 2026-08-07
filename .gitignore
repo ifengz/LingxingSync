@@ -27,3 +27,7 @@ doc/core/lessons.md
 **/mock*
 **/*mock*
 doc/core/LINGXING_API_INTEGRATION.md
+
+# 本地一次性预览产物（文件头已标「不进 git / 不进 embed」）
+code/preview_all.html
+code/build_preview_all.py

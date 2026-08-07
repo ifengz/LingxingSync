@@ -20,6 +20,7 @@ import (
 	"context"
 	"embed"
 	"flag"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
@@ -112,7 +113,13 @@ func main() {
 	}
 
 	// 6. cron 调度（按 endpoint.Cron 发触发信号 + retention 清理）
-	sched := worker.NewScheduler(cfg, registry, dbx)
+	sched := worker.NewScheduler(cfg, registry, dbx, func(ctx context.Context, accountID string) error {
+		client := clients.Get(accountID)
+		if client == nil {
+			return fmt.Errorf("未找到账号 Client: %s", accountID)
+		}
+		return client.TokenHolder().ForceRefresh(ctx)
+	})
 	if err := sched.Start(ctx); err != nil {
 		log.Fatalf("[main] 启动调度器失败: %v", err)
 	}

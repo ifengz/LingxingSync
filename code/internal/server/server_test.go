@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"lingxing-sync/internal/config"
+	"lingxing-sync/internal/db"
 	"lingxing-sync/internal/worker"
 )
 
@@ -70,5 +71,53 @@ func TestAccountStoresRejectsUnknownAccount(t *testing.T) {
 
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("unknown account stores status=%d, want %d; body=%s", rec.Code, http.StatusNotFound, rec.Body.String())
+	}
+}
+
+func TestAccountStoreSyncRejectsAccountWithoutStoreSource(t *testing.T) {
+	s := &Server{
+		cfg: &config.Config{Accounts: []config.Account{{ID: "sc_us"}}},
+		reg: worker.NewRegistry(),
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/accounts/sc_us/stores/sync", nil)
+	req.SetPathValue("id", "sc_us")
+	rec := httptest.NewRecorder()
+
+	s.apiAccountStoreSync(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("missing source status=%d, want %d; body=%s", rec.Code, http.StatusConflict, rec.Body.String())
+	}
+}
+
+func TestFindVCStoreForProfileRequiresMatchingVCStore(t *testing.T) {
+	stores := []db.StoreSummary{
+		{SID: "sc-1", StoreType: "SC"},
+		{SID: "vc-1", StoreType: "VC"},
+	}
+
+	store, status, err := findVCStoreForProfile(stores, "vc-1")
+	if err != nil || status != http.StatusOK || store.SID != "vc-1" {
+		t.Fatalf("VC store result = %#v, status=%d, err=%v", store, status, err)
+	}
+	if _, status, err = findVCStoreForProfile(stores, "sc-1"); err == nil || status != http.StatusBadRequest {
+		t.Fatalf("SC store status=%d, err=%v; want 400", status, err)
+	}
+	if _, status, err = findVCStoreForProfile(stores, "missing"); err == nil || status != http.StatusNotFound {
+		t.Fatalf("unknown store status=%d, err=%v; want 404", status, err)
+	}
+}
+
+func TestSaveVCStoreProfileRejectsMissingProfileField(t *testing.T) {
+	s := &Server{cfg: &config.Config{Accounts: []config.Account{{ID: "vc_account"}}}}
+	req := httptest.NewRequest(http.MethodPut, "/api/accounts/vc_account/stores/vc-1/vc-profile", strings.NewReader(`{}`))
+	req.SetPathValue("id", "vc_account")
+	req.SetPathValue("sid", "vc-1")
+	rec := httptest.NewRecorder()
+
+	s.apiSaveVCStoreProfile(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("missing profile_id status=%d, want %d; body=%s", rec.Code, http.StatusBadRequest, rec.Body.String())
 	}
 }
