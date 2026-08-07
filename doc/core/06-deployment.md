@@ -12,27 +12,17 @@
 | MySQL | 8.0 | 软件商店 → MySQL 8.0 |
 | Nginx | 1.24+ | 软件商店 → Nginx |
 | Supervisor | 任意 | 软件商店 → Supervisor |
-| Go | 1.22+ | 手动安装（见 §2）|
+| Go | 1.23+ | 手动安装（见 §2）|
 | 服务器 | 1C2G+ Linux | — |
 
 ---
 
 ## 2. 安装 Go（SSH 操作）
 
+在宝塔软件商店或 SSH 按 Go 官方安装方式安装 Go 1.23+（检查最新版：https://go.dev/dl/），然后验证：
+
 ```bash
-# 下载 Go 1.22（检查最新版：https://go.dev/dl/）
-cd /tmp
-wget https://go.dev/dl/go1.22.5.linux-amd64.tar.gz
-
-# 解压到 /usr/local
-sudo tar -C /usr/local -xzf go1.22.5.linux-amd64.tar.gz
-
-# 写入 PATH（永久生效）
-echo 'export PATH=$PATH:/usr/local/go/bin' >> /etc/profile
-source /etc/profile
-
-# 验证
-go version   # 应输出：go version go1.22.5 linux/amd64
+go version   # 应输出：go version go1.23.x linux/amd64
 ```
 
 ---
@@ -65,8 +55,8 @@ FLUSH PRIVILEGES;
 
 ```bash
 cd /www/wwwroot
-git clone https://github.com/your-org/lingxing-sync.git
-cd lingxing-sync
+git clone https://github.com/ifengz/LingxingSync.git lingxing-sync
+cd lingxing-sync/code
 
 # 复制配置模板
 cp config.example.yaml config.yaml
@@ -78,30 +68,19 @@ nano config.yaml
 
 ## 5. 初始化数据库表
 
-```bash
-# 方式一：Makefile
-make migrate
-
-# 方式二：直接执行 SQL
-mysql -u lingsync_rw -p lingsync < migrations/001_system.sql
-mysql -u lingsync_rw -p lingsync < migrations/002_data_tables.sql
-```
+程序启动时会按文件名自动执行 `migrations/*.sql`，全部迁移使用幂等语句，首次启动和升级都不需要手动导入。确认数据库账号可连接后，直接执行编译和启动步骤即可。
 
 ---
 
 ## 6. 编译二进制
 
 ```bash
-cd /www/wwwroot/lingxing-sync
+cd /www/wwwroot/lingxing-sync/code
 
-# 方式一：Makefile
 make build
 
-# 方式二：手动
-go build -o lingxing-sync -ldflags="-s -w" ./cmd/main.go
-
 # 验证
-./lingxing-sync --version
+./lingxing-sync -config config.yaml -h
 ```
 
 编译产物：`./lingxing-sync`（单二进制，约 15MB）
@@ -114,23 +93,23 @@ go build -o lingxing-sync -ldflags="-s -w" ./cmd/main.go
 
 ```ini
 [program:lingxing-sync]
-command=/www/wwwroot/lingxing-sync/lingxing-sync
-directory=/www/wwwroot/lingxing-sync
+command=/www/wwwroot/lingxing-sync/code/lingxing-sync -config /www/wwwroot/lingxing-sync/code/config.yaml
+directory=/www/wwwroot/lingxing-sync/code
 user=www
 autostart=true
 autorestart=true
 startretries=3
-stdout_logfile=/www/wwwroot/lingxing-sync/logs/stdout.log
+stdout_logfile=/www/wwwroot/lingxing-sync/code/logs/stdout.log
 stdout_logfile_maxbytes=50MB
 stdout_logfile_backups=5
-stderr_logfile=/www/wwwroot/lingxing-sync/logs/stderr.log
+stderr_logfile=/www/wwwroot/lingxing-sync/code/logs/stderr.log
 stderr_logfile_maxbytes=20MB
-environment=HOME="/www/wwwroot/lingxing-sync"
+environment=HOME="/www/wwwroot/lingxing-sync/code"
 ```
 
 ```bash
 # 确保 logs 目录存在
-mkdir -p /www/wwwroot/lingxing-sync/logs
+mkdir -p /www/wwwroot/lingxing-sync/code/logs
 
 # 重载 Supervisor
 supervisorctl reread && supervisorctl update
@@ -213,17 +192,17 @@ tail -f /www/wwwroot/lingxing-sync/logs/stdout.log
 ```bash
 cd /www/wwwroot/lingxing-sync
 
-# 拉取新代码
-git pull
+git fetch origin
+git checkout main
+git pull --ff-only origin main
 
-# 重新编译
+cd code
 make build
 
 # 重启服务（Supervisor 会自动重启）
 supervisorctl restart lingxing-sync
 
-# 如有数据库迁移
-mysql -u lingsync_rw -p lingsync < migrations/00X_xxx.sql
+# 程序启动时自动执行 migrations/*.sql（幂等），无需手动导入
 
 # 验证
 supervisorctl status lingxing-sync

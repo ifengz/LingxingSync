@@ -72,21 +72,18 @@ make build
 
 ```bash
 cd /www/wwwroot
-git clone https://github.com/your-org/lingxing-sync.git
-cd lingxing-sync/code          # ← 代码在 code/ 子目录
+git clone https://github.com/ifengz/LingxingSync.git lingxing-sync
+cd lingxing-sync/code          # 代码在 code/ 子目录
 cp config.example.yaml config.yaml
 nano config.yaml               # 填入 DB 密码 + 领星凭证
 ```
 
 ### 2. 安装 Go（如未安装）
 
+在宝塔软件商店或 SSH 按 Go 官方安装方式安装 Go 1.23+，然后确认：
+
 ```bash
-cd /tmp
-wget https://go.dev/dl/go1.22.10.linux-amd64.tar.gz
-sudo tar -C /usr/local -xzf go1.22.10.linux-amd64.tar.gz
-echo 'export PATH=$PATH:/usr/local/go/bin' >> /etc/profile
-source /etc/profile
-go version   # → go version go1.22.10 linux/amd64
+go version   # → go version go1.23.x linux/amd64
 ```
 
 ### 3. 编译
@@ -162,13 +159,14 @@ curl http://127.0.0.1:7799/api/status  # {"ok":true,...}
 
 ```bash
 cd /www/wwwroot/lingxing-sync
-git pull
+git fetch origin
+git checkout main
+git pull --ff-only origin main
 cd code
 make build
 supervisorctl restart lingxing-sync
 
-# 如有新表（migrations/00N_*.sql）
-mysql -u lingsync_rw -p lingsync < migrations/00N_xxx.sql
+# 程序启动时会自动执行 migrations/*.sql（幂等），无需手动导入
 ```
 
 ---
