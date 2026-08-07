@@ -504,6 +504,11 @@ func stringifyParam(v any) any {
 			return "true"
 		}
 		return "false"
+	case []any, map[string]any:
+		// 数组/对象参数（如 VC 订单必填的 purchase_order_type:["1"]、vc_store_ids）原样透传，
+		// 交给 POST body 的 json.Marshal 编成真正的 JSON 数组/对象。绝不能走下面的 %v 分支
+		// 弄成 "[1]" 字符串——那样领星收到的是字符串而非数组，报「参数有误」。
+		return x
 	default:
 		return fmt.Sprintf("%v", x)
 	}

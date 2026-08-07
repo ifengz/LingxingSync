@@ -364,6 +364,14 @@ func anyToString(v any) string {
 		return ""
 	case []byte:
 		return string(x)
+	case []any, map[string]any:
+		// 数组/对象参数参与签名时按紧凑 JSON 编码（领星官方 SDK 对非标量值 json_encode），
+		// 与 POST body 的 json.Marshal 形态一致，保证「签名串」和「实际 body」对得上；
+		// 否则 %v 会得到 "[1]"，签名与领星侧算出的不一致 → 签名错。
+		if b, err := json.Marshal(x); err == nil {
+			return string(b)
+		}
+		return fmt.Sprintf("%v", x)
 	default:
 		return fmt.Sprintf("%v", x)
 	}
