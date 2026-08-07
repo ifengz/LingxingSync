@@ -184,6 +184,8 @@ func ClassifyChange(oldCfg, newCfg *Config) ChangeKind {
 			oldE.Cron != newE.Cron ||
 			!reflect.DeepEqual(oldE.Rate, newE.Rate) ||
 			oldE.WindowDays != newE.WindowDays ||
+			oldE.DateField != newE.DateField ||
+			oldE.DateOffsetDays != newE.DateOffsetDays ||
 			!reflect.DeepEqual(oldE.ExtraParams, newE.ExtraParams) ||
 			!reflect.DeepEqual(oldE.StoreSids, newE.StoreSids) {
 			return ChangeHot

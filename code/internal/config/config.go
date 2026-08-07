@@ -93,8 +93,14 @@ type Endpoint struct {
 	Rate           Rate           `yaml:"rate"`
 	Cron           string         `yaml:"cron"`
 	Enabled        bool           `yaml:"enabled"`
-	WindowDays     int            `yaml:"window_days"` // 0=全量；>0=滚动 N 天
+	WindowDays     int            `yaml:"window_days"` // 0=全量；>0=滚动 N 天（注入 start_date/end_date 范围）
 	ExtraParams    map[string]any `yaml:"extra_params"`
+
+	// 单日期参数（报表类接口常见，如销量统计的 event_date）：与 WindowDays 的「范围」互补。
+	// DateField 非空时，baseParams 注入 DateField = 今天往前 DateOffsetDays 天的单个 YYYY-MM-DD。
+	// 通用机制，所有单日期接口共用，不给单个接口写死代码。DateField 空则整套机制不生效。
+	DateField      string `yaml:"date_field"`       // 单日期参数名，如 "event_date"；空=不注入
+	DateOffsetDays int    `yaml:"date_offset_days"` // 往前几天：0=今天，1=昨天（报表通常取昨天，T+1 才齐）
 
 	// 多店铺迭代（宪法 §10）
 	IsStoreSource  bool     `yaml:"is_store_source"`  // true=店铺来源接口，启动优先同步

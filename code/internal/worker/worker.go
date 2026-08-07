@@ -478,6 +478,12 @@ func (w *EndpointWorker) baseParams() map[string]any {
 		params["start_date"] = start.Format("2006-01-02")
 		params["end_date"] = now.Format("2006-01-02")
 	}
+	// 单日期注入（报表类接口，如销量统计 event_date）：今天往前 DateOffsetDays 天。
+	// 与上面的 window 范围互补；DateField 空则不生效。通用机制，不给单接口写死代码。
+	if w.Endpoint.DateField != "" {
+		d := time.Now().AddDate(0, 0, -w.Endpoint.DateOffsetDays)
+		params[w.Endpoint.DateField] = d.Format("2006-01-02")
+	}
 	return params
 }
 
