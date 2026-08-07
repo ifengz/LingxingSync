@@ -209,10 +209,22 @@ HTTP 状态码：`200` = ok；`400` = 参数错误；`500` = 内部错误。
 ---
 
 ### POST /api/settings/reload
-重新加载 config.yaml（热加载非结构性变更，如 enabled/cron 修改）。
+应用配置变更。**热加载语义**：
+- **可热加载**（不重启，就下次触发生效）：已有接口的 `enabled` / `cron` / `rate` / `window_days` / `extra_params` / `store_sids`。
+- **需重启**（结构性变更）：增删账号、增删接口、改 `path` / `method` / `table` / `database.*`。
 
 ```json
-{ "ok": true, "data": { "message": "配置已重载，Worker 将在下次触发时生效" } }
+{ "ok": true, "data": { "message": "配置已热加载", "need_restart": false } }
+{ "ok": true, "data": { "message": "结构性变更已保存，需重启生效", "need_restart": true } }
+```
+
+---
+
+### POST /api/settings/restart
+优雅重启进程（`syscall.Exec` 原地替换，PID 不变；宝塔 Supervisor 无感）。用于结构性变更后生效。
+
+```json
+{ "ok": true, "data": { "message": "正在重启…" } }
 ```
 
 ---
@@ -223,4 +235,75 @@ HTTP 状态码：`200` = ok；`400` = 参数错误；`500` = 内部错误。
 ```json
 { "ok": true,  "data": { "latency_ms": 2 } }
 { "ok": false, "error": "dial tcp 127.0.0.1:3306: connection refused" }
+```
+
+---
+
+### POST /api/settings/test-connection?account=:id
+用指定账号真实取一次 token，验证 app_key/app_secret 是否可用。
+
+```json
+{ "ok": true,  "data": { "token_valid": true, "expires_in_sec": 7200 } }
+{ "ok": false, "error": "lingxing token: api code=... msg=..." }
+```
+
+---
+
+## 配置读写接口（受 X-Sync-Secret 中间件保护）
+
+> 以下接口支持 UI 增删改配置。所有写操作：解析 body → 改配置快照 → 校验 → 备份 `config.yaml.bak`
+> → 原子写 config.yaml → 判定热加载/重启。返回体统一带 `need_restart` 标志。
+
+### GET /api/config
+返回完整配置供 UI 编辑。**app_secret 脱敏**（`abcd****wxyz`），绝不明文回传。
+
+```json
+{
+  "ok": true,
+  "data": {
+    "accounts": [
+      { "id": "sc_us", "name": "自营-美国", "quota_group": "sc_us", "app_key": "ak_123", "app_secret": "abcd****wxyz" }
+    ],
+    "endpoints": [ { "name": "sc_stores", "display": "SC 店铺列表", "account": "sc_us", "path": "...", "method": "GET", "table": "ls_stores", "record_id_fields": ["sid"], "rate": {...}, "cron": "...", "enabled": true, "store_sids": [] } ]
+  }
+}
+```
+
+### POST /api/accounts
+新增账号。body = 单个 account 对象（含 app_secret 明文）。id 全局唯一，否则 400。
+
+### PUT /api/accounts/:id
+更新账号。app_secret 传空串则保留原值（避免脱敏值覆盖真值）。
+
+### DELETE /api/accounts/:id
+删除账号。**若仍有 endpoint 引用该账号 → 409 拦截**，返回引用列表，不级联删除。
+
+```json
+{ "ok": false, "error": "账号 sc_us 仍被 3 个接口引用，请先删除接口: [sc_stores, sc_inventory, sc_ads_daily]" }
+```
+
+### POST /api/endpoints
+新增接口。body = 单个 endpoint 对象。name 全局唯一、account 必须存在、table 必须已建表，否则 400。
+
+### PUT /api/endpoints/:name
+更新接口（改 path/method/table 属结构性变更，返回 need_restart:true）。
+
+### DELETE /api/endpoints/:name
+删除接口（停止其调度，不删已同步数据）。
+
+### GET /api/datasources/:table/columns
+读目标表真实列结构（替换旧占位）。
+
+```json
+{
+  "ok": true,
+  "data": {
+    "table": "ls_stores",
+    "columns": [
+      { "name": "account_id", "type": "varchar(32)", "is_primary": true },
+      { "name": "sid", "type": "varchar(32)", "is_primary": true },
+      { "name": "store_name", "type": "varchar(128)", "is_primary": false }
+    ]
+  }
+}
 ```

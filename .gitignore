@@ -3,10 +3,18 @@
 
 # Go 运行产物
 code/config.yaml
+code/config.yaml.bak
+*.bak
 code/lingxing-sync
 code/lingxing-sync.exe
 code/logs/
 *.log
+
+# 编译缓存 / 工具环境垃圾（绝不进仓库）
+code/.gocache/
+code/.playwright-cli/
+.playwright-mcp/
+.zcode/
 
 # 过程文件与测试数据
 doc/task_plan.md

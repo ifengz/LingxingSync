@@ -1,0 +1,191 @@
+{{/* API 配置：只管理 LingxingSync 已有账号、接口 Cron/限流和本地店铺摘要。 */}}
+
+{{define "content"}}
+<div x-data="settingsApi()" x-init="load()" class="max-w-7xl mx-auto">
+  <div class="flex flex-col gap-3 mb-5 md:flex-row md:items-center md:justify-between">
+    <div>
+      <h1 class="text-xl font-semibold text-slate-900">API 配置</h1>
+      <p class="mt-1 text-sm text-slate-500">账号连接、定时任务与本地店铺摘要</p>
+    </div>
+    <div class="flex items-center gap-2">
+      <span :class="info.db_connected ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'"
+            class="px-2.5 py-1 text-xs font-medium rounded-full"
+            x-text="info.db_connected ? '配置已加载' : '数据库不可达'"></span>
+      <button @click="load()" class="border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 px-3 py-1.5 rounded text-sm">刷新配置</button>
+      <button @click="testDB()" class="border border-brand-600 text-brand-700 hover:bg-brand-50 px-3 py-1.5 rounded text-sm">测试数据库</button>
+    </div>
+  </div>
+
+  <div x-show="needRestart" x-cloak class="mb-4 flex flex-col gap-2 rounded border border-amber-200 bg-amber-50 px-4 py-3 text-amber-900 sm:flex-row sm:items-center sm:justify-between">
+    <span class="text-sm">账号结构已改动，重启后新账号和删除账号才会作用于同步 Worker。</span>
+    <button @click="restartNow()" class="bg-amber-600 hover:bg-amber-700 text-white px-3 py-1.5 rounded text-sm">立即重启</button>
+  </div>
+
+  <div class="border-b border-slate-200 overflow-x-auto">
+    <nav class="flex min-w-max items-end gap-1" aria-label="账号配置">
+      <button @click="selectNew()"
+              :class="!selectedAccountId ? 'border-brand-600 bg-white text-brand-700' : 'border-transparent bg-slate-100 text-slate-600 hover:bg-slate-200'"
+              class="border-b-2 px-5 py-3 text-sm font-medium">新增配置</button>
+      <template x-for="account in accounts" :key="account.id">
+        <button @click="selectAccount(account.id)"
+                :class="selectedAccountId === account.id ? 'border-brand-600 bg-white text-brand-700' : 'border-transparent bg-slate-100 text-slate-600 hover:bg-slate-200'"
+                class="border-b-2 px-5 py-3 text-sm font-medium" x-text="account.name || account.id"></button>
+      </template>
+    </nav>
+  </div>
+
+  <section x-show="selectedAccountId" x-cloak class="bg-white border border-slate-200 rounded-b-lg rounded-tr-lg shadow-sm">
+    <div class="flex flex-col gap-4 border-b border-slate-200 px-5 py-4 lg:flex-row lg:items-center lg:justify-between">
+      <div class="min-w-0">
+        <div class="flex flex-wrap items-center gap-2">
+          <h2 class="text-base font-semibold text-slate-800" x-text="selectedAccount ? selectedAccount.name : ''"></h2>
+          <span :class="statusClass(selectedAccount)" class="rounded-full px-2 py-0.5 text-xs font-medium" x-text="statusText(selectedAccount)"></span>
+        </div>
+        <p class="mt-1 text-sm text-slate-500">
+          店铺 <span class="font-medium text-slate-700" x-text="storeSummary.total || 0"></span> 个
+          <span class="text-slate-300">|</span>
+          最近本地写入 <span x-text="fmtTime(storeSummary.last_synced_at)"></span>
+        </p>
+      </div>
+      <div class="flex flex-wrap gap-2">
+        <button @click="saveAccount()" class="bg-brand-600 hover:bg-brand-700 text-white px-4 py-2 rounded text-sm">保存连接</button>
+        <button @click="testAccount(selectedAccount)" class="border border-brand-600 text-brand-700 hover:bg-brand-50 px-4 py-2 rounded text-sm">测试连接</button>
+        <button @click="removeAccount(selectedAccount)" class="border border-red-200 text-red-700 hover:bg-red-50 px-4 py-2 rounded text-sm">删除当前连接</button>
+      </div>
+    </div>
+
+    <div class="space-y-4 p-5">
+      <section class="rounded border border-slate-200">
+        <div class="border-b border-slate-200 px-4 py-3">
+          <h3 class="text-sm font-semibold text-slate-800">基本信息</h3>
+        </div>
+        <div class="grid gap-4 p-4 md:grid-cols-2">
+          <div>
+            <label class="mb-1 block text-xs font-medium text-slate-600">API Base URL</label>
+            <input :value="info.base_url || 'https://openapi.lingxing.com'" readonly class="w-full rounded border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
+            <p class="mt-1 text-xs text-slate-400">服务启动参数，只读展示</p>
+          </div>
+          <div>
+            <label class="mb-1 block text-xs font-medium text-slate-600">限流分组</label>
+            <input x-model.trim="accountForm.quota_group" class="w-full rounded border border-slate-300 px-3 py-2 text-sm focus:border-brand-600 focus:outline-none" placeholder="留空时使用账号 ID">
+            <p class="mt-1 text-xs text-slate-400">同一分组共享该接口的限流器</p>
+          </div>
+          <div>
+            <label class="mb-1 block text-xs font-medium text-slate-600">账号名称</label>
+            <input x-model.trim="accountForm.name" class="w-full rounded border border-slate-300 px-3 py-2 text-sm focus:border-brand-600 focus:outline-none">
+          </div>
+          <div>
+            <label class="mb-1 block text-xs font-medium text-slate-600">账号 ID</label>
+            <input :value="accountForm.id" readonly class="w-full rounded border border-slate-200 bg-slate-50 px-3 py-2 font-mono text-sm text-slate-600">
+          </div>
+        </div>
+      </section>
+
+      <section class="rounded border border-slate-200">
+        <div class="border-b border-slate-200 px-4 py-3">
+          <h3 class="text-sm font-semibold text-slate-800">领星凭证</h3>
+          <p class="mt-1 text-xs text-slate-400">AppSecret 留空表示保留当前密钥，访问 Token 不保存或展示。</p>
+        </div>
+        <div class="grid gap-4 p-4 md:grid-cols-2">
+          <div>
+            <label class="mb-1 block text-xs font-medium text-slate-600">App Key</label>
+            <input x-model.trim="accountForm.app_key" class="w-full rounded border border-slate-300 px-3 py-2 font-mono text-sm focus:border-brand-600 focus:outline-none">
+          </div>
+          <div>
+            <label class="mb-1 block text-xs font-medium text-slate-600">App Secret</label>
+            <input x-model="accountForm.app_secret" type="password" autocomplete="new-password" placeholder="留空保持不变" class="w-full rounded border border-slate-300 px-3 py-2 font-mono text-sm focus:border-brand-600 focus:outline-none">
+          </div>
+        </div>
+      </section>
+
+      <section class="rounded border border-slate-200">
+        <div class="flex items-center justify-between gap-3 border-b border-slate-200 px-4 py-3">
+          <div>
+            <h3 class="text-sm font-semibold text-slate-800">定时任务</h3>
+            <p class="mt-1 text-xs text-slate-400">保存后立即热更新 Cron 与接口限流。</p>
+          </div>
+        </div>
+        <div class="divide-y divide-slate-100">
+          <template x-for="schedule in schedules" :key="schedule.name">
+            <div class="grid gap-3 p-4 lg:grid-cols-[minmax(10rem,1fr)_minmax(13rem,2fr)_7rem_8rem_auto] lg:items-end">
+              <div>
+                <div class="text-sm font-medium text-slate-800" x-text="schedule.display || schedule.name"></div>
+                <div class="mt-1 text-xs font-mono text-slate-400" x-text="schedule.name"></div>
+              </div>
+              <div>
+                <label class="mb-1 block text-xs font-medium text-slate-600">Cron（5 段）</label>
+                <input x-model.trim="schedule.cron" class="w-full rounded border border-slate-300 px-3 py-2 font-mono text-sm focus:border-brand-600 focus:outline-none">
+              </div>
+              <div>
+                <label class="mb-1 block text-xs font-medium text-slate-600">桶令牌数</label>
+                <input x-model.number="schedule.rate.bucket" min="1" type="number" class="w-full rounded border border-slate-300 px-3 py-2 text-sm focus:border-brand-600 focus:outline-none">
+              </div>
+              <div>
+                <label class="mb-1 block text-xs font-medium text-slate-600">最小间隔(ms)</label>
+                <input x-model.number="schedule.rate.interval_ms" min="0" type="number" class="w-full rounded border border-slate-300 px-3 py-2 text-sm focus:border-brand-600 focus:outline-none">
+              </div>
+              <div class="flex items-center gap-3 pb-0.5">
+                <label class="inline-flex items-center gap-2 whitespace-nowrap text-sm text-slate-700"><input x-model="schedule.enabled" type="checkbox" class="h-4 w-4 accent-blue-600">启用</label>
+                <button @click="saveSchedule(schedule)" class="whitespace-nowrap border border-brand-600 text-brand-700 hover:bg-brand-50 px-3 py-2 rounded text-sm">保存 Cron</button>
+              </div>
+            </div>
+          </template>
+          <p x-show="schedules.length === 0" class="px-4 py-8 text-center text-sm text-slate-400">该账号尚未配置同步接口</p>
+        </div>
+      </section>
+
+      <section class="rounded border border-slate-200">
+        <div class="flex flex-col gap-2 border-b border-slate-200 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h3 class="text-sm font-semibold text-slate-800">店铺目录摘要</h3>
+            <p class="mt-1 text-xs text-slate-400">读取本地 `ls_stores`，不修改店铺参与同步状态。</p>
+          </div>
+          <button @click="loadStores()" :disabled="storesLoading" class="self-start border border-slate-300 text-slate-700 hover:bg-slate-50 disabled:opacity-50 px-3 py-1.5 rounded text-sm sm:self-auto" x-text="storesLoading ? '读取中...' : '刷新摘要'"></button>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="min-w-full text-sm">
+            <thead class="bg-slate-50 text-left text-xs text-slate-500">
+              <tr>
+                <th class="px-4 py-2.5 font-medium">类型</th>
+                <th class="px-4 py-2.5 font-medium">店铺</th>
+                <th class="px-4 py-2.5 font-medium">店铺 ID</th>
+                <th class="px-4 py-2.5 font-medium">国家</th>
+                <th class="px-4 py-2.5 font-medium">状态</th>
+                <th class="px-4 py-2.5 font-medium">本地写入</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100">
+              <template x-for="store in storeSummary.items" :key="store.sid">
+                <tr>
+                  <td class="px-4 py-3 font-medium text-slate-700" x-text="store.store_type || '-'"></td>
+                  <td class="px-4 py-3 text-slate-800" x-text="store.store_name || '-'"></td>
+                  <td class="px-4 py-3 font-mono text-slate-600" x-text="store.sid"></td>
+                  <td class="px-4 py-3 text-slate-600" x-text="store.country || '-'"></td>
+                  <td class="px-4 py-3 text-slate-600" x-text="store.status || '-'"></td>
+                  <td class="px-4 py-3 text-slate-500" x-text="fmtTime(store.synced_at)"></td>
+                </tr>
+              </template>
+              <tr x-show="!storesLoading && storeSummary.items.length === 0">
+                <td colspan="6" class="px-4 py-8 text-center text-sm text-slate-400">暂无本地店铺记录</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  </section>
+
+  <section x-show="!selectedAccountId" x-cloak class="bg-white border border-slate-200 rounded-b-lg rounded-tr-lg p-5 shadow-sm">
+    <h2 class="text-base font-semibold text-slate-800">新增 API 配置</h2>
+    <p class="mt-1 text-sm text-slate-500">保存账号后，再在该账号标签中维护 Cron 与限流。</p>
+    <div class="mt-5 grid gap-4 md:grid-cols-2">
+      <div><label class="mb-1 block text-xs font-medium text-slate-600">账号 ID</label><input x-model.trim="newForm.id" class="w-full rounded border border-slate-300 px-3 py-2 text-sm focus:border-brand-600 focus:outline-none" placeholder="例如 sc_us"></div>
+      <div><label class="mb-1 block text-xs font-medium text-slate-600">账号名称</label><input x-model.trim="newForm.name" class="w-full rounded border border-slate-300 px-3 py-2 text-sm focus:border-brand-600 focus:outline-none"></div>
+      <div><label class="mb-1 block text-xs font-medium text-slate-600">限流分组</label><input x-model.trim="newForm.quota_group" class="w-full rounded border border-slate-300 px-3 py-2 text-sm focus:border-brand-600 focus:outline-none" placeholder="留空时使用账号 ID"></div>
+      <div><label class="mb-1 block text-xs font-medium text-slate-600">App Key</label><input x-model.trim="newForm.app_key" class="w-full rounded border border-slate-300 px-3 py-2 font-mono text-sm focus:border-brand-600 focus:outline-none"></div>
+      <div class="md:col-span-2"><label class="mb-1 block text-xs font-medium text-slate-600">App Secret</label><input x-model="newForm.app_secret" type="password" autocomplete="new-password" class="w-full rounded border border-slate-300 px-3 py-2 font-mono text-sm focus:border-brand-600 focus:outline-none"></div>
+    </div>
+    <div class="mt-5 flex justify-end"><button @click="addAccount()" class="bg-brand-600 hover:bg-brand-700 text-white px-4 py-2 rounded text-sm">保存配置</button></div>
+  </section>
+</div>
+{{end}}

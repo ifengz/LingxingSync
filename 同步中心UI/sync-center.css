@@ -1,0 +1,83 @@
+/* Sync Center-specific styles extracted from the source application's globals. */
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 999px;
+  padding: 3px 8px;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.badge-success {
+  background: var(--success-light);
+  color: var(--success-dark);
+}
+.badge-warning {
+  background: var(--warning-light);
+  color: var(--warning-dark);
+}
+.badge-danger {
+  background: var(--danger-light);
+  color: var(--danger-dark);
+}
+.badge-info {
+  background: var(--primary-soft);
+  color: var(--primary-hover);
+}
+.badge-neutral {
+  background: #f1f5f9;
+  color: #475569;
+}
+
+.sync-section-header-controls input,
+.sync-section-header-controls select {
+  min-height: 28px !important;
+  padding-top: 4px !important;
+  padding-bottom: 4px !important;
+  font-size: 12px !important;
+}
+.sync-section-header-controls button,
+.sync-section-header-actions button {
+  min-height: 28px;
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+
+.sync-run-hcell,
+.sync-hierarchy-child {
+  position: relative;
+}
+
+.sync-run-parent-expanded .sync-run-hcell::after,
+.sync-hierarchy-child::before,
+.sync-hierarchy-child::after {
+  position: absolute;
+  z-index: 0;
+  background: #b8c9d5;
+  content: "";
+  pointer-events: none;
+}
+
+.sync-run-parent-expanded .sync-run-hcell::after {
+  top: calc(50% + 12px);
+  bottom: -1px;
+  left: 24px;
+  width: 1px;
+}
+.sync-hierarchy-child::before {
+  top: -1px;
+  bottom: -1px;
+  left: 24px;
+  width: 1px;
+}
+.sync-hierarchy-child-last::before {
+  bottom: 50%;
+}
+.sync-hierarchy-child::after {
+  top: 50%;
+  left: 24px;
+  width: 14px;
+  height: 1px;
+  transform: translateY(-50%);
+}

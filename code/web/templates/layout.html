@@ -1,0 +1,118 @@
+{{/* web/templates/layout.html — 全局骨架。
+    宪法对应：doc/core/05-ui.md §3（顶部导航 5 项 + 颜色系统 §2）。
+
+    解耦机制（clone 基树法）：
+      - 本文件是裸模板（无 {{define}} 包裹），含 {{block "content" .}} 预留页面区。
+      - server.parseTemplates 先把它解析成基树，再对每页 Clone + Parse 页面文件。
+      - 每个页面文件只写 {{define "content"}}...{{end}}，覆盖基树的 block。
+      - 改一页只需改该页文件，不影响其他页（各页独立模板树）。
+
+    依赖约定：本布局假设 body 上挂了一个 Alpine 根组件 window.AppRoot()，
+    提供 toast / confirm / apiGet / apiPost 等全局能力（见 web/static/app.js）。
+*/}}
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>领星同步机</title>
+  <!-- Tailwind CSS CDN（宪法：零构建步骤） -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            brand:   { DEFAULT: '#2563EB', 50: '#EFF6FF', 100: '#DBEAFE', 600: '#2563EB', 700: '#1D4ED8' },
+            primary: '#2563EB',
+            line:    '#e2e8f0',
+          }
+        }
+      }
+    }
+  </script>
+  <!-- Alpine.js CDN -->
+  <script defer src="https://unpkg.com/alpinejs@3.14.8/dist/cdn.min.js"></script>
+  <!-- 全局公共逻辑 -->
+  <script src="/static/app.js"></script>
+  <style>
+    [x-cloak]{display:none!important}
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-900 min-h-screen" x-data="AppRoot()">
+
+  <div class="flex min-h-screen flex-col">
+
+    <!-- ── 顶栏 ── -->
+    <header class="sticky top-0 z-30 bg-white border-b border-slate-200">
+
+      <!-- 第一行：品牌 + 系统信息 -->
+      <div class="flex items-center justify-between px-4 md:px-6 h-12 border-b border-slate-100">
+        <span class="text-sm font-semibold text-slate-800 tracking-tight">领星同步机</span>
+        <div class="flex items-center gap-3 text-xs text-slate-500">
+          <span>端口 <span class="font-mono font-medium text-slate-700">7799</span></span>
+          <span class="text-slate-200">|</span>
+          <span>端点 <span class="font-medium text-slate-700">{{.EndpointCount}}</span></span>
+          <span class="text-slate-200">|</span>
+          <span>账号 <span class="font-medium text-slate-700">{{.AccountCount}}</span></span>
+        </div>
+      </div>
+
+      <!-- 第二行：页面导航（pill 按钮，参照 React TabStrip） -->
+      <nav class="flex items-center gap-1 px-4 md:px-6 h-10" aria-label="主导航">
+        {{$a := .Active}}
+        {{range listItems}}
+          <a href="{{.Href}}"
+             {{if eq $a .Key}}
+               class="inline-flex items-center rounded-md border border-brand-600 bg-brand-600 px-3 py-1 text-xs font-bold text-white transition"
+             {{else}}
+               class="inline-flex items-center rounded-md border border-transparent px-3 py-1 text-xs font-medium text-slate-600 hover:border-slate-200 hover:bg-slate-50 hover:text-slate-900 transition"
+             {{end}}>
+            {{.Label}}
+          </a>
+        {{end}}
+      </nav>
+
+    </header>
+
+    <!-- ── 页面内容 ── -->
+    <main class="flex-1 p-3 md:p-6 overflow-auto">
+      {{block "content" .}}{{end}}
+    </main>
+
+  </div>
+
+  <!-- 全局 Toast 容器 -->
+  <div class="fixed top-4 right-4 z-50 space-y-2 w-80">
+    <template x-for="t in toasts" :key="t.id">
+      <div x-show="t.show"
+           :class="{
+             'border-emerald-500': t.type==='success',
+             'border-red-500':    t.type==='error',
+             'border-amber-500':  t.type==='warn',
+             'border-slate-300':  t.type==='info'
+           }"
+           class="bg-white border-l-4 rounded shadow-lg px-4 py-3 text-sm flex items-start gap-2 transition">
+        <span class="flex-1 text-slate-700" x-text="t.msg"></span>
+        <button class="text-slate-400 hover:text-slate-600" @click="t.show=false" aria-label="关闭">×</button>
+      </div>
+    </template>
+  </div>
+
+  <!-- 全局 Confirm 弹窗 -->
+  <div x-show="confirmState.open" x-cloak
+       class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40">
+    <div class="bg-white rounded-lg shadow-xl w-96 p-5">
+      <h3 class="text-base font-semibold text-slate-800 mb-2" x-text="confirmState.title"></h3>
+      <p class="text-sm text-slate-600 mb-4 whitespace-pre-line" x-text="confirmState.message"></p>
+      <div class="flex justify-end gap-2">
+        <button @click="confirmResolve(false)"
+                class="px-3 py-1.5 text-sm border border-slate-300 rounded hover:bg-slate-50">取消</button>
+        <button @click="confirmResolve(true)"
+                class="px-3 py-1.5 text-sm bg-brand-600 text-white rounded hover:bg-brand-700">确定</button>
+      </div>
+    </div>
+  </div>
+
+</body>
+</html>

@@ -1,6 +1,11 @@
 # 领星同步机 — 配置文件规范（宪法层）
 
 > `config.yaml` 是唯一配置入口。不进 git（gitignore），`config.example.yaml` 进 git。
+>
+> **可人手改，也可由 UI 读写。** UI 保存时整体重写 `config.yaml` 并先生成 `config.yaml.bak`
+> （原子写：临时文件 + rename）。Go 序列化不保留注释，故教学注释以带注释的
+> `config.example.yaml` 为准，`config.yaml` 只存生效值。写入前一律走 config.validate 校验，
+> 校验失败不落盘。
 
 ---
 
@@ -90,6 +95,8 @@ endpoints:
     cron: "0 */2 * * *"          # 每 2 小时
     enabled: true
     window_days: 0               # 0 = 全量（不带日期参数）
+    # iterate_by_store: true     # 若按店铺迭代，可用 store_sids 限定范围：
+    # store_sids: ["1001","1002"] # 空/省略 = 该账号全部店铺；非空 = 只同步这些 sid
 
   - name: sc_ads_daily
     display: "SC 广告日报"
@@ -142,4 +149,5 @@ retention:
 | `endpoints[].is_store_source` | bool | 否 | true = 店铺来源接口，启动时优先同步 |
 | `endpoints[].iterate_by_store` | bool | 否 | true = Worker 对每个 sid 循环一次（需配合 `is_store_source` 接口） |
 | `endpoints[].store_param_name` | string | 否 | 迭代时注入店铺ID 的参数名，默认 `sid` |
+| `endpoints[].store_sids` | array | 否 | 店铺白名单；空 = 同步该账号全部 sid，非空 = 只同步列出的 sid。仅对 `iterate_by_store: true` 生效 |
 | `retention.task_logs_days` | int | 否 | 默认 90 |

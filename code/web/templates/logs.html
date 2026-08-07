@@ -1,0 +1,150 @@
+{{/* web/templates/logs.html — 同步日志（/logs）。
+    宪法对应：doc/05-pages.md 同步日志：筛选条 + 表格 + 分页 + 详情抽屉。
+    详情抽屉：x-show 控制，调 /api/tasks/{id}/logs 展示逐页日志 + 重新触发按钮（仅失败）。
+    颜色对照宪法 §2/§5。
+*/}}
+
+{{define "content"}}
+<script>window.__PAGE__ = {
+  endpointNames: {{json .EndpointNames}},
+  accountIDs: {{json .AccountIDs}}
+};</script>
+<div x-data="logsPage()" x-init="load()" class="space-y-4">
+  <!-- 筛选条 -->
+  <div class="bg-white rounded-lg border border-slate-200 p-4">
+    <div class="grid grid-cols-5 gap-3 items-end">
+      <div>
+        <label class="block text-xs text-slate-500 mb-1">数据类型</label>
+        <select x-model="filters.endpoint" @change="filters.page=1; load()" class="w-full border border-slate-300 rounded px-2 py-1.5 text-sm">
+          <option value="">全部</option>
+          <template x-for="n in endpointNames" :key="n">
+            <option :value="n" x-text="n"></option>
+          </template>
+        </select>
+      </div>
+      <div>
+        <label class="block text-xs text-slate-500 mb-1">账号</label>
+        <select x-model="filters.account" @change="filters.page=1; load()" class="w-full border border-slate-300 rounded px-2 py-1.5 text-sm">
+          <option value="">全部</option>
+          <template x-for="a in accountIDs" :key="a">
+            <option :value="a" x-text="a"></option>
+          </template>
+        </select>
+      </div>
+      <div>
+        <label class="block text-xs text-slate-500 mb-1">状态</label>
+        <select x-model="filters.status" @change="filters.page=1; load()" class="w-full border border-slate-300 rounded px-2 py-1.5 text-sm">
+          <option value="">全部</option>
+          <option value="success">成功</option>
+          <option value="running">运行中</option>
+          <option value="error">失败</option>
+          <option value="cancelled">已取消</option>
+        </select>
+      </div>
+      <div>
+        <label class="block text-xs text-slate-500 mb-1">起始日期</label>
+        <input type="date" x-model="filters.date_from" @change="filters.page=1; load()" class="w-full border border-slate-300 rounded px-2 py-1.5 text-sm">
+      </div>
+      <div>
+        <label class="block text-xs text-slate-500 mb-1">结束日期</label>
+        <input type="date" x-model="filters.date_to" @change="filters.page=1; load()" class="w-full border border-slate-300 rounded px-2 py-1.5 text-sm">
+      </div>
+    </div>
+  </div>
+
+  <!-- 日志表格 -->
+  <div class="bg-white rounded-lg border border-slate-200">
+    <table class="w-full text-sm">
+      <thead class="bg-slate-50 text-slate-500 text-xs uppercase">
+        <tr>
+          <th class="text-left px-4 py-2 font-medium">时间</th>
+          <th class="text-left px-4 py-2 font-medium">数据类型</th>
+          <th class="text-left px-4 py-2 font-medium">账号</th>
+          <th class="text-left px-4 py-2 font-medium">触发</th>
+          <th class="text-left px-4 py-2 font-medium">状态</th>
+          <th class="text-right px-4 py-2 font-medium">记录数</th>
+          <th class="text-right px-4 py-2 font-medium">耗时</th>
+          <th class="text-right px-4 py-2 font-medium">操作</th>
+          <th class="text-right px-4 py-2 font-medium">详情</th>
+        </tr>
+      </thead>
+      <tbody>
+        <template x-for="t in tasks" :key="t.id">
+          <tr class="border-t border-slate-100 hover:bg-slate-50 cursor-pointer"
+              @click="openDetail(t)">
+            <td class="px-4 py-3 text-slate-600" x-text="fmtTime(t.started_at)"></td>
+            <td class="px-4 py-3 text-slate-700" x-text="t.endpoint"></td>
+            <td class="px-4 py-3 text-slate-600" x-text="t.account_id"></td>
+            <td class="px-4 py-3 text-slate-500 text-xs" x-text="t.trigger_type"></td>
+            <td class="px-4 py-3">
+              <span :class="statusClass(t.status)" class="text-xs px-2 py-0.5 rounded" x-text="statusText(t.status)"></span>
+            </td>
+            <td class="px-4 py-3 text-right text-slate-600" x-text="t.records_upserted"></td>
+            <td class="px-4 py-3 text-right text-slate-500 text-xs" x-text="fmtDur(t.duration_sec)"></td>
+            <td class="px-4 py-3 text-right">
+              <!-- T4：行内 取消/重试（仅单条，决策⑥）。@click.stop 防止冒泡触发行 openDetail -->
+              <button x-show="t.status === 'running'" @click.stop="cancelRow(t)"
+                      class="text-xs text-red-600 hover:text-red-700 border border-red-200 rounded px-2 py-1">取消</button>
+              <button x-show="t.status === 'error'" @click.stop="retryRow(t)"
+                      class="text-xs text-brand-700 hover:underline">重试</button>
+            </td>
+            <td class="px-4 py-3 text-right">
+              <button @click.stop="openDetail(t)" class="text-xs text-brand-700 hover:underline">查看</button>
+            </td>
+          </tr>
+        </template>
+        <tr x-show="tasks.length===0" class="border-t border-slate-100">
+          <td colspan="9" class="px-4 py-8 text-center text-slate-400 text-sm">无符合条件的记录</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <!-- 分页 -->
+    <div class="px-4 py-3 border-t border-slate-100 flex items-center justify-between text-sm">
+      <div class="text-slate-500">共 <span x-text="total"></span> 条</div>
+      <div class="flex items-center gap-2">
+        <button @click="gotoPage(filters.page-1)" :disabled="filters.page<=1"
+                class="px-2 py-1 border border-slate-300 rounded disabled:opacity-40">上一页</button>
+        <span class="text-slate-600">第 <span x-text="filters.page"></span> 页</span>
+        <button @click="gotoPage(filters.page+1)" :disabled="filters.page*filters.page_size>=total"
+                class="px-2 py-1 border border-slate-300 rounded disabled:opacity-40">下一页</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 详情抽屉（独立于上方 x-data，便于定位 fixed） -->
+<div x-data="taskDetail()" x-show="open" x-cloak
+     @keydown.escape.window="close()"
+     class="fixed inset-0 z-40 flex justify-end bg-slate-900/30">
+  <div class="bg-white w-[480px] h-full shadow-xl flex flex-col">
+    <div class="h-14 px-4 border-b border-slate-200 flex items-center justify-between">
+      <h3 class="text-sm font-semibold text-slate-800">任务详情 #<span x-text="taskId"></span></h3>
+      <button @click="close()" class="text-slate-400 hover:text-slate-600">关闭</button>
+    </div>
+    <div class="flex-1 overflow-auto p-4 space-y-2">
+      <div x-show="loading" class="text-center text-slate-400 text-sm py-8">加载中…</div>
+      <template x-for="log in detail" :key="log.id">
+        <div class="border border-slate-200 rounded p-3 text-sm">
+          <div class="flex items-center justify-between mb-1">
+            <span class="font-medium text-slate-700">第 <span x-text="log.page"></span> 页</span>
+            <span class="text-xs text-slate-500" x-text="log.duration_ms + ' ms'"></span>
+          </div>
+          <div class="flex gap-4 text-xs text-slate-500">
+            <span>HTTP <span x-text="log.http_status"></span></span>
+            <span>API Code <span x-text="log.api_code"></span></span>
+            <span>记录 <span x-text="log.records_count"></span></span>
+          </div>
+          <div x-show="log.error_raw" class="mt-2 text-xs text-red-600 bg-red-50 rounded p-2 break-all"
+               x-text="log.error_raw"></div>
+        </div>
+      </template>
+      <div x-show="!loading && detail.length===0" class="text-center text-slate-400 text-sm py-8">无逐页日志</div>
+    </div>
+    <div class="px-4 py-3 border-t border-slate-200 flex justify-end gap-2">
+      <button x-show="canRetry" @click="retry()"
+              class="text-sm bg-brand-600 hover:bg-brand-700 text-white px-3 py-1.5 rounded">重新触发</button>
+    </div>
+  </div>
+</div>
+{{end}}

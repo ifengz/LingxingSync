@@ -196,6 +196,85 @@ func (h *TokenHolder) Get() (string, error) {
 
 ---
 
+## 7.5 配置写回与热加载 / 重启生命周期
+
+> UI 可增删改 `config.yaml`（字段见 [03-config.md](03-config.md)）。写回与生效分两条路径，由「变更是否改变 Worker 集合结构」决定。
+
+### 写回：整体重写 + 备份（原子）
+
+```go
+// internal/config/store.go
+// Save 用互斥锁串行化所有写操作，避免并发写坏文件。
+func (s *Store) Save(cfg *Config) error {
+    s.mu.Lock()
+    defer s.mu.Unlock()
+    // 1. 校验新配置（复用 Validate，非法直接拒绝，不落盘）
+    // 2. 备份现有 config.yaml → config.yaml.bak（保留最近一份）
+    // 3. marshal 新配置 → 写临时文件 config.yaml.tmp
+    // 4. os.Rename(tmp, config.yaml)  ← 原子替换，写一半崩溃不会坏原文件
+}
+```
+
+**注释代价（已知）：** Go YAML marshal 不保留注释。`config.yaml` 经 UI 写一次后，教学注释丢失；完整注释永久保留在 `config.example.yaml`（进 git，不被 UI 触碰）。凭证块（app_secret / db password）由 UI 表单显式提交，GET 返回时脱敏。
+
+### 生效：热加载 vs 重启
+
+| 变更类型 | 判定 | 生效方式 |
+|---|---|---|
+| **非结构性** | 已有 endpoint 的 `enabled` / `cron` / `rate` / `window_days` / `extra_params` / `store_sids` 变化 | `POST /api/settings/reload` 热加载，不重启 |
+| **结构性** | 增删 account、增删 endpoint、改 endpoint 的 `path`/`method`/`table`/`account`、改 `database.*`/`server.port` | `POST /api/settings/restart` 重启进程 |
+
+判定逻辑集中在一处：
+
+```go
+// internal/config/store.go
+// RequiresRestart 对比新旧配置，返回 true 表示必须重启才能生效。
+func RequiresRestart(old, new *Config) bool {
+    // account 集合变化（增删/改 app_key/app_secret/quota_group）→ true
+    // endpoint 集合变化（增删）→ true
+    // 任一 endpoint 的 path/method/table/account 变化 → true
+    // database.* 或 server.port 变化 → true
+    // 其余（enabled/cron/rate/window/extra/store_sids）→ false
+}
+```
+
+### 热加载实现：更新已有 Worker，不重建集合
+
+```go
+// internal/worker/registry.go
+// ApplyReload 把新配置套到已存在的 Worker 上（集合不变前提下）。
+func (r *Registry) ApplyReload(cfg *config.Config) {
+    // 对每个 Worker：w.UpdateEndpoint(newEp) —— 加锁替换 endpoint 快照
+    // rate 变化时：重建该 (quota_group, path) 的 Limiter
+    // 重新注册 scheduler 的 cron entries（enabled/cron 可能变）
+}
+```
+
+```go
+// internal/worker/worker.go
+// UpdateEndpoint 加锁替换 Worker 持有的 endpoint 配置。
+// 下次触发时读到的就是新值；不影响正在跑的那一次同步。
+func (w *EndpointWorker) UpdateEndpoint(ep config.Endpoint) {
+    w.mu.Lock()
+    defer w.mu.Unlock()
+    w.ep = ep
+}
+```
+
+### 重启实现：syscall.Exec 原地替换
+
+```go
+// internal/server/handlers.go — POST /api/settings/restart
+// 用 syscall.Exec 替换当前进程映像：PID 不变，重新加载 config.yaml、重跑迁移、
+// 重建全部 Worker。宝塔 Supervisor 下同样工作（Supervisor 靠 PID 守护，PID 不变）。
+exe, _ := os.Executable()
+syscall.Exec(exe, os.Args, os.Environ())
+```
+
+> 重启会中断正在进行的同步请求，属预期行为——结构性变更本就需要重建 Worker 池。
+
+---
+
 ## 8. 禁止引入的东西（防止滑回 polabel2）
 
 | 禁止 | 原因 |
