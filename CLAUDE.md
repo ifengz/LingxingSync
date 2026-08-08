@@ -101,13 +101,13 @@ Go 单二进制（module: lingxing-sync, Go 1.23）
 
 **本地开发（Docker MySQL）**：见 `code/README.md`，`docker run mysql:8.0` → `cp config.example.yaml config.yaml` → `make build && ./lingxing-sync` → 开 `http://127.0.0.1:7799`。
 
-**改完代码的收口动作**：`make fmt && make vet && go test ./...` 全绿 → `make build` → 重启 7799 上的进程 → 抽查 5 个页面 HTTP 200 非空。这套流程记录在 `doc/core/progress.md`，沿用即可。
+**改完代码的收口动作**：`make fmt && make vet && go test ./...` 全绿 → `make build` → 重启 7799 上的进程 → 抽查 4 个页面 HTTP 200 非空。这套流程记录在 `doc/core/progress.md`，沿用即可。
 
 ---
 
 ## 6. UI 技术栈红线（重要）
 
-宪法 `doc/core/05-ui.md §1` 当前规定：**禁止 React / Vue / Webpack / npm / Node.js**，服务器上只需要 Go 和 MySQL。现有 5 个页面（API 配置 / 同步中心 / 同步管理 / 日志 / 数据源）用 `html/template` + Alpine.js + Tailwind CDN 实现，`//go:embed web/` 打包进单二进制。
+宪法 `doc/core/05-ui.md §1` 当前规定：**禁止 React / Vue / Webpack / npm / Node.js**，服务器上只需要 Go 和 MySQL。现有 4 个页面（API 配置 / 同步配置 / 同步日志 / 数据源）用 `html/template` + Alpine.js + Tailwind CDN 实现，`//go:embed web/` 打包进单二进制。
 
 > ⚠️ 如果后续决定引入 React 前端（例如把外部的同步中心 UI 套进来），属于**修改宪法**，必须：
 > 1. 先与用户确认接入方式（静态 SPA 托管 / Alpine 重写 / 独立 Node 服务三选一）；
@@ -147,7 +147,7 @@ LingxingSync/
     │   ├── db/                ← pool + tasks + upsert + migrate
     │   └── server/            ← HTTP server + handlers + reconcile
     ├── web/
-    │   ├── templates/         ← Go html/template（5 个页面）
+    │   ├── templates/         ← Go html/template（4 个页面）
     │   └── static/app.js      ← Alpine.js 逻辑
     └── migrations/            ← 001_system / 002_data_tables / 003_fix_nullable
 ```

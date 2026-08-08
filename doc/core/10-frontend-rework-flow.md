@@ -42,7 +42,7 @@
 |---|---|
 | `run_id` / `SyncRunRow` / parent-child run | `task.id`（扁平 `sync_tasks` 一行） |
 | `source` = self / affiliate / spotterio | `account_id`（领星账号 id，如 `sc_us`） |
-| `CoverageDimension` / 覆盖矩阵按天×维度 | 无。概览用 `账号 × 接口` 状态格（见 T5） |
+| `CoverageDimension` / 覆盖矩阵按天×维度 | 无。~~概览用 `账号 × 接口` 状态格（见 T5）~~ → 概览页已删（2026-08-08）；数据新鲜度改由数据源页「最后写入」列承担 |
 | `SyncScheduleRow` | endpoint 配置对象（`/api/config` 的 `endpoints[]`） |
 | `chunk_label` / `segment` / `lease` | 无，禁止引入 |
 
@@ -208,6 +208,8 @@ if !w0.TriggerManual(in.StoreSids) { errJSON(w, 409, "...已在运行或队列..
 
 ### T3 · 列表刷新：5s 轮询 + 手动刷新按钮并存（决策④）
 
+> **2026-08-08 部分废弃**：本任务中「同步中心（`/`）轮询 `/api/status`」一条已随概览页删除而失效（见 §5 / `05-ui.md §5`）。`/sync` 手动 Tab 与 `/logs` 的轮询仍然成立。后端 `/api/status`（`registry.Statuses/Summary`）保留但已无前端消费方，可作健康探针或按需再接。下方 T3 原文保留为历史。
+
 - **现状**：`syncCenter` 声明了 `polling:null` 但**没启动**；`syncManage` 只有手动"刷新"。
 - **目标**：进入 `/`（同步中心）和 `/sync` 手动 Tab、`/logs` 后，每 5 秒自动拉一次；手动刷新按钮保留。
 - **改法**：各组件 `init()` 里 `this.polling = setInterval(()=>this.load(), 5000)`；
@@ -230,7 +232,12 @@ if !w0.TriggerManual(in.StoreSids) { errJSON(w, 409, "...已在运行或队列..
 - **验收**：运行中的行能取消（→已取消）；失败行能重试（→新任务入队，5s 轮询里出现新行）；点按钮不误开抽屉。
 - **禁止**：**不加多选框/批量条**（决策⑥仅单条）。不在日志页做筛选之外的复杂批处理。
 
-### T5 · 同步中心概览：账号 × 接口 状态格（宪法简版；覆盖矩阵留待以后）
+### T5 · ~~同步中心概览：账号 × 接口 状态格~~ —— 已废止（2026-08-08：概览页整页删除）
+
+> **T5 已被后续决策推翻**：概览页（`/`, sync_center）只读进程内存状态（`/api/status` → `registry.Statuses()`），
+> 进程重启即归零、与磁盘 `ls_*` 表真实新鲜度无关，已整页删除；`/` 现 302 跳转 `/sync`。
+> 「哪张表没有近期数据」改由数据源页（§8）「最后写入」列（`db.TableLastSync` = `MAX(synced_at)`，来自 DB）承担。
+> 详见 `05-ui.md §5` 墓碑。下方 T5 原始内容仅存档，**不再作为实现依据**。
 
 - **现状**：`syncCenter` 有 `cellClass/cellText/cellClick`（:211-238），已是"账号×接口"格思路。
 - **目标**：**确认并保持宪法简版**——概览是 `账号（行）× 接口（列）` 或 `接口 × 账号` 的状态格，
@@ -274,7 +281,7 @@ if !w0.TriggerManual(in.StoreSids) { errJSON(w, 409, "...已在运行或队列..
 - [ ] 5s 轮询在 `/`、`/sync`手动、`/logs` 生效；手动刷新按钮并存；切页无 timer 泄漏。
 - [ ] 日志行：运行中可取消、失败可重试；点操作按钮不误开抽屉；无批量框。
 - [ ] 日志多维筛选 + 固定分页仍正常；"账号"label/表头三处已校正。
-- [ ] 概览为 账号×接口 状态格，点格跳筛选日志；无覆盖率抽屉。
+- [x] ~~概览为 账号×接口 状态格~~ → 概览页已删除（2026-08-08）；`/` 302 跳 `/sync`，新鲜度看数据源页「最后写入」列。
 - [ ] 全程无 `run_id`/`source`/`CoverageDimension`/`lease` 等 React 字段名混入。
 - [ ] `code/web/static/app.test.js` 若含相关断言，同步更新并通过。
 

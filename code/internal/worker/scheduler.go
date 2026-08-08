@@ -4,7 +4,7 @@
 //   - 对每个 enabled 的 endpoint，按 ep.Cron 注册一个 cron 任务，
 //     触发时向对应 Worker 发 Trigger 信号（非阻塞）。
 //   - 注册成功后，用 cron Entry.Next 计算下次触发时刻，调 worker.SetNextRun，
-//     供 /api/status 展示 next_run_at。
+//     记录到 worker 状态快照的 next_run_at（内部记账，暂无 HTTP 消费方）。
 //   - 注册一个 retention cron（cfg.Retention.CleanupCron），周期调 db.CleanupOld
 //     清理过期 task_logs / tasks。
 //
