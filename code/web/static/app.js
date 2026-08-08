@@ -248,6 +248,7 @@ window.syncManage = function () {
     endpoints: [],        // 手动同步勾选用：[{name,display,account_id,iterate_by_store,window_days}]
     schedule: [],         // 定时调度表：完整 endpoint 配置对象数组（来自 /api/config）
     accounts: [],         // 账号 id 列表（去重保序）
+    accountNames: {},     // 账号 id→名称映射（勾选项/店铺网格显示名称而非 ID）
     // 矩阵选择模型：账号（form.accounts）× 数据类型（form.types，键=path）。
     // 两账号同类型接口（name 不同但 path 相同）在 UI 只列一份「数据类型」，避免整段重复；
     // 触发时按「选中账号 × 选中类型」笛卡尔积解析回真实接口 name（见 resolvedEndpoints）。
@@ -312,6 +313,9 @@ window.syncManage = function () {
           name: e.name, display: e.display, account_id: e.account, path: e.path,
           iterate_by_store: !!e.iterate_by_store, window_days: e.window_days || 0
         }));
+        // 账号 ID→名称映射：勾选项与店铺网格显示账号名（自营领星）而非机器 ID（sc_us_1）。
+        this.accountNames = {};
+        for (const a of (cfg.accounts || [])) this.accountNames[a.id] = a.name || a.id;
         const seen = new Set();
         this.accounts = [];
         for (const e of this.endpoints) {
@@ -351,6 +355,8 @@ window.syncManage = function () {
     },
 
     // ---- T1：账号 × 数据类型矩阵辅助 ----
+    // 账号显示名：优先账号名称，取不到回退 ID。
+    accountName(id) { return this.accountNames[id] || id; },
     // 账号勾选（根维度）。切换 / 判定选中 / 全选清空。
     toggleAccount(acc) {
       const i = this.form.accounts.indexOf(acc);

@@ -69,7 +69,7 @@
                     class="grid h-3.5 w-3.5 place-items-center rounded border">
                 <svg x-show="isAccountPicked(acc)" class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
               </span>
-              <span :class="isAccountPicked(acc) && 'font-bold'" x-text="acc"></span>
+              <span :class="isAccountPicked(acc) && 'font-bold'" x-text="accountName(acc)"></span>
             </label>
           </template>
           <span class="ml-auto flex items-center gap-2 text-xs">
@@ -126,7 +126,7 @@
                 <label class="inline-flex cursor-pointer items-center gap-2 text-xs font-bold text-slate-600">
                   <input type="checkbox" :checked="visibleStoresAllSelected(acc)" @change="selectVisibleStores(acc)"
                          class="h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-600/30">
-                  <span x-text="acc"></span>
+                  <span x-text="accountName(acc)"></span>
                   <span class="font-normal text-slate-400">选择店铺</span>
                 </label>
                 <div class="flex items-center gap-2">
