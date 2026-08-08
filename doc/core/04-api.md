@@ -58,12 +58,22 @@ HTTP 状态码：`200` = ok；`400` = 参数错误；`500` = 内部错误。
 
 **请求体**（可选）
 ```json
-{ "force": true }    // force=true：忽略 enabled=false，强制触发
+{
+  "force": true,
+  "store_sids": ["store-1"],
+  "date_from": "2026-08-01",
+  "date_to": "2026-08-03"
+}
 ```
+
+`store_sids` 只对按店铺接口生效。`date_from` 与 `date_to` 必须同时传入，格式为
+`YYYY-MM-DD` 且开始日期不晚于结束日期；它们只覆盖本次手动任务，不会修改接口默认配置。
+只有已声明日期范围合同的接口接受范围；快照接口传日期返回 `400`。单日接口只能传同一天，
+映射到其配置的 `date_field`；单日接口的跨日同步需另行按日执行。
 
 **响应**
 ```json
-{ "ok": true, "data": { "task_id": 123 } }
+{ "ok": true, "data": { "message": "任务已加入队列，请在同步日志查看结果: sc_inventory", "endpoint": "sc_inventory", "queued": true } }
 ```
 
 ---
@@ -210,7 +220,7 @@ HTTP 状态码：`200` = ok；`400` = 参数错误；`500` = 内部错误。
 
 ### POST /api/settings/reload
 应用配置变更。**热加载语义**：
-- **可热加载**（不重启，就下次触发生效）：已有接口的 `enabled` / `cron` / `rate` / `window_days` / `extra_params` / `store_sids`。
+- **可热加载**（不重启，就下次触发生效）：已有接口的 `enabled` / `cron` / `rate` / `window_days` / `date_offset_days` / `extra_params` / `store_sids`。
 - **需重启**（结构性变更）：增删账号、增删接口、改 `path` / `method` / `table` / `database.*`。
 
 ```json
@@ -264,7 +274,7 @@ HTTP 状态码：`200` = ok；`400` = 参数错误；`500` = 内部错误。
     "accounts": [
       { "id": "sc_us", "name": "自营-美国", "quota_group": "sc_us", "app_key": "ak_123", "app_secret": "abcd****wxyz", "connection_check": { "cron": "*/20 * * * *", "enabled": true } }
     ],
-    "endpoints": [ { "name": "sc_stores", "display": "SC 店铺列表", "account": "sc_us", "path": "...", "method": "GET", "table": "ls_stores", "record_id_fields": ["sid"], "rate": {...}, "cron": "...", "enabled": true, "store_sids": [] } ]
+    "endpoints": [ { "name": "sc_stores", "display": "SC 店铺列表", "account": "sc_us", "path": "...", "method": "GET", "table": "ls_stores", "record_id_fields": ["sid"], "rate": {...}, "cron": "...", "enabled": true, "store_sids": [], "window_days": 0, "window_start_field": "", "window_end_field": "", "date_field": "", "date_offset_days": 0, "date_range_capable": false } ]
   }
 }
 ```
@@ -311,7 +321,8 @@ HTTP 状态码：`200` = ok；`400` = 参数错误；`500` = 内部错误。
 新增接口。body = 单个 endpoint 对象。name 全局唯一、account 必须存在、table 必须已建表，否则 400。
 
 ### PUT /api/endpoints/:name
-更新接口（改 path/method/table 属结构性变更，返回 need_restart:true）。
+更新接口（改 path/method/table 属结构性变更，返回 need_restart:true）。`window_days` 与
+`date_offset_days` 属热加载字段；前者调整范围接口的滚动窗口，后者调整单日接口的 T-N 日期。
 
 ### DELETE /api/endpoints/:name
 删除接口（停止其调度，不删已同步数据）。
