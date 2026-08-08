@@ -13,9 +13,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"lingxing-sync/internal/config"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -25,10 +27,6 @@ import (
 
 // DefaultPageSize 是领星单页拉取的默认长度。宪法 §4：单页不超过 200。
 const DefaultPageSize = 200
-
-// MockMode=true 时 Fetch 不打真接口，返回造的假数据，方便本地零凭证验证整条同步链路。
-// 默认 false，生产绝不开（main 可按 flag 开启，但严禁由外部请求触发）。
-var MockMode bool
 
 // FetchResult 是一次分页拉取的结果。
 type FetchResult struct {
@@ -142,11 +140,6 @@ func isSuccessMessage(msg string) bool {
 //   - apiCode 同上
 //   - error 非 nil 时，result 为 nil；error 内含 code/msg，fail-loud
 func (c *Client) Fetch(ctx context.Context, method, path string, params map[string]any) (*FetchResult, int, int, error) {
-	// Mock 模式：本地零凭证验证用，返回造数据。默认关闭，生产不开。
-	if MockMode {
-		return c.mockFetch(path, params)
-	}
-
 	m := strings.ToUpper(strings.TrimSpace(method))
 	if m == "" {
 		m = http.MethodPost // 领星业务接口默认 POST
@@ -235,18 +228,24 @@ func (c *Client) fetchOnce(ctx context.Context, method, path string, params map[
 	// 6. 发送
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return nil, 0, 0, fmt.Errorf("lingxing fetch: http do %s %s: %w", method, path, err)
+		fetchErr := NewFetchError(0, 0, fmt.Sprintf("http do %s %s: %v", method, path, err), 0, transportMayHaveReachedUpstream(err))
+		fetchErr.Cause = err
+		return nil, 0, 0, fetchErr
 	}
 	defer resp.Body.Close()
 
 	raw, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, resp.StatusCode, 0, fmt.Errorf("lingxing fetch: read body: %w", err)
+		fetchErr := NewFetchError(resp.StatusCode, 0, fmt.Sprintf("read body: %v", err), parseRetryAfterHeader(resp), true)
+		fetchErr.Cause = err
+		return nil, resp.StatusCode, 0, fetchErr
 	}
 
 	// 7. HTTP 非 200 → error（fail-loud）
 	if resp.StatusCode != http.StatusOK {
-		return nil, resp.StatusCode, 0, fmt.Errorf("lingxing fetch: http status %d for %s %s, body=%s", resp.StatusCode, method, path, truncateForLog(raw))
+		return nil, resp.StatusCode, 0, NewFetchError(resp.StatusCode, 0,
+			fmt.Sprintf("http status %d for %s %s, body=%s", resp.StatusCode, method, path, truncateForLog(raw)),
+			parseRetryAfterHeader(resp), true)
 	}
 
 	// 8. 解析响应壳
@@ -263,10 +262,13 @@ func (c *Client) fetchOnce(ctx context.Context, method, path string, params map[
 		}
 		// token 过期类错误（40001 或 message 含 token/expire）：返回 sentinel，让上层重试
 		if isTokenExpiredCode(ar.Code.asInt(), msg) {
-			return nil, resp.StatusCode, ar.Code.asInt(), fmt.Errorf("%w: code=%s msg=%q", errTokenExpired, ar.Code, msg)
+			fetchErr := NewFetchError(resp.StatusCode, ar.Code.asInt(), msg, parseRetryAfterHeader(resp), true)
+			fetchErr.Cause = errTokenExpired
+			return nil, resp.StatusCode, ar.Code.asInt(), fetchErr
 		}
 		// 其他失败：fail-loud 带 code/msg
-		return nil, resp.StatusCode, ar.Code.asInt(), fmt.Errorf("lingxing fetch: api error code=%s msg=%q path=%s", ar.Code, msg, path)
+		return nil, resp.StatusCode, ar.Code.asInt(), NewFetchError(resp.StatusCode, ar.Code.asInt(),
+			fmt.Sprintf("api error code=%s msg=%q path=%s", ar.Code, msg, path), parseRetryAfterHeader(resp), true)
 	}
 
 	// 9b. 软失败闸（fail-loud，宪法 §5）：
@@ -280,7 +282,8 @@ func (c *Client) fetchOnce(ctx context.Context, method, path string, params map[
 			softMsg = ar.Msg
 		}
 		if softMsg != "" && !isSuccessMessage(softMsg) {
-			return nil, resp.StatusCode, ar.Code.asInt(), fmt.Errorf("lingxing fetch: api soft-error code=%s msg=%q path=%s", ar.Code, softMsg, path)
+			return nil, resp.StatusCode, ar.Code.asInt(), NewFetchError(resp.StatusCode, ar.Code.asInt(),
+				fmt.Sprintf("api soft-error code=%s msg=%q path=%s", ar.Code, softMsg, path), parseRetryAfterHeader(resp), true)
 		}
 	}
 
@@ -392,7 +395,7 @@ func keysOf(obj map[string]json.RawMessage) []string {
 var errTokenExpired = fmt.Errorf("lingxing token expired")
 
 func isTokenExpiredErr(err error) bool {
-	return err != nil && strings.Contains(err.Error(), errTokenExpired.Error())
+	return err != nil && (errors.Is(err, errTokenExpired) || strings.Contains(err.Error(), errTokenExpired.Error()))
 }
 
 // isTokenExpiredCode 判断 api code/msg 是否属于 token 过期段。
@@ -402,8 +405,30 @@ func isTokenExpiredCode(code int, msg string) bool {
 	if code == 40001 {
 		return true
 	}
+	if code == 2001003 || code == 2001005 {
+		return true
+	}
 	low := strings.ToLower(msg)
 	return strings.Contains(low, "token") || strings.Contains(low, "expire")
+}
+
+func parseRetryAfterHeader(resp *http.Response) time.Duration {
+	if resp == nil {
+		return 0
+	}
+	delay, ok := parseRetryAfter(resp.Header.Get("Retry-After"), time.Now())
+	if !ok {
+		return 0
+	}
+	return delay
+}
+
+func transportMayHaveReachedUpstream(err error) bool {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var netErr net.Error
+	return errors.As(err, &netErr) && netErr.Timeout()
 }
 
 // anyToString 把任意类型转成参与签名的字符串。
@@ -488,56 +513,4 @@ func truncateForLog(b []byte) string {
 		return string(b)
 	}
 	return string(b[:max]) + "...(truncated)"
-}
-
-// mockFetch 在 MockMode=true 时返回造的假数据，让本地零凭证也能跑通整条同步链路。
-// 仅按 path 粗粒度造几类常见数据；不保证字段与真实接口一致，只验证 Worker/落库链路。
-func (c *Client) mockFetch(path string, params map[string]any) (*FetchResult, int, int, error) {
-	list := []map[string]any{}
-	pathLower := strings.ToLower(path)
-
-	switch {
-	case strings.Contains(pathLower, "seller") || strings.Contains(pathLower, "store") || strings.Contains(pathLower, "vcSeller"):
-		// 店铺列表：造 3 条，sid 给后续 IterateByStore 用。
-		// store_type 必填（ls_stores.store_type NOT NULL），对齐表结构。
-		list = []map[string]any{
-			{"sid": "1001", "store_type": "SC", "store_name": "Mock Store A", "seller_id": "A1B2C3", "marketplace_id": "ATVPDKIKX0DER", "country": "US", "has_ads_setting": 1},
-			{"sid": "1002", "store_type": "SC", "store_name": "Mock Store B", "seller_id": "D4E5F6", "marketplace_id": "A1F83G8C2ARO7P", "country": "UK", "has_ads_setting": 0},
-			{"sid": "1003", "store_type": "SC", "store_name": "Mock Store C", "seller_id": "G7H8I9", "marketplace_id": "A1PA6795UKMFR9", "country": "DE", "has_ads_setting": 1},
-		}
-	case strings.Contains(pathLower, "listing"):
-		list = []map[string]any{
-			{"asin": "B000MOCK01", "vc_store_id": "1001", "sku": "MOCK-SKU-1"},
-			{"asin": "B000MOCK02", "vc_store_id": "1002", "sku": "MOCK-SKU-2"},
-		}
-	case strings.Contains(pathLower, "order"):
-		list = []map[string]any{
-			{"local_po_number": "MOCK-PO-0001", "vc_store_id": "1001", "total": 12.5},
-			{"local_po_number": "MOCK-PO-0002", "vc_store_id": "1002", "total": 88.0},
-		}
-	case strings.Contains(pathLower, "account"):
-		list = []map[string]any{
-			{"profile_id": "p2001", "name": "Mock Ad Account A", "sid": "1001"},
-			{"profile_id": "p2002", "name": "Mock Ad Account B", "sid": "1003"},
-		}
-	case strings.Contains(pathLower, "report") || strings.Contains(pathLower, "ads"):
-		list = []map[string]any{
-			{"date": "2026-08-01", "sid": "1001", "impressions": 1000, "clicks": 50, "cost": 12.34},
-			{"date": "2026-08-02", "sid": "1001", "impressions": 1100, "clicks": 55, "cost": 13.45},
-		}
-	default:
-		list = []map[string]any{
-			{"id": 1, "mock": true, "path": path},
-			{"id": 2, "mock": true, "path": path},
-		}
-	}
-
-	mockRaw := []byte(`{"code":0,"message":"mock","data":{"list":[]}}`)
-	return &FetchResult{
-		List:           list,
-		Total:          len(list),
-		HasMore:        false, // mock 一页拉完
-		HasMorePresent: true,  // 显式声明「无更多」，翻页判定不回退到 total 推断
-		Raw:            mockRaw,
-	}, http.StatusOK, 0, nil
 }

@@ -6,6 +6,8 @@ import (
 	"net/url"
 	"testing"
 	"time"
+
+	"lingxing-sync/internal/api"
 )
 
 func TestRetryableFetchFailureOnlyRetriesRecoverableFailures(t *testing.T) {
@@ -37,6 +39,50 @@ func TestRetryableFetchFailureOnlyRetriesRecoverableFailures(t *testing.T) {
 				t.Fatalf("retryableFetchFailure(status=%d, err=%v) = %v, want %v", tt.httpStatus, tt.err, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestRetryDelayClassifiesLingxingBusinessFailures(t *testing.T) {
+	tests := []struct {
+		name      string
+		path      string
+		status    int
+		code      int
+		err       error
+		attempt   int
+		wantRetry bool
+		wantDelay time.Duration
+	}{
+		{name: "3001008 uses rate limit schedule", code: 3001008, err: errors.New("rate limited"), attempt: 0, wantRetry: true, wantDelay: 5 * time.Second},
+		{name: "429 uses rate limit schedule", status: 429, err: errors.New("rate limited"), attempt: 1, wantRetry: true, wantDelay: 15 * time.Second},
+		{name: "generic 103 is temporary", code: 103, err: errors.New("temporary upstream"), attempt: 0, wantRetry: true, wantDelay: 30 * time.Second},
+		{name: "performance frequent 103 is rate limited", path: "/bd/productPerformance/openApi/asinList", code: 103, err: api.NewFetchError(200, 103, "请勿频繁请求", 0, false), attempt: 0, wantRetry: true, wantDelay: 5 * time.Second},
+		{name: "unauthorized is permanent", code: 2001004, err: errors.New("unauthorized"), attempt: 0, wantRetry: false},
+		{name: "ip whitelist is permanent", code: 3001002, err: errors.New("ip not permit"), attempt: 0, wantRetry: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			retry, delay := retryDecision(context.Background(), tt.path, tt.status, tt.code, tt.err, tt.attempt)
+			if retry != tt.wantRetry || delay != tt.wantDelay {
+				t.Fatalf("retryDecision = %v, %s; want %v, %s", retry, delay, tt.wantRetry, tt.wantDelay)
+			}
+		})
+	}
+}
+
+func TestRetryAfterOverridesRateLimitSchedule(t *testing.T) {
+	err := api.NewFetchError(429, 0, "rate", 17*time.Second, false)
+	retry, delay := retryDecision(context.Background(), "", 429, 0, err, 0)
+	if !retry || delay != 17*time.Second {
+		t.Fatalf("retryDecision = %v, %s, want true, 17s", retry, delay)
+	}
+}
+
+func TestTimeoutUsesRemoteHoldBeforeRetry(t *testing.T) {
+	err := api.NewFetchError(0, 0, "timeout", 0, true)
+	retry, delay := retryDecision(context.Background(), "", 0, 0, err, 0)
+	if !retry || delay != remoteTokenHoldDelay {
+		t.Fatalf("retryDecision = %v, %s, want true, %s", retry, delay, remoteTokenHoldDelay)
 	}
 }
 

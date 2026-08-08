@@ -12,7 +12,6 @@
 // flags:
 //
 //	-config   配置文件路径（默认 config.yaml）
-//	-mock     本地无凭证时用造数据跑通链路（生产绝不开启）
 //	-base-url 领星 OpenAPI 根，默认 https://openapi.lingxing.com
 package main
 
@@ -44,7 +43,6 @@ var webFS embed.FS
 
 func main() {
 	configPath := flag.String("config", "config.yaml", "配置文件路径")
-	mockMode := flag.Bool("mock", false, "本地验证：用造数据跑通链路（生产不开）")
 	baseURL := flag.String("base-url", "https://openapi.lingxing.com", "领星 OpenAPI 根地址")
 	flag.Parse()
 
@@ -55,10 +53,6 @@ func main() {
 	}
 	log.Printf("[main] 配置加载完成：%d 账号，%d 接口", len(cfg.Accounts), len(cfg.Endpoints))
 
-	if *mockMode {
-		api.MockMode = true
-		log.Printf("[main] ⚠️ MOCK 模式已开启：API 返回造数据，生产绝不可用")
-	}
 
 	// 2. 连 MySQL + 迁移
 	dbx, err := db.NewPool(cfg.Database)

@@ -19,6 +19,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"lingxing-sync/internal/api"
@@ -35,6 +36,12 @@ const (
 	// fetchRetryBaseDelayMs 是指数退避的基数：第 n 次重试等待 base*2^n ms
 	// （attempt 从 0 计：0→base, 1→2*base, 2→4*base）。
 	fetchRetryBaseDelayMs = 500
+	remoteTokenHoldDelay  = 2 * time.Minute
+)
+
+var (
+	lingxingRateLimitDelays = []time.Duration{5 * time.Second, 15 * time.Second, 30 * time.Second, 60 * time.Second, 120 * time.Second}
+	lingxingTemporaryDelays = []time.Duration{30 * time.Second, 60 * time.Second, 120 * time.Second}
 )
 
 // retryableFetchFailure 判断一次 client.Fetch 的失败是否值得重试。
@@ -44,28 +51,76 @@ const (
 //   - httpStatus：领星返回的 HTTP 状态码；传输层错误时通常为 0。
 //   - err：Fetch 返回的错误（nil 表示成功，直接返回 false）。
 //
-// 返回 true 仅当：传输层错误（*url.Error 且无 HTTP 状态）、HTTP 429、HTTP 5xx。
+// 返回 true 表示一次失败仍属于可恢复范围；详细等待时间由 retryDecision 决定。
 func retryableFetchFailure(ctx context.Context, httpStatus int, err error) bool {
-	if err == nil {
-		return false
+	retry, _ := retryDecision(ctx, "", httpStatus, 0, err, 0)
+	return retry
+}
+
+// retryDecision returns whether a failed request is retryable and the delay before retry.
+func retryDecision(ctx context.Context, path string, httpStatus, apiCode int, err error, attempt int) (bool, time.Duration) {
+	if err == nil || ctx.Err() != nil {
+		return false, 0
 	}
-	// 调用方已主动取消/超时：不续命，交由上层置 cancelled/error。
-	if ctx.Err() != nil {
-		return false
-	}
-	// HTTP 层可恢复：被限流或服务端临时故障。
-	if httpStatus == http.StatusTooManyRequests || httpStatus >= 500 {
-		return true
-	}
-	// 传输层错误：没拿到 HTTP 状态（连接重置/超时/DNS 等），表现为 *url.Error。
-	if httpStatus == 0 {
-		var urlErr *url.Error
-		if errors.As(err, &urlErr) {
-			return true
+
+	var fetchErr *api.FetchError
+	if errors.As(err, &fetchErr) {
+		if apiCode == 0 {
+			apiCode = fetchErr.APICode
+		}
+		if httpStatus == 0 {
+			httpStatus = fetchErr.HTTPStatus
 		}
 	}
-	// 其余（4xx 客户端错误、业务契约错误）不重试，fail-loud。
-	return false
+	message := ""
+	if fetchErr != nil {
+		message = fetchErr.APIMessage
+	}
+
+	performanceFrequencyLimit := apiCode == 103 && path == "/bd/productPerformance/openApi/asinList" && strings.Contains(message, "频繁请求")
+	if apiCode == 3001008 || httpStatus == http.StatusTooManyRequests || performanceFrequencyLimit {
+		if attempt >= len(lingxingRateLimitDelays) {
+			return false, 0
+		}
+		if fetchErr != nil && fetchErr.RetryAfter > 0 {
+			return true, fetchErr.RetryAfter
+		}
+		return true, lingxingRateLimitDelays[attempt]
+	}
+	if apiCode == 103 {
+		if attempt >= len(lingxingTemporaryDelays) {
+			return false, 0
+		}
+		if fetchErr != nil && fetchErr.RetryAfter > 0 {
+			return true, fetchErr.RetryAfter
+		}
+		return true, lingxingTemporaryDelays[attempt]
+	}
+	if apiCode == 2001003 || apiCode == 2001005 || apiCode == 2001004 || apiCode == 3001002 {
+		return false, 0
+	}
+	if httpStatus >= 500 {
+		if attempt >= maxFetchRetries {
+			return false, 0
+		}
+		if fetchErr != nil && fetchErr.RetryAfter > 0 {
+			return true, fetchErr.RetryAfter
+		}
+		return true, backoffDelay(attempt)
+	}
+	if httpStatus == 0 {
+		var urlErr *url.Error
+		if errors.As(err, &urlErr) || fetchErr != nil {
+			if attempt >= maxFetchRetries {
+				return false, 0
+			}
+			if fetchErr != nil && fetchErr.MayHaveReachedUpstream {
+				return true, remoteTokenHoldDelay
+			}
+			return true, backoffDelay(attempt)
+		}
+	}
+	return false, 0
 }
 
 // backoffDelay 返回第 attempt 次重试前的退避时长（attempt 从 0 计）：base * 2^attempt。
@@ -104,14 +159,14 @@ func (w *EndpointWorker) fetchPageWithRetry(ctx context.Context, limiter *Limite
 		}
 
 		// 不可重试，或已到最大重试次数：把最后一次错误抛回调用方 fail-loud。
-		if attempt >= maxFetchRetries || !retryableFetchFailure(ctx, httpStatus, err) {
+		retry, delay := retryDecision(ctx, path, httpStatus, apiCode, err, attempt)
+		if !retry {
 			return nil, httpStatus, apiCode, int(time.Since(start).Milliseconds()), err
 		}
 
 		// 可恢复失败且仍有重试额度：退避后再来。退避期间监听 ctx，取消则立刻返回。
-		delay := backoffDelay(attempt)
-		log.Printf("[worker:%s] 抓取可恢复失败，第 %d/%d 次重试前退避 %s: %v (http=%d)",
-			w.Endpoint.Name, attempt+1, maxFetchRetries, delay, err, httpStatus)
+		log.Printf("[worker:%s] 抓取可恢复失败，第 %d 次重试前退避 %s: %v (http=%d code=%d)",
+			w.Endpoint.Name, attempt+1, delay, err, httpStatus, apiCode)
 		select {
 		case <-ctx.Done():
 			return nil, httpStatus, apiCode, int(time.Since(start).Milliseconds()), ctx.Err()
