@@ -123,7 +123,6 @@ func sharedFuncs() template.FuncMap {
 		"listItems": func() []navItem {
 			return []navItem{
 				{Key: "settings_api", Href: "/settings/api", Label: "API配置"},
-				{Key: "sync_center", Href: "/", Label: "概览"},
 				{Key: "sync_manage", Href: "/sync", Label: "同步配置"},
 				{Key: "logs", Href: "/logs", Label: "同步日志"},
 				{Key: "datasources", Href: "/datasources", Label: "数据源"},
@@ -199,7 +198,7 @@ func (s *Server) Routes() *http.ServeMux {
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticSub))))
 
 	// ---- 页面路由（返回 HTML shell）----
-	mux.HandleFunc("GET /{$}", s.pageIndex)       // 同步中心（首页）
+	mux.HandleFunc("GET /{$}", s.pageIndex)       // 重定向到 /sync（概览页已删）
 	mux.HandleFunc("GET /sync", s.pageSyncManage) // 同步管理
 	mux.HandleFunc("GET /logs", s.pageLogs)       // 同步日志
 	mux.HandleFunc("GET /datasources", s.pageDataSources)
@@ -227,6 +226,10 @@ func (s *Server) Routes() *http.ServeMux {
 	// ---- API 路由：配置读写（账号/接口 CRUD + 重启 + 字段查询）----
 	// 全部在 handlers_config.go 内定义并自注册，统一维护（宪法 §7.5）。
 	s.registerConfigRoutes(mux)
+
+	// ---- API 路由：接口清单（从模板挑一个 → 选账号 → 启用）----
+	// 全部在 handlers_catalog.go 内定义并自注册。
+	s.registerCatalogRoutes(mux)
 
 	return mux
 }

@@ -32,10 +32,11 @@ var MockMode bool
 
 // FetchResult 是一次分页拉取的结果。
 type FetchResult struct {
-	List    []map[string]any // data.list 展开成 []map（兼容 data 本身是数组的情况）
-	Total   int              // data.total
-	HasMore bool             // data.has_more；领星标准字段，无该字段则视为无更多（不推断）
-	Raw     json.RawMessage  // 原始响应体（落 sync_task_logs 证据，可选）
+	List           []map[string]any // data.list 展开成 []map（兼容 data 本身是数组的情况）
+	Total          int              // data.total
+	HasMore        bool             // data.has_more 的值；缺失则为 false（parse 层不推断）
+	HasMorePresent bool             // data 里是否"出现"了 has_more 字段（用于 worker 选择终止策略）
+	Raw            json.RawMessage  // 原始响应体（落 sync_task_logs 证据，可选）
 }
 
 // Client 是领星 OpenAPI 业务请求客户端。一个账号一个实例。
@@ -107,6 +108,20 @@ func (c apiCode) asInt() int {
 func (c apiCode) isSuccess() bool {
 	s := string(c)
 	return s == "0" || s == "200" || s == "success"
+}
+
+// isEmptyRawData 判断响应壳里的 data 是否为空（null 或缺省）。
+// 仅 null/空视为空；data:{}、data:[] 不算空（属合法的"无数据"结构）。
+func isEmptyRawData(data json.RawMessage) bool {
+	s := strings.TrimSpace(string(data))
+	return s == "" || s == "null"
+}
+
+// isSuccessMessage 判断 msg/message 文案是否属于「成功」语义。
+// 领星成功响应有时把 msg 填成 "success"/"ok" 之类；这类不应被软失败闸误判。
+func isSuccessMessage(msg string) bool {
+	s := strings.ToLower(strings.TrimSpace(msg))
+	return s == "success" || s == "ok" || s == "成功"
 }
 
 // Fetch 拉取一页。
@@ -246,6 +261,21 @@ func (c *Client) fetchOnce(ctx context.Context, method, path string, params map[
 		return nil, resp.StatusCode, ar.Code.asInt(), fmt.Errorf("lingxing fetch: api error code=%s msg=%q path=%s", ar.Code, msg, path)
 	}
 
+	// 9b. 软失败闸（fail-loud，宪法 §5）：
+	// 领星部分参数校验错误会返回 code=0（看似成功）但 data=null 且 msg 带错误文案，
+	// 例如缺 summary_field 时 msg="[summary_field 不能为空,...]"。仅信 code 会把失败
+	// 静默记成成功 0 条。判定：data 为 null/空 且 msg/message 非空且非成功词 → 业务错误。
+	// 只收紧 data:null 这一种；data:{}/data:[]/空 msg 的正常空结果不受影响。
+	if isEmptyRawData(ar.Data) {
+		softMsg := ar.Message
+		if softMsg == "" {
+			softMsg = ar.Msg
+		}
+		if softMsg != "" && !isSuccessMessage(softMsg) {
+			return nil, resp.StatusCode, ar.Code.asInt(), fmt.Errorf("lingxing fetch: api soft-error code=%s msg=%q path=%s", ar.Code, softMsg, path)
+		}
+	}
+
 	// 10. 解析 data → FetchResult
 	result, err := parseFetchResult(ar.Data)
 	if err != nil {
@@ -293,14 +323,20 @@ func parseFetchResult(data json.RawMessage) (*FetchResult, error) {
 
 		// total（领星标准字段）
 		r.Total = readInt(obj, "total")
-		// has_more：领星标准字段；无该字段视为无更多（不推断，避免多翻撞限流）
+		// has_more：领星标准字段；无该字段视为无更多（parse 层不推断）。
+		// 另记录字段是否"出现"，供 worker 决定用 has_more 还是 offset+len>=total 终止（宪法 §4）。
+		if _, ok := obj["has_more"]; ok {
+			r.HasMorePresent = true
+		} else if _, ok := obj["hasMore"]; ok {
+			r.HasMorePresent = true
+		}
 		if readBool(obj, "has_more", "hasMore") {
 			r.HasMore = true
 		}
 		return r, nil
 	}
 
-	// 形态二：data 本身是数组（少数接口直接返回数组，单次拉取无更多）
+	// 形态二：data 本身是数组（少数接口直接返回数组，无分页壳 → 无 total/has_more 信号）
 	var arr []map[string]any
 	if err := json.Unmarshal(data, &arr); err == nil {
 		r.List = arr
@@ -364,6 +400,14 @@ func anyToString(v any) string {
 		return ""
 	case []byte:
 		return string(x)
+	case []any, map[string]any:
+		// 数组/对象参数参与签名时按紧凑 JSON 编码（领星官方 SDK 对非标量值 json_encode），
+		// 与 POST body 的 json.Marshal 形态一致，保证「签名串」和「实际 body」对得上；
+		// 否则 %v 会得到 "[1]"，签名与领星侧算出的不一致 → 签名错。
+		if b, err := json.Marshal(x); err == nil {
+			return string(b)
+		}
+		return fmt.Sprintf("%v", x)
 	default:
 		return fmt.Sprintf("%v", x)
 	}
@@ -458,9 +502,10 @@ func (c *Client) mockFetch(path string, params map[string]any) (*FetchResult, in
 
 	mockRaw := []byte(`{"code":0,"message":"mock","data":{"list":[]}}`)
 	return &FetchResult{
-		List:    list,
-		Total:   len(list),
-		HasMore: false, // mock 一页拉完
-		Raw:     mockRaw,
+		List:           list,
+		Total:          len(list),
+		HasMore:        false, // mock 一页拉完
+		HasMorePresent: true,  // 显式声明「无更多」，翻页判定不回退到 total 推断
+		Raw:            mockRaw,
 	}, http.StatusOK, 0, nil
 }

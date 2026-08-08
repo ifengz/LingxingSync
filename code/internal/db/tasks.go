@@ -235,12 +235,20 @@ func ListTaskLogs(db *sqlx.DB, taskID int64) ([]TaskLog, error) {
 // QuerySIDsForAccount 从 ls_stores 查某账号所有 sid（宪法 §10.3：iterate_by_store 依赖）。
 //
 // 返回顺序按 sid 升序，便于日志稳定。账号无店铺 → 返回空切片 + nil（调用方决定算不算错）。
-func QuerySIDsForAccount(db *sqlx.DB, accountID string) ([]string, error) {
+// storeType 非空（"SC"/"VC"）时只返回该类型店铺，避免把 VC 店铺 sid 喂给 SC 接口（或反之）。
+// 空=不过滤（迭代账号全部店铺，向后兼容）。
+func QuerySIDsForAccount(db *sqlx.DB, accountID, storeType string) ([]string, error) {
 	var sids []string
-	const q = "SELECT sid FROM ls_stores WHERE account_id = ? ORDER BY sid ASC"
-	if err := db.Select(&sids, q, accountID); err != nil {
-		return nil, fmt.Errorf("db.QuerySIDsForAccount: 查 ls_stores (account=%s) 失败: %w",
-			accountID, err)
+	q := "SELECT sid FROM ls_stores WHERE account_id = ?"
+	args := []any{accountID}
+	if storeType != "" {
+		q += " AND store_type = ?"
+		args = append(args, storeType)
+	}
+	q += " ORDER BY sid ASC"
+	if err := db.Select(&sids, q, args...); err != nil {
+		return nil, fmt.Errorf("db.QuerySIDsForAccount: 查 ls_stores (account=%s, store_type=%q) 失败: %w",
+			accountID, storeType, err)
 	}
 	return sids, nil
 }
@@ -253,7 +261,8 @@ func QuerySIDsForAccount(db *sqlx.DB, accountID string) ([]string, error) {
 //
 // 该闸门在 endpoint.StoreSids 白名单与 per-trigger storeSids 之上游：先过账号级开关，
 // 再过每接口白名单，最后与手动触发交集。返回顺序按 sid 升序，与 QuerySIDsForAccount 一致。
-func QueryEnabledSIDsForAccount(db *sqlx.DB, accountID string) ([]string, error) {
+// storeType 非空时按 ls_stores.store_type 过滤（SC 接口只迭代 SC 店铺，杜绝跨类型污染）。
+func QueryEnabledSIDsForAccount(db *sqlx.DB, accountID, storeType string) ([]string, error) {
 	var configured int
 	if err := db.Get(&configured,
 		"SELECT COUNT(*) FROM store_sync_selection WHERE account_id = ?", accountID); err != nil {
@@ -261,20 +270,25 @@ func QueryEnabledSIDsForAccount(db *sqlx.DB, accountID string) ([]string, error)
 			accountID, err)
 	}
 	if configured == 0 {
-		// 未配置：退回全放行，行为等价 QuerySIDsForAccount。
-		return QuerySIDsForAccount(db, accountID)
+		// 未配置：退回全放行，行为等价 QuerySIDsForAccount（同样按 storeType 过滤）。
+		return QuerySIDsForAccount(db, accountID, storeType)
 	}
-	var sids []string
-	const q = `
+	q := `
 SELECT s.sid
 FROM ls_stores s
 JOIN store_sync_selection sel
   ON sel.account_id = s.account_id AND sel.sid = s.sid
-WHERE s.account_id = ? AND sel.enabled = 1
-ORDER BY s.sid ASC`
-	if err := db.Select(&sids, q, accountID); err != nil {
-		return nil, fmt.Errorf("db.QueryEnabledSIDsForAccount: 查启用店铺 (account=%s) 失败: %w",
-			accountID, err)
+WHERE s.account_id = ? AND sel.enabled = 1`
+	args := []any{accountID}
+	if storeType != "" {
+		q += " AND s.store_type = ?"
+		args = append(args, storeType)
+	}
+	q += " ORDER BY s.sid ASC"
+	var sids []string
+	if err := db.Select(&sids, q, args...); err != nil {
+		return nil, fmt.Errorf("db.QueryEnabledSIDsForAccount: 查启用店铺 (account=%s, store_type=%q) 失败: %w",
+			accountID, storeType, err)
 	}
 	return sids, nil
 }
@@ -385,7 +399,7 @@ FROM ls_stores s
 LEFT JOIN vc_store_profiles p
   ON p.account_id = s.account_id AND p.sid = s.sid AND s.store_type = 'VC'
 WHERE s.account_id = ?
-ORDER BY s.store_name, s.sid`
+ORDER BY CASE WHEN s.store_type = 'VC' THEN 0 ELSE 1 END, s.store_name, s.sid`
 
 	items := make([]StoreSummary, 0)
 	if err := db.Select(&items, q, accountID); err != nil {

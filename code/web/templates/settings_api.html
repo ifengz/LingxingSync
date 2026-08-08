@@ -167,7 +167,7 @@
               <div class="text-sm font-medium text-slate-800">店铺目录</div>
               <p class="mt-1 text-xs text-slate-400">立即触发该账号的店铺来源接口；其 Cron、限流和启停仍在同步配置管理。</p>
             </div>
-            <button @click="syncStores()" :disabled="storeSyncing" class="border border-brand-600 text-brand-700 hover:bg-brand-50 disabled:cursor-not-allowed disabled:opacity-50 px-3 py-2 rounded text-sm" x-text="storeSyncing ? '提交中...' : '立即刷新目录'"></button>
+            <button @click="syncStores()" :disabled="storeSyncing" class="border border-brand-600 text-brand-700 hover:bg-brand-50 disabled:cursor-not-allowed disabled:opacity-50 px-3 py-2 rounded text-sm" x-text="storeSyncing ? '提交中...' : '从领星拉取店铺'"></button>
           </div>
         </div>
       </section>
@@ -182,7 +182,7 @@
             </p>
           </div>
           <div class="flex items-center gap-2 self-start sm:self-auto">
-            <button @click="loadStores()" :disabled="storesLoading || storeSaving" class="border border-slate-300 text-slate-700 hover:bg-slate-50 disabled:opacity-50 px-3 py-1.5 rounded text-sm" x-text="storesLoading ? '读取中...' : '刷新摘要'"></button>
+            <button @click="loadStores()" :disabled="storesLoading || storeSaving" class="border border-slate-300 text-slate-700 hover:bg-slate-50 disabled:opacity-50 px-3 py-1.5 rounded text-sm" x-text="storesLoading ? '读取中...' : '重新读取本地'"></button>
             <button @click="cancelStoreSelection()" :disabled="!storeDirty || storeSaving" class="border border-slate-300 text-slate-700 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed px-3 py-1.5 rounded text-sm">取消</button>
             <button @click="saveStoreSelection()" :disabled="!storeDirty || storeSaving" class="border border-brand-600 bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-50 disabled:cursor-not-allowed px-3 py-1.5 rounded text-sm" x-text="storeSaving ? '保存中...' : '保存'"></button>
           </div>
@@ -220,7 +220,7 @@
                     <span x-show="store.store_type !== 'VC'" class="text-slate-400">-</span>
                   </td>
                   <td class="px-4 py-3 text-slate-600" x-text="store.country || '-'"></td>
-                  <td class="px-4 py-3 text-slate-600" x-text="store.status || '-'"></td>
+                  <td class="px-4 py-3 text-slate-600" x-text="storeStatusText(store.status)"></td>
                   <td class="px-4 py-3 text-slate-500" x-text="fmtTime(store.synced_at)"></td>
                   <td class="px-4 py-3 text-right">
                     <input type="checkbox" x-model="storeSel[store.sid]"
@@ -242,7 +242,7 @@
     <h2 class="text-base font-semibold text-slate-800">新增 API 配置</h2>
     <p class="mt-1 text-sm text-slate-500">保存账号后，在同步配置页维护接口 Cron、限流和启停。</p>
     <div class="mt-5 grid gap-4 md:grid-cols-2">
-      <div><label class="mb-1 block text-xs font-medium text-slate-600">账号 ID</label><input x-model.trim="newForm.id" class="w-full rounded border border-slate-300 px-3 py-2 text-sm focus:border-brand-600 focus:outline-none" placeholder="例如 sc_us"></div>
+      <div><label class="mb-1 block text-xs font-medium text-slate-600">账号 ID</label><input x-model.trim="newForm.id" class="w-full rounded border border-slate-300 px-3 py-2 text-sm focus:border-brand-600 focus:outline-none" placeholder="例如 sc_us_1"><p class="mt-1 text-xs text-slate-400">字母/数字/下划线/连字符，首尾为字母或数字，≤32。大小写不敏感唯一，撞名时自动改配（如 sc_us_2）。</p></div>
       <div><label class="mb-1 block text-xs font-medium text-slate-600">账号名称</label><input x-model.trim="newForm.name" class="w-full rounded border border-slate-300 px-3 py-2 text-sm focus:border-brand-600 focus:outline-none"></div>
       <div><label class="mb-1 block text-xs font-medium text-slate-600">限流分组</label><input x-model.trim="newForm.quota_group" class="w-full rounded border border-slate-300 px-3 py-2 text-sm focus:border-brand-600 focus:outline-none" placeholder="留空时使用账号 ID"></div>
       <div><label class="mb-1 block text-xs font-medium text-slate-600">App Key</label><input x-model.trim="newForm.app_key" class="w-full rounded border border-slate-300 px-3 py-2 font-mono text-sm focus:border-brand-600 focus:outline-none"></div>

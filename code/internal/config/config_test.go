@@ -83,6 +83,91 @@ endpoints:
 	}
 }
 
+func TestValidateRejectsCaseInsensitiveDuplicateAccountID(t *testing.T) {
+	// sc_us 与 Sc_us 归一化后同为 sc_us，视为撞名，必须 fail-loud。
+	cfg := &Config{
+		Database: Database{Host: "h", User: "u", DB: "d"},
+		Accounts: []Account{
+			{ID: "sc_us", Name: "self", AppKey: "k1", AppSecret: "s1"},
+			{ID: "Sc_us", Name: "aff", AppKey: "k2", AppSecret: "s2"},
+		},
+	}
+	if err := cfg.validate(); err == nil {
+		t.Fatal("仅大小写不同的两个账号 ID 应被判撞名并报错")
+	}
+}
+
+func TestValidateRejectsIllegalSlugAccountID(t *testing.T) {
+	cases := []string{"has space", "_leading", "trailing_", "-lead", "中文", "toolong_aaaaaaaaaaaaaaaaaaaaaaaaaaaa", "a@b"}
+	for _, id := range cases {
+		cfg := &Config{
+			Database: Database{Host: "h", User: "u", DB: "d"},
+			Accounts: []Account{{ID: id, Name: "n", AppKey: "k", AppSecret: "s"}},
+		}
+		if err := cfg.validate(); err == nil {
+			t.Fatalf("非法账号 ID %q 应被 slug 校验拒绝", id)
+		}
+	}
+}
+
+func TestValidateAcceptsValidSlugAccountID(t *testing.T) {
+	for _, id := range []string{"sc_us_1", "sc_us_2", "vc-de", "a", "A9", "self_us"} {
+		cfg := &Config{
+			Database: Database{Host: "h", User: "u", DB: "d"},
+			Accounts: []Account{{ID: id, Name: "n", AppKey: "k", AppSecret: "s"}},
+		}
+		if err := cfg.validate(); err != nil {
+			t.Fatalf("合法账号 ID %q 不应被拒: %v", id, err)
+		}
+	}
+}
+
+func TestValidateStoreType(t *testing.T) {
+	mk := func(storeType string) *Config {
+		return &Config{
+			Database: Database{Host: "h", User: "u", DB: "d"},
+			Accounts: []Account{{ID: "sc_us_1", Name: "n", AppKey: "k", AppSecret: "s"}},
+			Endpoints: []Endpoint{{
+				Name: "inv", Account: "sc_us_1", Path: "/inv", Method: "GET", Table: "ls_inventory",
+				RecordIDFields: []string{"sid"}, Cron: "0 * * * *",
+				Rate:      Rate{Bucket: 1, IntervalMs: 1000, Dimension: "account+path"},
+				StoreType: storeType,
+			}},
+		}
+	}
+	for _, ok := range []string{"", "SC", "VC"} {
+		if err := mk(ok).validate(); err != nil {
+			t.Fatalf("store_type=%q 应合法: %v", ok, err)
+		}
+	}
+	for _, bad := range []string{"sc", "vc", "ALL", "x"} {
+		if err := mk(bad).validate(); err == nil {
+			t.Fatalf("store_type=%q 应被拒", bad)
+		}
+	}
+}
+
+func TestFindAccountCaseInsensitive(t *testing.T) {
+	cfg := &Config{Accounts: []Account{{ID: "sc_us_1", Name: "self", AppKey: "k", AppSecret: "s"}}}
+	for _, q := range []string{"sc_us_1", "SC_US_1", "Sc_Us_1", " sc_us_1 "} {
+		if a := cfg.FindAccount(q); a == nil || a.ID != "sc_us_1" {
+			t.Fatalf("FindAccount(%q) 应命中 sc_us_1，got %v", q, a)
+		}
+	}
+	if cfg.FindAccount("sc_us_2") != nil {
+		t.Fatal("FindAccount 不存在的 ID 应返回 nil")
+	}
+}
+
+func TestNormIDAndValidAccountID(t *testing.T) {
+	if NormID(" Sc_US ") != "sc_us" {
+		t.Fatalf("NormID 应去空白并转小写，got %q", NormID(" Sc_US "))
+	}
+	if !ValidAccountID("sc_us_2") || ValidAccountID("_bad") || ValidAccountID("bad-") {
+		t.Fatal("ValidAccountID slug 判定不符预期")
+	}
+}
+
 func TestConflictingLimiterKey(t *testing.T) {
 	// 两个账号共享同一 quota_group，故同 path 会落到同一个限流桶。
 	cfg := &Config{

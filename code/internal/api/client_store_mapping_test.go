@@ -16,7 +16,8 @@ func TestFetchMapsSCStoreFields(t *testing.T) {
 		"data": {"list": [{
 			"sid": "10558",
 			"name": "SC Brazil Store",
-			"region": "BR",
+			"region": "NA",
+			"country": "巴西",
 			"has_ads_setting": 1,
 			"status": 1
 		}], "total": 1, "has_more": false}
@@ -27,7 +28,8 @@ func TestFetchMapsSCStoreFields(t *testing.T) {
 		t.Fatalf("Fetch SC stores: %v", err)
 	}
 	got := result.List[0]
-	if got["sid"] != "10558" || got["store_name"] != "SC Brazil Store" || got["country"] != "BR" || got["store_type"] != "SC" {
+	// 国家列取 country(商城所在国家名称)，不取 region(大区 NA)。
+	if got["sid"] != "10558" || got["store_name"] != "SC Brazil Store" || got["country"] != "巴西" || got["store_type"] != "SC" {
 		t.Fatalf("SC store mapping = %#v", got)
 	}
 }

@@ -89,6 +89,57 @@ func TestParseFetchResultFailLoud(t *testing.T) {
 	}
 }
 
+// TestSoftFailGuard 验证软失败闸：领星返回 code=0（看似成功）但 data=null 且 msg
+// 带错误文案（如缺 summary_field）时，必须判为业务错误，不能静默记成成功 0 条。
+// 这是 fail-loud 红线（CLAUDE.md §3 / 宪法 §5）在 client 层的补洞。
+func TestSoftFailGuard(t *testing.T) {
+	tests := []struct {
+		name     string
+		data     string // data 字段 JSON 原文
+		msg      string // msg/message 文案
+		wantSoft bool   // 是否应被软失败闸拦下
+	}{
+		{
+			name:     "软失败: code0 + data:null + 错误文案（缺 summary_field）",
+			data:     `null`,
+			msg:      "[summary_field 不能为空,可取值asin,parent_asin,msku,sku]",
+			wantSoft: true,
+		},
+		{
+			name:     "正常: data:null + 空 msg（合法无数据）",
+			data:     `null`,
+			msg:      "",
+			wantSoft: false,
+		},
+		{
+			name:     "正常: data:null + msg=success",
+			data:     `null`,
+			msg:      "success",
+			wantSoft: false,
+		},
+		{
+			name:     "正常: data 有内容 + 有 msg（msg 非空但 data 非空不拦）",
+			data:     `{"list":[{"a":1}]}`,
+			msg:      "some note",
+			wantSoft: false,
+		},
+		{
+			name:     "正常: data:{} 空对象 + 错误文案（空对象不算空，不拦）",
+			data:     `{}`,
+			msg:      "whatever",
+			wantSoft: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isEmptyRawData([]byte(tt.data)) && tt.msg != "" && !isSuccessMessage(tt.msg)
+			if got != tt.wantSoft {
+				t.Errorf("软失败判定 = %v, 期望 %v (data=%s msg=%q)", got, tt.wantSoft, tt.data, tt.msg)
+			}
+		})
+	}
+}
+
 // TestParseFetchResultNoFieldGuessing 验证不再用 records/items/rows/data 等别名猜测 list。
 // 领星若改字段名，这里必须报错暴露问题，而不是猜中后假装正常。
 func TestParseFetchResultNoFieldGuessing(t *testing.T) {
@@ -116,5 +167,63 @@ func TestParseFetchResultNoHasMoreInference(t *testing.T) {
 	}
 	if r.HasMore {
 		t.Fatal("无 has_more 字段时不应推断为 true（旧 len<total 近似推断已被移除）")
+	}
+}
+
+// TestParseFetchResultHasMorePresent 锁定 HasMorePresent 语义：它区分「has_more
+// 字段存在」与「不存在」，是 worker 选择终止策略（宪法 §4：has_more==false
+// 还是 offset+len>=total）的依据。报表类接口只给 total 不给 has_more——present
+// 必须为 false，worker 才会改走 total 判终止，不再首页即停（数据截断 bug 根因）。
+func TestParseFetchResultHasMorePresent(t *testing.T) {
+	tests := []struct {
+		name        string
+		data        string
+		wantPresent bool
+		wantHasMore bool
+	}{
+		{
+			name:        "has_more:false 存在 → present=true",
+			data:        `{"list":[{"a":1}],"total":2,"has_more":false}`,
+			wantPresent: true,
+			wantHasMore: false,
+		},
+		{
+			name:        "has_more:true 存在 → present=true",
+			data:        `{"list":[{"a":1}],"total":50,"has_more":true}`,
+			wantPresent: true,
+			wantHasMore: true,
+		},
+		{
+			name:        "hasMore 驼峰形态也算存在",
+			data:        `{"list":[{"a":1}],"total":50,"hasMore":true}`,
+			wantPresent: true,
+			wantHasMore: true,
+		},
+		{
+			name:        "报表接口只给 total 不给 has_more → present=false（worker 改走 total 判终止）",
+			data:        `{"list":[{"a":1}],"total":100}`,
+			wantPresent: false,
+			wantHasMore: false,
+		},
+		{
+			name:        "裸数组无分页壳 → present=false",
+			data:        `[{"a":1},{"a":2}]`,
+			wantPresent: false,
+			wantHasMore: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r, err := parseFetchResult([]byte(tt.data))
+			if err != nil {
+				t.Fatalf("不期望报错: %v", err)
+			}
+			if r.HasMorePresent != tt.wantPresent {
+				t.Errorf("HasMorePresent = %v, 期望 %v (data=%s)", r.HasMorePresent, tt.wantPresent, tt.data)
+			}
+			if r.HasMore != tt.wantHasMore {
+				t.Errorf("HasMore = %v, 期望 %v (data=%s)", r.HasMore, tt.wantHasMore, tt.data)
+			}
+		})
 	}
 }
