@@ -1,0 +1,118 @@
+# LingxingSync 部署闸门
+
+## 当前结论
+
+线上宝塔 WebHook 已配置，但最近一次调用没有完成部署：Git 在 `/www/wwwroot/lingxing-sync` 报 `detected dubious ownership`，流程停在拉取阶段。线上 Supervisor 当前仍是 `RUNNING`，固定入口 `/api/settings` 返回 `200`，这只能证明旧版本服务存活，不能证明 push 后部署成功。
+
+修复后的唯一链路：
+
+```text
+push main
+  -> 宝塔 WebHook（sync.usfan.net）
+  -> /www/wwwroot/lingxing-sync/code/deploy.sh
+  -> 拉取 main、测试、vet、编译、校验 config.yaml
+  -> Supervisor 重启
+  -> 127.0.0.1:7799/api/settings 健康检查
+```
+
+不再额外启用 GitHub Actions，避免同一次 push 触发两次部署。
+
+## 宝塔 WebHook
+
+WebHook 应只执行固定脚本：
+
+```bash
+bash /www/wwwroot/lingxing-sync/code/deploy.sh \
+  >> /www/wwwroot/lingxing-sync/code/logs/deploy.log 2>&1
+```
+
+面板中确认：
+
+- 事件为 GitHub `push`；
+- 仓库为 `ifengz/LingxingSync`；
+- 分支为 `main`；
+- 脚本路径和上面完全一致；
+- WebHook 用户能读写仓库、编译目录和 Supervisor 日志目录。
+
+## 服务器一次性前置条件
+
+```bash
+cd /www/wwwroot/lingxing-sync
+git remote -v
+git checkout main
+git status --short
+chmod +x code/deploy.sh
+```
+
+服务器执行用户必须能非交互完成：
+
+```bash
+git -c safe.directory=/www/wwwroot/lingxing-sync fetch --prune origin
+```
+
+脚本已经对每个 Git 命令使用临时 `safe.directory`，不会修改全局 Git 配置。它仍会拒绝任何 tracked 或非忽略的未跟踪改动，不会替线上人员自动 stash、reset、clean 或覆盖文件。当前线上已观察到 `code/migrations/009_rename_account.sql` 有 tracked 修改；该项必须由负责人先核对并清理，脚本才会继续。
+
+仓库 remote 也必须能以 WebHook 执行用户访问 GitHub，不能依赖人工输入密码。数据库密码、领星密钥和 `config.yaml` 只留在服务器，不进入 Git。
+
+Supervisor 必须使用宝塔实际配置：
+
+```text
+配置文件：/etc/supervisor/supervisord.conf
+目标：    lingxingsync:*
+端口：    7799
+健康：    /api/settings
+```
+
+如果配置是 `[program:lingxingsync]` 加 `numprocs`，实际进程名通常是 `lingxingsync:lingxingsync_00`。不要把脚本目标改回裸名 `lingxingsync`。
+
+## 每次部署的硬闸门
+
+`code/deploy.sh` 按顺序执行：
+
+1. `flock` 阻止并发部署。
+2. `git fetch`、检查工作树、切换 `main`、`git pull --ff-only`。
+3. `go test ./...` 和 `go vet ./...`。
+4. 编译 `lingxing-sync`，确认产物可执行。
+5. 执行 `./lingxing-sync -config config.yaml -validate-config`，只校验配置，不连接数据库、不启动服务；`database.host/user/db` 为空会在重启前失败。
+6. 使用宝塔实际 `supervisord` 配置重启 `lingxingsync:*`，并确认状态包含 `RUNNING`。
+7. 检查 `http://127.0.0.1:7799/api/settings`，只接受 `200` 或 `401`。
+
+任一步失败，脚本返回非零，WebHook 日志标红，不继续下一步。程序启动时的数据库迁移失败保持 fail-loud，不能让半完成迁移的进程继续对外服务。
+
+## Push 前本地检查
+
+```bash
+cd code
+gofmt -l .
+go test ./...
+go vet ./...
+go build -ldflags="-s -w" -o lingxing-sync
+./lingxing-sync -config config.yaml -validate-config
+cd ..
+git diff --check
+git status --short
+```
+
+只确认目标改动后再 push `main`。`config.yaml`、二进制、日志和备份文件不得进入 commit。
+
+## 部署后固定入口复核
+
+```bash
+curl --fail --silent --show-error --max-time 10 \
+  --output /dev/null --write-out '%{http_code} %{time_total}\n' \
+  https://sync.usfan.net/api/settings
+```
+
+预期 HTTP `200` 或鉴权开启时的 `401`。公网 `502` 不能用“Supervisor 重启过”解释为成功，必须回到 WebHook 日志、Supervisor 日志和本机 7799 监听证据。
+
+## 本次故障对应的防线
+
+- `database.host/user/db` 为空：配置校验在重启前失败。
+- 账号改名目标主键已存在：迁移只改无冲突行，冲突原地保留并记录；相关账号+接口显示不可用，不删除数据。
+- Git dubious ownership：Git 命令使用仓库级临时 `safe.directory`，同时拒绝脏工作树。
+- Supervisor 查询名错误：脚本固定带 `-c` 并使用 `lingxingsync:*`。
+- 健康路由错误：脚本固定检查真实存在的 `/api/settings`，不使用已删除的 `/api/status`。
+
+## 本轮线上证据
+
+目标主机 `38.246.250.228`，时间 `2026-08-09 01:48`。宝塔 WebHook `sync.usfan.net` 已存在，最近调用一次但在 Git 拉取阶段失败；线上 `lingxingsync:lingxingsync_00` 为 `RUNNING`，本机 `/api/settings` 为 `401`，公网固定入口为 `200`。线上还存在 tracked 的 `009` 修改和配置备份未跟踪文件，未执行清理、重启或其他生产写操作。

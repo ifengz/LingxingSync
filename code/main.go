@@ -12,6 +12,7 @@
 // flags:
 //
 //	-config   配置文件路径（默认 config.yaml）
+//	-validate-config  只加载并校验配置，不连接数据库或启动服务
 //	-base-url 领星 OpenAPI 根，默认 https://openapi.lingxing.com
 package main
 
@@ -43,6 +44,7 @@ var webFS embed.FS
 
 func main() {
 	configPath := flag.String("config", "config.yaml", "配置文件路径")
+	validateConfig := flag.Bool("validate-config", false, "只校验配置，不连接数据库或启动服务")
 	baseURL := flag.String("base-url", "https://openapi.lingxing.com", "领星 OpenAPI 根地址")
 	flag.Parse()
 
@@ -52,7 +54,10 @@ func main() {
 		log.Fatalf("[main] 加载配置失败: %v", err)
 	}
 	log.Printf("[main] 配置加载完成：%d 账号，%d 接口", len(cfg.Accounts), len(cfg.Endpoints))
-
+	if *validateConfig {
+		log.Printf("[main] 配置校验通过：%s", *configPath)
+		return
+	}
 
 	// 2. 连 MySQL + 迁移
 	dbx, err := db.NewPool(cfg.Database)

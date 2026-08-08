@@ -17,6 +17,7 @@ REPO_DIR="${REPO_DIR:-/www/wwwroot/lingxing-sync}"
 CODE_DIR="${REPO_DIR}/code"
 BRANCH="${BRANCH:-main}"
 APP="${APP:-lingxing-sync}"
+GIT=(git -c "safe.directory=${REPO_DIR}")
 # Supervisor 目标名。必须是「组名:*」而不是裸程序名：
 # 宝塔的 lingxingsync.ini 里 [program:lingxingsync] 带 numprocs，实际进程叫
 # lingxingsync_00 并归在 lingxingsync 组下。裸 `supervisorctl restart lingxingsync`
@@ -24,6 +25,7 @@ APP="${APP:-lingxing-sync}"
 # 用 `supervisorctl status`（不带参数）可看到真实名字形如 lingxingsync:lingxingsync_00。
 PROG="${PROG:-lingxingsync:*}"
 PORT="${PORT:-7799}"
+LOCK_FILE="${LOCK_FILE:-/tmp/lingxing-sync-deploy.lock}"
 # 健康检查探测路径。必须是一个真实存在的 GET 路由（见第 5 步注释）。
 HEALTH_PATH="${HEALTH_PATH:-/api/settings}"
 # supervisord 的配置文件路径。必须显式传给 supervisorctl（见第 4 步注释）：
@@ -42,18 +44,25 @@ export GOCACHE="${GOCACHE:-${CODE_DIR}/.gocache}"
 log() { printf '\n\033[1;32m[deploy %(%F %T)T]\033[0m %s\n' -1 "$*"; }
 fail() { printf '\n\033[1;31m[deploy 失败]\033[0m %s\n' "$*" >&2; exit 1; }
 
+command -v flock >/dev/null 2>&1 || fail "找不到 flock，拒绝并发部署"
+exec 9>"${LOCK_FILE}"
+flock -n 9 || fail "已有另一轮部署正在执行"
+
 command -v git >/dev/null 2>&1 || fail "找不到 git"
 command -v go  >/dev/null 2>&1 || fail "找不到 go（检查 /usr/local/go/bin 是否在 PATH）"
 
-log "1/5 进入仓库：${REPO_DIR}"
+log "1/7 进入仓库：${REPO_DIR}"
 cd "${REPO_DIR}" || fail "仓库目录不存在：${REPO_DIR}"
 
-log "2/5 拉取最新代码（快进 origin/${BRANCH}）"
-git fetch --prune origin
-BEFORE="$(git rev-parse --short HEAD)"
-git checkout "${BRANCH}"
-git pull --ff-only origin "${BRANCH}"
-AFTER="$(git rev-parse --short HEAD)"
+log "2/7 拉取最新代码（快进 origin/${BRANCH}）"
+"${GIT[@]}" fetch --prune origin
+BEFORE="$("${GIT[@]}" rev-parse --short HEAD)"
+if [ -n "$("${GIT[@]}" status --porcelain --untracked-files=all)" ]; then
+  fail "服务器工作树不干净，拒绝覆盖现场改动；请先人工核对 git status"
+fi
+"${GIT[@]}" checkout "${BRANCH}"
+"${GIT[@]}" pull --ff-only origin "${BRANCH}"
+AFTER="$("${GIT[@]}" rev-parse --short HEAD)"
 log "版本：${BEFORE} → ${AFTER}"
 
 if [ "${BEFORE}" = "${AFTER}" ]; then
@@ -61,11 +70,21 @@ if [ "${BEFORE}" = "${AFTER}" ]; then
   exit 0
 fi
 
-log "3/5 编译二进制"
+log "3/7 运行 Go 测试"
 cd "${CODE_DIR}"
-go build -ldflags="-s -w" -o "${APP}"
+go test ./... || fail "go test ./... 失败，拒绝部署"
 
-log "4/5 重启服务（supervisor）"
+log "4/7 运行 go vet"
+go vet ./... || fail "go vet ./... 失败，拒绝部署"
+
+log "5/7 编译二进制"
+go build -ldflags="-s -w" -o "${APP}"
+test -x "./${APP}" || fail "编译产物不存在或不可执行"
+
+log "6/7 校验生产配置（不连接数据库、不启动服务）"
+"./${APP}" -config config.yaml -validate-config || fail "config.yaml 校验失败，拒绝部署"
+
+log "7/7 重启服务（supervisor）"
 # 必须带 -c：宝塔的 supervisord 是用 -c /etc/supervisor/supervisord.conf 起的，
 # 裸 supervisorctl 读默认配置，可能连到另一个（或空的）实例，报「no such process」
 # 而让人误以为进程名写错了。实测踩过这个坑。
@@ -81,7 +100,11 @@ if ! "${SVC[@]}" restart "${PROG}"; then
     || fail "supervisorctl 起不来 ${PROG}：检查 ${SUPERVISOR_CONF} 的 [include] 是否覆盖 /www/server/panel/plugin/supervisor/profile/*.ini"
 fi
 
-log "5/5 健康检查（:${PORT}${HEALTH_PATH}）"
+status_output="$("${SVC[@]}" status "${PROG}" 2>&1)" || fail "Supervisor 查询失败：${status_output}"
+printf '%s\n' "${status_output}"
+printf '%s\n' "${status_output}" | grep -q 'RUNNING' || fail "Supervisor 未进入 RUNNING，拒绝通过部署"
+
+log "健康检查（:${PORT}${HEALTH_PATH}）"
 # 探测点用 /api/settings：一个真实存在的 GET 路由。
 # ⚠️ 勿改回 /api/status —— 该路由已随「概览页」一并删除，打它恒 404，
 #    会让健康检查在服务完全正常的情况下误判部署失败。
