@@ -311,7 +311,15 @@ syscall.Exec(exe, os.Args, os.Environ())
 ```go
 // GetTableColumns 查 INFORMATION_SCHEMA，取目标表的所有列名。
 // Worker 启动时调用一次，结果存到 endpoint.Columns []string。
-// 缺表 → 返回 error → main.go 打印 FATAL 并 os.Exit(1)（启动断言）。
+//
+// 缺表 → 返回 error → worker.New 把原因记进该 worker 的 fatalErr，**按接口粒度降级**：
+// 该「账号+接口」永久 status=error、拒绝同步、每次触发写一条带可读原因的 error 任务行，
+// 但仍然注册、仍在 UI 可见；其余 Worker 与 HTTP :7799 照常运行，进程不退出。
+// 依据 CLAUDE.md §1.1「任一接口挂掉不影响其他接口」+ §8「缺表/缺列只炸自己」。
+//
+// 注意：这里**不是** os.Exit(1)。早期版本在 main.go 里 log.Fatalf，后果是一张表没建
+// 就连带停掉其余所有接口、7799 打不开、连排查界面都没有 —— 违反 §1.1，已废弃。
+// fail-loud 的落点是「这一个接口大声失败」，不是「整个进程自杀」。
 func GetTableColumns(db *sqlx.DB, table string) ([]string, error) {
     const q = `SELECT COLUMN_NAME
                FROM INFORMATION_SCHEMA.COLUMNS

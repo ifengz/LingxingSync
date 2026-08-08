@@ -269,6 +269,15 @@ HTTP 状态码：`200` = ok；`400` = 参数错误；`500` = 内部错误。
 }
 ```
 
+每个 endpoint 还可能带两个**只读运行态**字段（取自 worker 快照，健康接口两者都不出现）：
+
+| 字段 | 含义 |
+|---|---|
+| `fatal_error` | 非空 = 该接口启动断言未过（最常见：目标表没建），永久不可同步。`/sync` 页据此整行标红并显示原因；手动触发返回 409。 |
+| `warnings[]` | 不阻断同步但需人看见的问题，当前唯一来源：配置声明的列（`record_id_fields` / `field_paths` 目标）在目标表里不存在，这些字段会被 Upsert 静默丢弃。 |
+
+两者**永远写不回 `config.yaml`**：它们在 DTO 里只为满足前端整行回传（`saveRow` 用 `Object.assign` 回传全部键，而 PUT 侧开了 `DisallowUnknownFields`，字段不在 DTO 就会 400），后端 `dtoToEndpoint` 故意不映射它们。
+
 ### POST /api/accounts
 新增账号。body = 单个 account 对象（含 app_secret 明文）。id 全局唯一，否则 400。
 
