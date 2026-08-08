@@ -48,6 +48,16 @@ type WorkerStatus struct {
 	NextRunAt    *time.Time `json:"next_run_at,omitempty"`
 	TodayRecords int        `json:"today_records"`
 	TodayErrors  int        `json:"today_errors"`
+
+	// FatalError 非空 = 该接口启动断言未过（最常见：目标表没建），永久不可同步。
+	// 此时 Status=="error"。它只影响这一个接口，其余接口与 HTTP 服务照常运行
+	// （CLAUDE.md §1.1「任一接口挂掉不影响其他接口」）。
+	FatalError string `json:"fatal_error,omitempty"`
+
+	// Warnings 是不阻断同步、但需要人看见的问题。当前唯一来源：配置声明了某些列
+	// （record_id_fields / field_paths 目标）而目标表里没有，这些字段会被 Upsert
+	// 静默丢弃。同步照跑、状态照常，只是把静默故障摆到明面上（§8「缺列给出可读提示」）。
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // EndpointWorker 是单个「账号+接口」的同步执行单元。
@@ -63,6 +73,15 @@ type EndpointWorker struct {
 	DB       *sqlx.DB
 	Limiters *LimiterRegistry
 	Columns  []string // 启动时 GetTableColumns 缓存，避免每页查表
+
+	// fatalErr 记录启动断言失败的原因（最常见：目标表未建）。非 nil 时该 worker
+	// 永久拒绝同步，但仍然注册、仍然在 UI 上可见，不拖垮进程。
+	// 只在 New 里赋值一次（goroutine 启动之前），之后只读，故无需加锁。
+	fatalErr error
+
+	// warnings 记录不阻断同步的配置/表结构不一致（当前：声明了列但表里没有）。
+	// 与 fatalErr 同样只在 New 里赋值一次、之后只读，故无需加锁。
+	warnings []string
 
 	// 触发与取消信号
 	trigger  chan triggerReq // 非阻塞触发，携带类型与可选按次店铺，缓冲 1
@@ -84,21 +103,43 @@ type EndpointWorker struct {
 }
 
 // New 构造一个 EndpointWorker。
-// 启动断言：调 db.GetTableColumns 缓存 Columns，缺表返回 error（fail-loud）。
+//
+// 启动断言：调 db.GetTableColumns 缓存 Columns。缺表**不再返回 error 顶掉进程**——
+// 那会让一个没建表的接口连带停掉其余所有接口和 HTTP 服务，违反 CLAUDE.md §1.1
+// 「任一接口挂掉、报错、被限流，不影响其他接口」。改为把原因记进 w.fatalErr：
+// 该接口永久 status=error、拒绝同步、每次触发写一条带原因的 error 任务行，
+// 但仍然注册、仍在 UI 可见，其余 worker 与 :7799 照常运行。
+// fail-loud 的落点从「进程自杀」下沉到「这一个接口大声失败」。
+//
+// 返回的 error 仅保留给「连 INFORMATION_SCHEMA 都查不动」这类全局 DB 故障之外的
+// 未来用途；当前实现恒为 nil，调用方仍应检查（签名稳定，便于以后收紧）。
+//
 // 例外：endpoint.Probe=true 时跳过建表断言（探测模式，表尚未建，仅摸字段名）。
 // 限流器从 Limiters 注册表取（同 (quota_group, path) 共享）。
 func New(ep config.Endpoint, acc config.Account, client *api.Client, dbx *sqlx.DB, reg *LimiterRegistry) (*EndpointWorker, error) {
 	var cols []string
+	var fatalErr error
 	if !ep.Probe {
 		c, err := db.GetTableColumns(dbx, ep.Table)
-		if err != nil {
-			return nil, fmt.Errorf("worker %s: 读表 %s 列定义失败: %w", ep.Name, ep.Table, err)
+		switch {
+		case err != nil:
+			fatalErr = fmt.Errorf("表 %s 不可用（建表了吗？）: %w", ep.Table, err)
+		case len(c) == 0:
+			fatalErr = fmt.Errorf("表 %s 无列定义（建表了吗？）", ep.Table)
+		default:
+			cols = c
 		}
-		if len(c) == 0 {
-			return nil, fmt.Errorf("worker %s: 表 %s 无列定义（建表了吗？）", ep.Name, ep.Table)
-		}
-		cols = c
 	}
+	// 声明了列但表里没有 → 告警（不阻断）。缺表时 cols 为空，谈不上列差集，跳过。
+	var warnings []string
+	if fatalErr == nil && len(cols) > 0 {
+		if miss := missingDeclaredColumns(ep, cols); len(miss) > 0 {
+			warnings = append(warnings, fmt.Sprintf(
+				"表 %s 缺少配置声明的列 %v：这些字段会被静默丢弃（同步仍会执行）",
+				ep.Table, miss))
+		}
+	}
+
 	// 预热限流器（同 key 共享桶，Get 即创建）
 	reg.Get(acc.QuotaGroupOrID(), ep.Path, ep.Rate.Bucket, ep.Rate.IntervalMs)
 
@@ -109,11 +150,65 @@ func New(ep config.Endpoint, acc config.Account, client *api.Client, dbx *sqlx.D
 		DB:       dbx,
 		Limiters: reg,
 		Columns:  cols,
+		fatalErr: fatalErr,
+		warnings: warnings,
 		trigger:  make(chan triggerReq, 1), // 缓冲 1：非阻塞 Trigger
 		cancelCh: make(chan int64, 1),
 		today:    time.Now().Format("2006-01-02"),
 	}
 	return w, nil
+}
+
+// FatalError 返回启动断言失败的原因，nil = 该接口可正常同步。
+// server 层用它挡手动触发并回显原因；main 用它打启动告警。
+func (w *EndpointWorker) FatalError() error { return w.fatalErr }
+
+// missingDeclaredColumns 返回配置声明过、但目标表实际不存在的列名（已排序去重）。
+//
+// 覆盖两类声明：
+//   - record_id_fields：唯一键字段。Upsert 的去重完全依赖表的真实主键，config 里的
+//     record_id_fields 运行期并不参与 SQL。两者对不上时同步会「成功」但去重语义
+//     可能是错的（重复行堆积或整表被当成一行覆盖），且不报任何错。
+//   - field_paths 的键（目标列名）：辛苦从嵌套结构里捞出来提升到顶层，表里却没这列，
+//     Upsert 直接丢掉——纯属白干，同样不报错。
+//
+// 为什么是告警而不是 fatal：这两类声明运行期都不参与 SQL，声明过时并不代表实际
+// 落库是错的（表的真实主键可能完全正确）。做成 fatal 会因为一处元数据不一致，
+// 拒绝同步一个本来跑得好的接口——那是拿修复的名义弄坏在跑的东西。所以只把它从
+// 「静默」变成「可见」，落实 §8「缺列给出可读提示（缺哪几列）」。
+//
+// Probe 接口与缺表接口不会走到这里（New 里已用 len(cols)>0 挡掉）。
+func missingDeclaredColumns(ep config.Endpoint, cols []string) []string {
+	if ep.Probe || len(cols) == 0 {
+		return nil
+	}
+	have := make(map[string]struct{}, len(cols))
+	for _, c := range cols {
+		have[c] = struct{}{}
+	}
+	seen := make(map[string]struct{})
+	var missing []string
+	add := func(f string) {
+		if f == "" {
+			return
+		}
+		if _, ok := have[f]; ok {
+			return
+		}
+		if _, dup := seen[f]; dup {
+			return
+		}
+		seen[f] = struct{}{}
+		missing = append(missing, f)
+	}
+	for _, f := range ep.RecordIDFields {
+		add(f)
+	}
+	for target := range ep.FieldPaths {
+		add(target)
+	}
+	sort.Strings(missing)
+	return missing
 }
 
 // triggerReq 是一次触发请求。kind 区分 cron/manual；
@@ -211,6 +306,13 @@ func (w *EndpointWorker) Run(ctx context.Context) {
 func (w *EndpointWorker) runOnceSafely(ctx context.Context, req triggerReq) {
 	if !w.Endpoint.Enabled {
 		// 禁用的接口：触发来了一律跳过（status 标 disabled 由 Status() 派生）
+		return
+	}
+	if w.fatalErr != nil {
+		// 启动断言未过（最常见：目标表没建）。不碰领星、不写数据表，
+		// 只落一条 error 任务行，让「同步日志」页看得见原因。
+		// 绝不 panic、绝不退进程——爆炸半径限定在这一个接口。
+		w.recordFatalTask(req.kind)
 		return
 	}
 	defer func() {
@@ -426,6 +528,15 @@ func (w *EndpointWorker) fetchAllPages(ctx context.Context, taskID int64, params
 
 		// 落库（空列表跳过）
 		list := result.List
+		// 行整形（宪法 §1.3 零代码：全部由 field_paths / inject_params 配置驱动）：
+		//   - field_paths：把嵌套里的身份字段提到顶层（如 asins[0].asin → asin）
+		//   - inject_params：把请求参数补进行（如迭代的 sid，领星不回显）
+		// 两者都不配则原样透传，行为与改动前完全一致。
+		if uerr := shapeRows(list, w.Endpoint.FieldPaths, w.Endpoint.InjectParams, pageParams); uerr != nil {
+			_ = db.InsertTaskLog(w.DB, taskID, pages+1, httpStatus, apiCode, len(list), durationMs, "shape: "+uerr.Error())
+			log.Printf("[worker:%s] 行整形出错 offset=%d: %v", w.Endpoint.Name, offset, uerr)
+			return totalRecords, pages, false
+		}
 		if len(list) > 0 {
 			if uerr := db.UpsertRows(w.DB, w.Endpoint.Table, list, w.Columns, w.Account.ID); uerr != nil {
 				_ = db.InsertTaskLog(w.DB, taskID, pages+1, httpStatus, apiCode, len(list), durationMs, "upsert: "+uerr.Error())
@@ -597,6 +708,26 @@ func stringifyParam(v any) any {
 	}
 }
 
+// recordFatalTask 为「启动断言未过」的接口落一条 error 任务行。
+//
+// 目的是可见性：缺表的接口不再静默躺着，也不再拖垮进程，而是每次被触发就在
+// 「同步日志」页留下一条带原因的 error 记录，运维不用 SSH 看 stdout 就能定位。
+// 全程不碰领星 API、不碰 ls_* 数据表。DB 本身也故障时只打日志，不升级为 panic。
+func (w *EndpointWorker) recordFatalTask(triggerKind string) {
+	log.Printf("[worker:%s] 拒绝同步（启动断言未过）: %v", w.Endpoint.Name, w.fatalErr)
+
+	taskID, err := db.InsertTask(w.DB, w.Endpoint.Name, w.Account.ID, triggerKind)
+	if err != nil {
+		log.Printf("[worker:%s] InsertTask 失败（缺表告警未能落库）: %v", w.Endpoint.Name, err)
+		w.finishSnapshot("error", 0, true)
+		return
+	}
+	if err := db.UpdateTask(w.DB, taskID, "error", 0, 0, w.fatalErr); err != nil {
+		log.Printf("[worker:%s] UpdateTask(%d)=error 失败: %v", w.Endpoint.Name, taskID, err)
+	}
+	w.finishSnapshot("error", 0, true)
+}
+
 // startSnapshot 同步开始时更新快照：status=running，记录开始时刻。
 func (w *EndpointWorker) startSnapshot() {
 	w.mu.Lock()
@@ -679,6 +810,10 @@ func (w *EndpointWorker) Status() WorkerStatus {
 
 	st := "idle"
 	switch {
+	// fatalErr 优先于 disabled：表没建是硬故障，即使接口被禁用也该显示原因，
+	// 否则用户启用后才发现同步永远跑不起来。
+	case w.fatalErr != nil:
+		st = "error"
 	case !w.Endpoint.Enabled:
 		st = "disabled"
 	case w.running.Load():
@@ -687,6 +822,11 @@ func (w *EndpointWorker) Status() WorkerStatus {
 		st = "error"
 	case w.lastStatus == "success":
 		st = "idle"
+	}
+
+	var fatal string
+	if w.fatalErr != nil {
+		fatal = w.fatalErr.Error()
 	}
 
 	var lastRun, nextRun *time.Time
@@ -710,5 +850,7 @@ func (w *EndpointWorker) Status() WorkerStatus {
 		NextRunAt:    nextRun,
 		TodayRecords: w.todayRecords,
 		TodayErrors:  w.todayErrors,
+		FatalError:   fatal,
+		Warnings:     w.warnings, // 启动期一次性算好，之后只读
 	}
 }

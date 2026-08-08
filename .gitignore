@@ -2,8 +2,11 @@
 .claude/
 
 # Go 运行产物
-code/config.yaml
-code/config.yaml.bak
+# 运行配置含 app_secret，绝不进 git。
+# 用 config.yaml* 通配：程序写回时产生的 .bak，以及任何手工加后缀的副本
+# （如 config.yaml.bak.pre012）都一并挡住——只写 *.bak 挡不住后缀在 .bak 之后的那种。
+# config.example.yaml 不受影响（前缀不同），仍然进 git。
+code/config.yaml*
 *.bak
 code/lingxing-sync
 code/lingxing-sync.exe

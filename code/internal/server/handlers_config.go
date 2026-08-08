@@ -574,6 +574,11 @@ func (s *Server) apiAccountStoreSync(w http.ResponseWriter, r *http.Request) {
 			skipped = append(skipped, name+"(已禁用)")
 			continue
 		}
+		if fe := w0.Status().FatalError; fe != "" {
+			// 启动断言未过（多半是目标表没建）：跳过它，其余店铺目录接口照常刷新。
+			skipped = append(skipped, name+"(目标表未就绪)")
+			continue
+		}
 		if !w0.TriggerManual(nil) {
 			skipped = append(skipped, name+"(运行中)")
 			continue
