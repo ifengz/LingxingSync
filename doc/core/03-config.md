@@ -71,10 +71,11 @@ endpoints:
   - name: sc_sales_orders        # 任务标识，全局唯一，字母下划线
     display: "SC 销售订单"        # UI 展示名
     account: "sc_us"             # 对应 accounts[].id
-    path: "/openapi/erp/sc/orders/list"
+    # ⚠️ path 不带 /openapi 前缀：baseURL 已是 https://openapi.lingxing.com
+    path: "/erp/sc/data/mws/orders"
     method: "POST"
     table: "ls_sales_orders"     # 写入的目标表
-    record_id_fields: ["order_id"]  # 唯一键字段（复合主键用数组）
+    record_id_fields: ["amazon_order_id"]  # 唯一键字段（复合主键用数组）
     rate:                        # 从领星官方文档 Rate Limit 区块原样抄写
       bucket: 5                  # 令牌桶容量（=1 时强制串行）
       interval_ms: 200           # 单店铺调用最小间隔
@@ -89,10 +90,10 @@ endpoints:
   - name: sc_inventory
     display: "SC FBA 库存"
     account: "sc_us"
-    path: "/openapi/erp/sc/inventory/list"
-    method: "POST"
+    path: "/erp/sc/routing/fba/fbaStock/fbaList"
+    method: "GET"
     table: "ls_inventory"
-    record_id_fields: ["fnsku"]
+    record_id_fields: ["sid", "fnsku"]   # 同一 fnsku 多店铺各一行，必须带 sid
     rate:
       bucket: 1                  # 桶=1 → 串行：请求返回后才能发下一个
       interval_ms: 1000
@@ -104,21 +105,10 @@ endpoints:
     # iterate_by_store: true     # 若按店铺迭代，可用 store_sids 限定范围：
     # store_sids: ["1001","1002"] # 空/省略 = 该账号全部店铺；非空 = 只同步这些 sid
 
-  - name: sc_ads_daily
-    display: "SC 广告日报"
-    account: "sc_us"
-    path: "/openapi/erp/sc/ads/daily"
-    method: "POST"
-    table: "ls_ads_daily"
-    record_id_fields: ["report_id"]
-    rate:
-      bucket: 3
-      interval_ms: 333
-      multi_interval_ms: 2000
-      dimension: "account+path"
-    cron: "30 1 * * *"           # 每天 01:30
-    enabled: true
-    window_days: 14
+  # 注：这里原有一段 sc_ads_daily「SC 广告日报」示例，已删除。
+  # 其 path "/openapi/erp/sc/ads/daily" 与唯一键 report_id 都不存在于领星 OpenAPI
+  # （凭空写的），照抄即 404。领星真实广告报表是一族接口（见 08-api-reference.md §6.5），
+  # 且需先取 profile_id，要接须按 07-add-endpoint.md 逐个 probe、各建一张表。
 
 # ===== 留存 =====
 retention:
