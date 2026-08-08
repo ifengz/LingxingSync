@@ -734,12 +734,29 @@ window.dataSources = function () {
     metaLoading: false,
     columns: [],
     colError: '',       // 读字段失败时的提示（不静默空白）
+    refreshing: false,  // 刷新主表工作态（只重拉 /api/endpoints，不动整页）
 
     async load() {
       const eps = await window.apiGet('/api/endpoints').catch(window.toastError);
       this.endpoints = eps || [];
     },
+    // 只刷新主表（数据源列表），不重载页面、不影响连接信息卡与已展开字段外的状态。
+    async refresh() {
+      if (this.refreshing) return;
+      this.refreshing = true;
+      try {
+        const eps = await window.apiGet('/api/endpoints').catch(window.toastError);
+        if (eps) {
+          this.endpoints = eps;
+          this.expanded = null; // 列表刷新后收起展开行，避免 idx 错位
+        }
+      } finally {
+        this.refreshing = false;
+      }
+    },
     accountOf(e) { return e.account_id || '—'; },
+    // 最后写入：e.last_sync 为 null（表空/从未落库/表未建）→「从未」；否则相对时间（复用全局 fmtRel）。
+    fmtLastSync(e) { return e.last_sync ? window.fmtRel(e.last_sync) : '从未'; },
     async toggleExpand(idx) {
       if (this.expanded === idx) { this.expanded = null; return; }
       this.expanded = idx;
