@@ -99,3 +99,18 @@ func TestFindCatalogEntryUnknownFailsLoud(t *testing.T) {
 		t.Fatal("未知模板 key 应返回 error")
 	}
 }
+
+// TestInventoryCatalogCarriesStoreType 固化 /sync 清单生成 SC 库存 Endpoint 时的店铺类型隔离。
+func TestInventoryCatalogCarriesStoreType(t *testing.T) {
+	e, err := FindCatalogEntry("sc_inventory")
+	if err != nil {
+		t.Fatalf("FindCatalogEntry: %v", err)
+	}
+	ep := e.ToEndpoint("sc_us")
+	if !ep.IterateByStore || ep.StoreParamName != "sid" {
+		t.Fatalf("库存模板未保留按店铺迭代合同: %+v", ep)
+	}
+	if ep.StoreType != "SC" {
+		t.Fatalf("store_type = %q, want SC", ep.StoreType)
+	}
+}

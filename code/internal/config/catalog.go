@@ -37,6 +37,7 @@ type CatalogEntry struct {
 	IsStoreSource  bool
 	IterateByStore bool
 	StoreParamName string
+	StoreType      string
 }
 
 // ToEndpoint 用模板 + 账号 ID 生成一个可直接写入 config 的 Endpoint。
@@ -63,6 +64,7 @@ func (e CatalogEntry) ToEndpoint(accountID string) Endpoint {
 		IsStoreSource:  e.IsStoreSource,
 		IterateByStore: e.IterateByStore,
 		StoreParamName: e.StoreParamName,
+		StoreType:      e.StoreType,
 	}
 }
 
@@ -116,6 +118,7 @@ var catalogEntries = []CatalogEntry{
 		DefaultCron:    "0 */2 * * *",
 		IterateByStore: true,
 		StoreParamName: "sid",
+		StoreType:      "SC",
 	},
 	// 「SC 广告日报」模板已移除，不是遗漏。原模板 path="/openapi/erp/sc/ads/daily"、
 	// RecordIDs=["report_id"] 两者都不存在于领星 OpenAPI（凭空写的），谁点启用谁吃 404。
