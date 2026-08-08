@@ -21,6 +21,11 @@ PROG="${PROG:-lingxingsync}"
 PORT="${PORT:-7799}"
 # 健康检查探测路径。必须是一个真实存在的 GET 路由（见第 5 步注释）。
 HEALTH_PATH="${HEALTH_PATH:-/api/settings}"
+# supervisord 的配置文件路径。必须显式传给 supervisorctl（见第 4 步注释）：
+# 裸 supervisorctl 读默认配置，可能连不到宝塔那个 supervisord 实例，
+# 表现为「no such process」——程序其实好着，只是问错了人。
+# 实测本机 supervisord 启动命令：supervisord -c /etc/supervisor/supervisord.conf
+SUPERVISOR_CONF="${SUPERVISOR_CONF:-/etc/supervisor/supervisord.conf}"
 
 # Go 与 supervisorctl 可能不在 WebHook/脚本的 PATH 里，显式补上常见安装路径。
 # 宝塔把 supervisor 装在面板 pyenv 里（/www/server/panel/pyenv/bin），非标准 PATH，
@@ -56,10 +61,19 @@ cd "${CODE_DIR}"
 go build -ldflags="-s -w" -o "${APP}"
 
 log "4/5 重启服务（supervisor）"
-if command -v supervisorctl >/dev/null 2>&1; then
-  supervisorctl restart "${PROG}" || fail "supervisorctl restart 失败"
-else
-  fail "找不到 supervisorctl，请手动重启 ${PROG}"
+# 必须带 -c：宝塔的 supervisord 是用 -c /etc/supervisor/supervisord.conf 起的，
+# 裸 supervisorctl 读默认配置，可能连到另一个（或空的）实例，报「no such process」
+# 而让人误以为进程名写错了。实测踩过这个坑。
+command -v supervisorctl >/dev/null 2>&1 || fail "找不到 supervisorctl，请手动重启 ${PROG}"
+SVC=(supervisorctl -c "${SUPERVISOR_CONF}")
+if ! "${SVC[@]}" restart "${PROG}"; then
+  # program 定义在宝塔插件目录（/www/server/panel/plugin/supervisor/profile/${PROG}.ini），
+  # 新增或改过之后 supervisord 内存里可能还没有它 → reread 读盘、update 加载，再重试。
+  log "restart 失败，reread/update 重新加载 program 定义后重试"
+  "${SVC[@]}" reread || true
+  "${SVC[@]}" update || true
+  "${SVC[@]}" restart "${PROG}" || "${SVC[@]}" start "${PROG}" \
+    || fail "supervisorctl 起不来 ${PROG}：检查 ${SUPERVISOR_CONF} 的 [include] 是否覆盖 /www/server/panel/plugin/supervisor/profile/*.ini"
 fi
 
 log "5/5 健康检查（:${PORT}${HEALTH_PATH}）"
