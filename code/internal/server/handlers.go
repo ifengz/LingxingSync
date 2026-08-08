@@ -71,8 +71,14 @@ type pageData struct {
 	AccountCount   int
 	SecretRequired bool
 	// EndpointNames 提供给某些页面（如 logs）做下拉选项的初始值
-	EndpointNames []string
-	AccountIDs    []string
+	EndpointNames  []string
+	AccountIDs     []string
+	AccountOptions []pageAccountOption
+}
+
+type pageAccountOption struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
 }
 
 func (s *Server) newPageData(active string) pageData {
@@ -81,8 +87,14 @@ func (s *Server) newPageData(active string) pageData {
 		names = append(names, e.Name)
 	}
 	ids := make([]string, 0, len(s.cfg.Accounts))
+	accountOptions := make([]pageAccountOption, 0, len(s.cfg.Accounts))
 	for _, a := range s.cfg.Accounts {
 		ids = append(ids, a.ID)
+		name := strings.TrimSpace(a.Name)
+		if name == "" {
+			name = a.ID
+		}
+		accountOptions = append(accountOptions, pageAccountOption{ID: a.ID, Name: name})
 	}
 	return pageData{
 		Active:         active,
@@ -91,6 +103,7 @@ func (s *Server) newPageData(active string) pageData {
 		SecretRequired: s.cfg.Server.Secret != "",
 		EndpointNames:  names,
 		AccountIDs:     ids,
+		AccountOptions: accountOptions,
 	}
 }
 

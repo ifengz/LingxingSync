@@ -606,8 +606,14 @@ window.logsPage = function () {
     total: 0,
     endpointNames: (window.__PAGE__ && window.__PAGE__.endpointNames) || [],
     accountIDs: (window.__PAGE__ && window.__PAGE__.accountIDs) || [],
+    accountOptions: (window.__PAGE__ && window.__PAGE__.accountOptions) || [],
     polling: null,        // T3：5s 轮询句柄
     refreshing: false,    // 手动刷新按钮态（转圈 + 禁用）
+    requesting: false,    // 请求互斥，避免轮询和手动刷新重叠
+    lastUpdatedAt: '',
+    datePreset: '',
+    dateRangeOpen: false,
+    dateRangeError: '',
     filters: {
       endpoint: q.get('endpoint') || '',
       account: q.get('account') || '',
@@ -629,18 +635,90 @@ window.logsPage = function () {
       if (this.polling) { clearInterval(this.polling); this.polling = null; }
     },
 
-    async load() {
-      this.refreshing = true;
-      const params = new URLSearchParams();
-      for (const k of ['endpoint', 'account', 'status', 'date_from', 'date_to', 'page', 'page_size']) {
-        const v = this.filters[k];
-        if (v !== '' && v != null) params.set(k, v);
+    async load(showFeedback = false) {
+      if (this.requesting) return;
+      this.requesting = true;
+      this.refreshing = showFeedback;
+      try {
+        const params = new URLSearchParams();
+        for (const k of ['endpoint', 'account', 'status', 'date_from', 'date_to', 'page', 'page_size']) {
+          const v = this.filters[k];
+          if (v !== '' && v != null) params.set(k, v);
+        }
+        const d = await window.apiGet('/api/tasks?' + params.toString()).catch(window.toastError);
+        if (!d) return;
+        this.tasks = d.items || [];
+        this.total = d.total || 0;
+        this.lastUpdatedAt = new Date().toLocaleTimeString('zh-CN', {
+          hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
+        });
+      } finally {
+        this.requesting = false;
+        this.refreshing = false;
       }
-      const d = await window.apiGet('/api/tasks?' + params.toString()).catch(window.toastError);
-      this.refreshing = false;
-      if (!d) return;
-      this.tasks = d.items || [];
-      this.total = d.total || 0;
+    },
+    refreshList() {
+      return this.load(true);
+    },
+    accountLabel(id) {
+      const account = this.accountOptions.find(item => item.id === id);
+      return account ? account.name : id;
+    },
+    dateRangeLabel() {
+      if (this.filters.date_from && this.filters.date_to) {
+        return this.filters.date_from.replaceAll('-', '/') + ' - ' + this.filters.date_to.replaceAll('-', '/');
+      }
+      if (this.filters.date_from) return this.filters.date_from.replaceAll('-', '/') + ' - 结束日期';
+      if (this.filters.date_to) return '开始日期 - ' + this.filters.date_to.replaceAll('-', '/');
+      return '选择日期范围';
+    },
+    formatDate(date) {
+      const month = String(date.getMonth() + 1).padStart(2, '0');
+      const day = String(date.getDate()).padStart(2, '0');
+      return date.getFullYear() + '-' + month + '-' + day;
+    },
+    async applyDatePreset(preset) {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const start = new Date(today);
+      const end = new Date(today);
+      const offsets = { yesterday: 1, last_7_days: 6, last_30_days: 29 };
+
+      if (preset === 'this_month') {
+        start.setDate(1);
+      } else if (offsets[preset]) {
+        start.setDate(start.getDate() - offsets[preset]);
+        if (preset === 'yesterday') end.setDate(end.getDate() - 1);
+      }
+
+      this.filters.date_from = this.formatDate(start);
+      this.filters.date_to = this.formatDate(end);
+      this.datePreset = preset;
+      this.dateRangeError = '';
+      this.dateRangeOpen = false;
+      this.filters.page = 1;
+      await this.load();
+    },
+    dateRangeChanged() {
+      this.datePreset = '';
+      this.dateRangeError = '';
+      if (!this.filters.date_from || !this.filters.date_to) return;
+      if (this.filters.date_from > this.filters.date_to) {
+        this.dateRangeError = '结束日期不能早于开始日期';
+        return;
+      }
+      this.dateRangeOpen = false;
+      this.filters.page = 1;
+      this.load();
+    },
+    clearDateRange() {
+      this.filters.date_from = '';
+      this.filters.date_to = '';
+      this.datePreset = '';
+      this.dateRangeError = '';
+      this.dateRangeOpen = false;
+      this.filters.page = 1;
+      this.load();
     },
     gotoPage(p) {
       if (p < 1) p = 1;

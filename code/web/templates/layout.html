@@ -31,6 +31,7 @@
       }
     }
   </script>
+  <link rel="stylesheet" href="/static/ui.css">
   <!-- Alpine.js CDN -->
   <script defer src="https://unpkg.com/alpinejs@3.14.8/dist/cdn.min.js"></script>
   <!-- 全局公共逻辑 -->
@@ -62,20 +63,20 @@
 
     <!-- ── 顶栏（单行：左品牌 / 中导航 / 右系统信息）── -->
     <header class="sticky top-0 z-30 bg-white border-b border-slate-200">
-      <div class="flex items-center gap-4 px-4 md:px-6 h-14">
+      <div class="ui-app-bar">
 
         <!-- 左：品牌 -->
-        <span class="shrink-0 text-sm font-semibold text-slate-800 tracking-tight">领星同步机</span>
+        <span class="ui-app-brand">领星同步机</span>
 
         <!-- 中：页面导航（pill 按钮，参照 React TabStrip） -->
-        <nav class="flex flex-1 items-center justify-center gap-1" aria-label="主导航">
+        <nav class="ui-app-nav" aria-label="主导航">
           {{$a := .Active}}
           {{range listItems}}
             <a href="{{.Href}}"
                {{if eq $a .Key}}
-                 class="inline-flex items-center rounded-md border border-brand-600 bg-brand-600 px-3.5 py-1.5 text-sm font-medium text-white transition"
+                 class="ui-app-nav-link inline-flex items-center rounded-md border border-brand-600 bg-brand-600 px-3.5 py-1.5 text-sm font-medium text-white transition"
                {{else}}
-                 class="inline-flex items-center rounded-md border border-transparent px-3.5 py-1.5 text-sm font-medium text-slate-600 hover:border-slate-200 hover:bg-slate-50 hover:text-slate-900 transition"
+                 class="ui-app-nav-link inline-flex items-center rounded-md border border-transparent px-3.5 py-1.5 text-sm font-medium text-slate-600 hover:border-slate-200 hover:bg-slate-50 hover:text-slate-900 transition"
                {{end}}>
               {{.Label}}
             </a>
@@ -83,11 +84,11 @@
         </nav>
 
         <!-- 右：系统信息 -->
-        <div class="flex shrink-0 items-center gap-3 text-xs text-slate-500">
-          <span>端口 <span class="font-mono font-medium text-slate-700">7799</span></span>
-          <span class="text-slate-200">|</span>
+        <div class="ui-app-stats">
+          <span class="ui-app-stat-port">端口 <span class="font-mono font-medium text-slate-700">7799</span></span>
+          <span class="ui-app-divider text-slate-200">|</span>
           <span>端点 <span class="font-medium text-slate-700">{{.EndpointCount}}</span></span>
-          <span class="text-slate-200">|</span>
+          <span class="ui-app-divider text-slate-200">|</span>
           <span>账号 <span class="font-medium text-slate-700">{{.AccountCount}}</span></span>
         </div>
 

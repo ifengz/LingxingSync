@@ -93,6 +93,22 @@ void (async () => {
   assert.equal(request.url, '/api/sync/orders/cancel');
   assert.equal(request.body.task_id, 42);
 
+  // 日志日期范围：快捷范围必须作为一个入口更新起止日期、回到第一页并重拉主表。
+  const logs = sandbox.window.logsPage();
+  let dateRangeLoads = 0;
+  logs.filters.page = 3;
+  logs.load = async () => { dateRangeLoads++; };
+  await logs.applyDatePreset('last_7_days');
+  assert.match(logs.filters.date_from, /^\d{4}-\d{2}-\d{2}$/);
+  assert.match(logs.filters.date_to, /^\d{4}-\d{2}-\d{2}$/);
+  assert.equal(logs.filters.page, 1);
+  assert.equal(dateRangeLoads, 1);
+
+  sandbox.window.__PAGE__ = { accountOptions: [{ id: 'sc_us_1', name: '美国自营' }] };
+  const namedLogs = sandbox.window.logsPage();
+  assert.equal(namedLogs.accountLabel('sc_us_1'), '美国自营');
+  assert.equal(namedLogs.accountLabel('unknown'), 'unknown');
+
   // 防回归：同步管理页不得再出现任务历史表、也不得出现运行态摘要条。
   // 任务状态明细只有一个去处 —— 同步日志页（/logs）。
   const noTableManage = sandbox.window.syncManage();

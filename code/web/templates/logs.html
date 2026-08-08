@@ -7,49 +7,50 @@
 {{define "content"}}
 <script>window.__PAGE__ = {
   endpointNames: {{json .EndpointNames}},
-  accountIDs: {{json .AccountIDs}}
+  accountIDs: {{json .AccountIDs}},
+  accountOptions: {{json .AccountOptions}}
 };</script>
-<div x-data="logsPage()" x-init="load()" class="mx-auto max-w-6xl space-y-4">
+<div x-data="logsPage()" x-init="load()" class="ui-page">
 
   <!-- 页头 -->
-  <div class="flex items-center gap-2.5">
-    <span class="grid h-8 w-8 place-items-center rounded-lg bg-brand-600 text-white">
+  <div class="ui-page-header">
+    <span class="ui-page-mark">
       <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/><path d="M12 7v5l4 2"/></svg>
     </span>
-    <h1 class="text-lg font-semibold tracking-tight text-slate-800">同步日志</h1>
-    <span class="text-xs text-slate-400">每 5 秒自动刷新 · 分页停留当前页</span>
+    <h1 class="ui-page-title">同步日志</h1>
+    <span class="ui-page-meta">每 5 秒自动刷新 · 分页停留当前页 <span x-show="lastUpdatedAt">· 最后更新 <span x-text="lastUpdatedAt"></span></span></span>
     <!-- 刷新：只重拉主表（load()），不刷新整页 -->
-    <button @click="load()" :disabled="refreshing" title="刷新列表"
-            class="ml-auto inline-flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50">
+    <button @click="refreshList()" :disabled="refreshing" title="刷新列表"
+            class="ui-btn ui-btn-secondary ui-page-action">
       <svg class="h-4 w-4" :class="refreshing && 'animate-spin'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M3 21v-5h5"/></svg>
       刷新
     </button>
   </div>
 
   <!-- 筛选条 -->
-  <div class="overflow-hidden rounded-lg border border-slate-200 bg-white">
-    <div class="flex items-center gap-2 border-b border-slate-200 px-4 py-3">
+  <div class="ui-panel ui-filter-panel">
+    <div class="ui-panel-header">
       <svg class="h-4 w-4 text-slate-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
-      <h2 class="text-sm font-bold text-slate-800">筛选</h2>
+      <h2 class="ui-panel-title">筛选</h2>
     </div>
-    <div class="grid grid-cols-1 items-end gap-3 px-4 py-4 sm:grid-cols-2 lg:grid-cols-5">
-      <div>
-        <label class="mb-1 block text-xs font-medium text-slate-500">数据类型</label>
-        <select x-model="filters.endpoint" @change="filters.page=1; load()" class="w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm focus:border-brand-600 focus:outline-none focus:ring-1 focus:ring-brand-600/30">
+    <div class="grid grid-cols-1 items-end gap-3 px-4 py-4 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_1fr_2fr]">
+      <div class="ui-field">
+        <label class="ui-field-label">数据类型</label>
+        <select x-model="filters.endpoint" @change="filters.page=1; load()" class="ui-control">
           <option value="">全部</option>
           <template x-for="n in endpointNames" :key="n"><option :value="n" x-text="n"></option></template>
         </select>
       </div>
-      <div>
-        <label class="mb-1 block text-xs font-medium text-slate-500">账号</label>
-        <select x-model="filters.account" @change="filters.page=1; load()" class="w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm focus:border-brand-600 focus:outline-none focus:ring-1 focus:ring-brand-600/30">
+      <div class="ui-field">
+        <label class="ui-field-label">账号</label>
+        <select x-model="filters.account" @change="filters.page=1; load()" class="ui-control">
           <option value="">全部</option>
-          <template x-for="a in accountIDs" :key="a"><option :value="a" x-text="a"></option></template>
+          <template x-for="a in accountOptions" :key="a.id"><option :value="a.id" x-text="a.name"></option></template>
         </select>
       </div>
-      <div>
-        <label class="mb-1 block text-xs font-medium text-slate-500">状态</label>
-        <select x-model="filters.status" @change="filters.page=1; load()" class="w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm focus:border-brand-600 focus:outline-none focus:ring-1 focus:ring-brand-600/30">
+      <div class="ui-field">
+        <label class="ui-field-label">状态</label>
+        <select x-model="filters.status" @change="filters.page=1; load()" class="ui-control">
           <option value="">全部</option>
           <option value="success">成功</option>
           <option value="running">运行中</option>
@@ -57,22 +58,47 @@
           <option value="cancelled">已取消</option>
         </select>
       </div>
-      <div>
-        <label class="mb-1 block text-xs font-medium text-slate-500">起始日期</label>
-        <input type="date" x-model="filters.date_from" @change="filters.page=1; load()" class="w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm focus:border-brand-600 focus:outline-none focus:ring-1 focus:ring-brand-600/30">
-      </div>
-      <div>
-        <label class="mb-1 block text-xs font-medium text-slate-500">结束日期</label>
-        <input type="date" x-model="filters.date_to" @change="filters.page=1; load()" class="w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm focus:border-brand-600 focus:outline-none focus:ring-1 focus:ring-brand-600/30">
+      <div class="ui-field ui-date-range-field" @click.outside="dateRangeOpen = false">
+        <label class="ui-field-label">日期范围</label>
+        <button type="button" @click="dateRangeOpen = !dateRangeOpen" :aria-expanded="dateRangeOpen"
+                class="ui-control ui-date-range-trigger">
+          <span x-text="dateRangeLabel()"></span>
+          <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
+        </button>
+        <div x-show="dateRangeOpen" x-cloak class="ui-date-range-popover">
+          <div class="ui-date-range-popover-title">选择连续日期</div>
+          <div class="ui-date-range-presets" aria-label="日期快捷范围">
+            <button type="button" @click="applyDatePreset('today')" :class="datePreset === 'today' && 'is-active'" class="ui-date-preset">今天</button>
+            <button type="button" @click="applyDatePreset('yesterday')" :class="datePreset === 'yesterday' && 'is-active'" class="ui-date-preset">昨天</button>
+            <button type="button" @click="applyDatePreset('last_7_days')" :class="datePreset === 'last_7_days' && 'is-active'" class="ui-date-preset">近 7 天</button>
+            <button type="button" @click="applyDatePreset('last_30_days')" :class="datePreset === 'last_30_days' && 'is-active'" class="ui-date-preset">近 30 天</button>
+            <button type="button" @click="applyDatePreset('this_month')" :class="datePreset === 'this_month' && 'is-active'" class="ui-date-preset">本月</button>
+          </div>
+          <div class="ui-date-range-inputs ui-date-range-popover-inputs">
+            <label class="ui-date-range-input"><span>开始</span><input type="date" x-model="filters.date_from" @change="dateRangeChanged()" aria-label="日期范围开始" class="ui-control"></label>
+            <span class="ui-date-range-separator">至</span>
+            <label class="ui-date-range-input"><span>结束</span><input type="date" x-model="filters.date_to" @change="dateRangeChanged()" aria-label="日期范围结束" class="ui-control"></label>
+          </div>
+          <p x-show="dateRangeError" x-text="dateRangeError" class="ui-date-range-error"></p>
+          <div class="ui-date-range-popover-footer">
+            <button type="button" @click="clearDateRange()" class="ui-btn ui-btn-ghost ui-btn-sm">清除</button>
+            <button type="button" @click="dateRangeOpen = false" class="ui-btn ui-btn-secondary ui-btn-sm">关闭</button>
+          </div>
+        </div>
       </div>
     </div>
   </div>
 
   <!-- 日志表格 -->
-  <div class="overflow-hidden rounded-lg border border-slate-200 bg-white">
-    <div class="overflow-x-auto">
-      <table class="w-full text-sm">
-        <thead class="border-b border-slate-200 bg-slate-50 text-xs font-bold text-slate-500">
+  <div class="ui-panel">
+    <div class="ui-table-region" :class="refreshing && 'is-refreshing'" :aria-busy="refreshing">
+      <div x-show="refreshing" x-cloak class="ui-table-loading" role="status">
+        <svg class="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
+        正在刷新日志
+      </div>
+      <div class="ui-table-scroll">
+      <table class="ui-table">
+        <thead>
           <tr>
             <th class="px-4 py-2.5 text-left">时间</th>
             <th class="px-4 py-2.5 text-left">数据类型</th>
@@ -87,47 +113,48 @@
         </thead>
         <tbody class="divide-y divide-slate-100">
           <template x-for="t in tasks" :key="t.id">
-            <tr class="cursor-pointer hover:bg-slate-50/70" @click="openDetail(t)">
-              <td class="whitespace-nowrap px-4 py-3 text-slate-600" x-text="fmtTime(t.started_at)"></td>
-              <td class="px-4 py-3 font-medium text-slate-800" x-text="t.endpoint"></td>
-              <td class="px-4 py-3 text-slate-600" x-text="t.account_id"></td>
-              <td class="px-4 py-3 text-xs text-slate-500" x-text="t.trigger_type"></td>
-              <td class="px-4 py-3">
-                <span :class="statusClass(t.status)" class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-bold">
-                  <span :class="t.status==='success' ? 'bg-emerald-500' : t.status==='error' ? 'bg-red-500' : t.status==='running' ? 'bg-blue-500' : 'bg-slate-400'" class="h-1.5 w-1.5 rounded-full"></span>
+            <tr class="ui-table-row" @click="openDetail(t)">
+              <td class="ui-cell-nowrap text-slate-600" x-text="fmtTime(t.started_at)"></td>
+              <td class="font-medium text-slate-800" x-text="t.endpoint"></td>
+              <td class="text-slate-600" x-text="t.account_id"></td>
+              <td class="text-xs text-slate-500" x-text="t.trigger_type"></td>
+              <td>
+                <span :class="statusClass(t.status)" class="ui-badge">
+                  <span :class="t.status==='success' ? 'bg-emerald-500' : t.status==='error' ? 'bg-red-500' : t.status==='running' ? 'bg-blue-500' : 'bg-slate-400'" class="ui-badge-dot"></span>
                   <span x-text="statusText(t.status)"></span>
                 </span>
               </td>
-              <td class="px-4 py-3 text-right tabular-nums text-slate-700" x-text="t.records_upserted"></td>
-              <td class="px-4 py-3 text-right text-xs text-slate-500" x-text="fmtDur(t.duration_sec)"></td>
-              <td class="px-4 py-3 text-right">
+              <td class="ui-cell-data ui-cell-right text-slate-700" x-text="t.records_upserted"></td>
+              <td class="ui-cell-data ui-cell-right text-xs text-slate-500" x-text="fmtDur(t.duration_sec)"></td>
+              <td class="ui-cell-right">
                 <!-- T4：行内 取消/重试（仅单条）。@click.stop 防止冒泡触发 openDetail -->
                 <button x-show="t.status === 'running'" @click.stop="cancelRow(t)"
-                        class="rounded border border-red-200 px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50">取消</button>
+                        class="ui-btn ui-btn-danger ui-btn-sm">取消</button>
                 <button x-show="t.status === 'error'" @click.stop="retryRow(t)"
-                        class="rounded border border-slate-200 px-2 py-1 text-xs font-medium text-brand-700 hover:bg-brand-50">重试</button>
+                        class="ui-btn ui-btn-ghost ui-btn-sm">重试</button>
               </td>
-              <td class="px-4 py-3 text-right">
-                <button @click.stop="openDetail(t)" class="text-xs font-medium text-brand-700 hover:underline">查看</button>
+              <td class="ui-cell-right">
+                <button @click.stop="openDetail(t)" class="ui-btn ui-btn-ghost ui-btn-sm">查看</button>
               </td>
             </tr>
           </template>
           <tr x-show="tasks.length===0">
-            <td colspan="9" class="px-4 py-10 text-center text-sm text-slate-400">无符合条件的记录</td>
+            <td colspan="9" class="ui-empty">无符合条件的记录</td>
           </tr>
         </tbody>
       </table>
+      </div>
     </div>
 
     <!-- 分页 -->
-    <div class="flex items-center justify-between border-t border-slate-200 px-4 py-3 text-sm">
+    <div class="ui-pagination">
       <div class="text-slate-500">共 <span class="font-bold text-slate-700" x-text="total"></span> 条</div>
       <div class="flex items-center gap-2">
         <button @click="gotoPage(filters.page-1)" :disabled="filters.page<=1"
-                class="rounded-md border border-slate-300 px-3 py-1 font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-40">上一页</button>
+                class="ui-btn ui-btn-secondary ui-btn-sm">上一页</button>
         <span class="text-slate-600">第 <span class="font-bold" x-text="filters.page"></span> 页</span>
         <button @click="gotoPage(filters.page+1)" :disabled="filters.page*filters.page_size>=total"
-                class="rounded-md border border-slate-300 px-3 py-1 font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-40">下一页</button>
+                class="ui-btn ui-btn-secondary ui-btn-sm">下一页</button>
       </div>
     </div>
   </div>
@@ -137,10 +164,10 @@
 <!-- 详情抽屉（独立 x-data，便于 fixed 定位；契约字段与 taskDetail() 一一对应） -->
 <div x-data="taskDetail()" x-show="open" x-cloak
      @keydown.escape.window="close()"
-     class="fixed inset-0 z-40 flex justify-end">
+     class="ui-drawer">
   <!-- 遮罩 -->
   <div x-show="open" x-transition.opacity @click="close()"
-       class="absolute inset-0 bg-slate-900/40 backdrop-blur-[1px]"></div>
+       class="ui-drawer-backdrop"></div>
 
   <!-- 抽屉面板 -->
   <div x-show="open"
@@ -148,10 +175,10 @@
        x-transition:enter-start="translate-x-full" x-transition:enter-end="translate-x-0"
        x-transition:leave="transition ease-in duration-150"
        x-transition:leave-start="translate-x-0" x-transition:leave-end="translate-x-full"
-       class="relative flex h-full w-[480px] max-w-[92vw] flex-col bg-white shadow-2xl">
+       class="ui-drawer-panel">
 
     <!-- 头 -->
-    <div class="flex items-center justify-between border-b border-slate-200 px-5 py-4">
+    <div class="ui-drawer-header">
       <div class="flex items-center gap-3">
         <div class="flex h-9 w-9 items-center justify-center rounded-lg bg-brand-50 text-brand-700">
           <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M16 13H8"/><path d="M16 17H8"/><path d="M10 9H8"/></svg>
@@ -161,13 +188,13 @@
           <p class="text-xs text-slate-500" x-show="currentTask" x-text="currentTask && (currentTask.endpoint + ' · ' + currentTask.account_id)"></p>
         </div>
       </div>
-      <button @click="close()" class="flex h-8 w-8 items-center justify-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-slate-600">
+      <button @click="close()" class="ui-btn ui-btn-secondary ui-btn-icon" aria-label="关闭任务详情">
         <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
       </button>
     </div>
 
     <!-- 逐页日志 -->
-    <div class="flex-1 space-y-2.5 overflow-auto bg-slate-50/60 p-5">
+    <div class="ui-drawer-body space-y-2.5">
       <div x-show="loading" class="py-10 text-center text-sm text-slate-400">加载中…</div>
       <template x-for="log in detail" :key="log.id">
         <div class="rounded-lg border border-slate-200 bg-white p-3.5 text-sm shadow-sm">
@@ -183,14 +210,14 @@
           <div x-show="log.error_raw" class="mt-2.5 break-all rounded-md bg-red-50 p-2.5 text-xs text-red-600" x-text="log.error_raw"></div>
         </div>
       </template>
-      <div x-show="!loading && detail.length===0" class="py-10 text-center text-sm text-slate-400">无逐页日志</div>
+      <div x-show="!loading && detail.length===0" class="ui-empty">无逐页日志</div>
     </div>
 
     <!-- 底部操作 -->
-    <div class="flex justify-end gap-2 border-t border-slate-200 px-5 py-4">
-      <button @click="close()" class="rounded-md border border-slate-300 px-3.5 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50">关闭</button>
+    <div class="ui-drawer-footer">
+      <button @click="close()" class="ui-btn ui-btn-secondary">关闭</button>
       <button x-show="canRetry" @click="retry()"
-              class="inline-flex items-center gap-1.5 rounded-md bg-brand-600 px-3.5 py-1.5 text-sm font-bold text-white hover:bg-brand-700">
+              class="ui-btn ui-btn-primary">
         <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>
         重新触发
       </button>
