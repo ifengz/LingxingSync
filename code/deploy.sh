@@ -6,7 +6,10 @@
 # 约定：
 #   - 仓库根目录：REPO_DIR（默认 /www/wwwroot/lingxing-sync）
 #   - Go 二进制与代码在 $REPO_DIR/code
-#   - Supervisor 进程名：lingxing-sync
+#   - 编译产物文件名：APP（lingxing-sync，带横杠）
+#   - Supervisor 守护进程名：PROG（lingxingsync，无横杠，与宝塔「进程守护管理器」里的名称一致）
+#     ⚠️ APP 与 PROG 是两回事：APP 是磁盘上的二进制文件名，PROG 是 supervisor 里注册的 program 名。
+#        宝塔守护进程叫 lingxingsync（无横杠），若改名务必同步这里的 PROG。
 #   - 只快进拉取 main，不做任何破坏性 git 操作
 set -euo pipefail
 
@@ -14,6 +17,7 @@ REPO_DIR="${REPO_DIR:-/www/wwwroot/lingxing-sync}"
 CODE_DIR="${REPO_DIR}/code"
 BRANCH="${BRANCH:-main}"
 APP="${APP:-lingxing-sync}"
+PROG="${PROG:-lingxingsync}"
 PORT="${PORT:-7799}"
 
 # Go 与 supervisorctl 可能不在 WebHook/脚本的 PATH 里，显式补上常见安装路径。
@@ -51,9 +55,9 @@ go build -ldflags="-s -w" -o "${APP}"
 
 log "4/5 重启服务（supervisor）"
 if command -v supervisorctl >/dev/null 2>&1; then
-  supervisorctl restart "${APP}" || fail "supervisorctl restart 失败"
+  supervisorctl restart "${PROG}" || fail "supervisorctl restart 失败"
 else
-  fail "找不到 supervisorctl，请手动重启 ${APP}"
+  fail "找不到 supervisorctl，请手动重启 ${PROG}"
 fi
 
 log "5/5 健康检查（:${PORT}/api/status）"
