@@ -18,6 +18,12 @@
     </span>
     <h1 class="text-lg font-semibold tracking-tight text-slate-800">同步日志</h1>
     <span class="text-xs text-slate-400">每 5 秒自动刷新 · 分页停留当前页</span>
+    <!-- 刷新：只重拉主表（load()），不刷新整页 -->
+    <button @click="load()" :disabled="refreshing" title="刷新列表"
+            class="ml-auto inline-flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50">
+      <svg class="h-4 w-4" :class="refreshing && 'animate-spin'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M3 21v-5h5"/></svg>
+      刷新
+    </button>
   </div>
 
   <!-- 筛选条 -->

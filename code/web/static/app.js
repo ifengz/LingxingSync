@@ -5,7 +5,7 @@
  * 组织：
  *   1. 全局工具：apiGet / apiPost / 时间格式化 / 脱敏
  *   2. AppRoot：挂在 body 上的全局根组件，维护 toasts / confirmState，供所有页面共享
- *   3. 每页一个独立组件工厂函数（syncCenter / syncManage / logsPage / taskDetail /
+ *   3. 每页一个独立组件工厂函数（syncManage / logsPage / taskDetail /
  *      dataSources / settingsApi），逻辑互不依赖，改一页不影响其他页
  *
  * 约定：
@@ -177,69 +177,6 @@ window.AppRoot = function () {
 };
 
 /* ------------------------------------------------------------------ *
- * 3a. syncCenter — 同步中心（/）
- * ------------------------------------------------------------------ */
-window.syncCenter = function () {
-  return {
-    summary: { total: 0, running: 0, error: 0, disabled: 0 },
-    rows: [],      // [{name, display, account_id, status, last_status, ...}]
-    accounts: [],  // 去重后的 account_id 列表
-    polling: null,
-    todayRecords: 0,
-    todayErrors: 0,
-
-    async load() {
-      const d = await window.apiGet('/api/status').catch(window.toastError);
-      if (!d) return;
-      this.summary = d.summary || this.summary;
-      this.rows = d.workers || [];
-      this.todayRecords = this.rows.reduce((total, w) => total + (Number(w.today_records) || 0), 0);
-      this.todayErrors = this.rows.reduce((total, w) => total + (Number(w.today_errors) || 0), 0);
-      // 从 workers 反推出 account 列表（去重保序）
-      const seen = new Set();
-      this.accounts = [];
-      for (const w of this.rows) {
-        if (w.account_id && !seen.has(w.account_id)) {
-          seen.add(w.account_id);
-          this.accounts.push(w.account_id);
-        }
-      }
-    },
-
-    // 单元格样式（宪法 §5 颜色）。
-    // worker.Status 取值：idle|running|error|disabled；上次结果看 last_status（success|error|cancelled）。
-    cellClass(ep, acc) {
-      if (ep.account_id !== acc) return 'bg-slate-100 text-slate-400 cursor-not-allowed';
-      switch (ep.status) {
-        case 'running': return 'bg-blue-100 text-blue-700 hover:bg-blue-200';
-        case 'error':   return 'bg-red-100 text-red-700 hover:bg-red-200';
-        case 'disabled':return 'bg-slate-200 text-slate-500 cursor-not-allowed';
-        default:
-          // idle：再看上次结果决定是「成功绿」还是「空闲灰」
-          if (ep.last_status === 'success') return 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200';
-          return 'bg-slate-100 text-slate-500 hover:bg-slate-200';
-      }
-    },
-    cellText(ep, acc) {
-      if (ep.account_id !== acc) return '—';
-      switch (ep.status) {
-        case 'running': return '运行';
-        case 'error':   return '失败';
-        case 'disabled':return '禁用';
-        default:
-          if (ep.last_status === 'success') return '成功';
-          return '空闲';
-      }
-    },
-    // 点击单元格跳到 /logs 带过滤
-    cellClick(name, acc) {
-      const q = new URLSearchParams({ endpoint: name, account: acc });
-      window.location.href = '/logs?' + q.toString();
-    }
-  };
-};
-
-/* ------------------------------------------------------------------ *
  * 3b. syncManage — 同步管理（/sync）
  * ------------------------------------------------------------------ */
 window.syncManage = function () {
@@ -284,10 +221,12 @@ window.syncManage = function () {
         this.$watch('form.accounts', reload);
         this.$watch('form.types', reload);
       }
-      // 概览「添加接口」深链：/sync?tab=schedule&add=1 → 直接落到定时调度 Tab 并展开添加表单。
-      // 不复制表单到概览，只把用户引导到唯一的添加入口（CLAUDE.md：不重复配置逻辑）。
+      // 深链：/sync?tab=add（或旧链 &add=1）→ 直接落到「添加接口」Tab。
+      // 添加接口是独立 Tab（不再挂在定时调度表下面），此处兼容旧的 add=1 写法。
       const q = new URLSearchParams(window.location.search);
-      if (q.get('tab') === 'schedule' || q.get('add') === '1') this.tab = 'schedule';
+      const t = q.get('tab');
+      if (q.get('add') === '1' || t === 'add') this.tab = 'add';
+      else if (t === 'schedule') this.tab = 'schedule';
     },
     // blankAddForm 返回添加表单的初始/重置态：与 data 里的 addForm 初值保持一致，
     // 保存成功后调用它清空表单（保守限流默认桶 1 / 间隔 1000ms）。
@@ -658,6 +597,7 @@ window.logsPage = function () {
     endpointNames: (window.__PAGE__ && window.__PAGE__.endpointNames) || [],
     accountIDs: (window.__PAGE__ && window.__PAGE__.accountIDs) || [],
     polling: null,        // T3：5s 轮询句柄
+    refreshing: false,    // 手动刷新按钮态（转圈 + 禁用）
     filters: {
       endpoint: q.get('endpoint') || '',
       account: q.get('account') || '',
@@ -680,12 +620,14 @@ window.logsPage = function () {
     },
 
     async load() {
+      this.refreshing = true;
       const params = new URLSearchParams();
       for (const k of ['endpoint', 'account', 'status', 'date_from', 'date_to', 'page', 'page_size']) {
         const v = this.filters[k];
         if (v !== '' && v != null) params.set(k, v);
       }
       const d = await window.apiGet('/api/tasks?' + params.toString()).catch(window.toastError);
+      this.refreshing = false;
       if (!d) return;
       this.tasks = d.items || [];
       this.total = d.total || 0;
