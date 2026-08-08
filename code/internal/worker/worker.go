@@ -130,6 +130,14 @@ func New(ep config.Endpoint, acc config.Account, client *api.Client, dbx *sqlx.D
 			cols = c
 		}
 	}
+	if fatalErr == nil && !ep.Probe {
+		conflict, err := db.AccountMigrationConflict(dbx, ep.Table, ep.Account)
+		if err != nil {
+			fatalErr = fmt.Errorf("读取账号迁移冲突告警失败: %w", err)
+		} else if conflict != "" {
+			fatalErr = fmt.Errorf("%s", conflict)
+		}
+	}
 	// 声明了列但表里没有 → 告警（不阻断）。缺表时 cols 为空，谈不上列差集，跳过。
 	var warnings []string
 	if fatalErr == nil && len(cols) > 0 {

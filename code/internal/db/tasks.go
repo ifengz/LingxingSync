@@ -16,6 +16,26 @@ import (
 	"github.com/jmoiron/sqlx"
 )
 
+// AccountMigrationConflict 返回某张业务表在账号改名时记录的主键冲突。
+// 空字符串表示没有冲突；调用方把冲突限制在引用该表的 endpoint。
+func AccountMigrationConflict(db *sqlx.DB, tableName, accountID string) (string, error) {
+	const q = `
+SELECT CONCAT('账号迁移冲突：表 ', table_name, ' 保留了 ', old_account_id,
+              ' 的 ', conflict_count, ' 行，目标账号 ', new_account_id, ' 已存在同主键数据')
+FROM migration_account_conflicts
+WHERE table_name = ? AND new_account_id = ? AND conflict_count > 0
+ORDER BY detected_at DESC
+LIMIT 1`
+	var msg string
+	if err := db.Get(&msg, q, tableName, accountID); err != nil {
+		if err == sql.ErrNoRows {
+			return "", nil
+		}
+		return "", fmt.Errorf("db.AccountMigrationConflict: 查询 %s/%s 失败: %w", tableName, accountID, err)
+	}
+	return msg, nil
+}
+
 // Task 对应 sync_tasks 一行。
 //
 // time 指针字段（StartedAt/FinishedAt）允许 NULL；CreatedAt 由 DB 默认值给。
