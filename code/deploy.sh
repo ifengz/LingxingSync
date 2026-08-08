@@ -18,6 +18,7 @@ CODE_DIR="${REPO_DIR}/code"
 BRANCH="${BRANCH:-main}"
 APP="${APP:-lingxing-sync}"
 GIT=(git -c "safe.directory=${REPO_DIR}")
+FORCE_DEPLOY="${FORCE_DEPLOY:-0}"
 # Supervisor 目标名。必须是「组名:*」而不是裸程序名：
 # 宝塔的 lingxingsync.ini 里 [program:lingxingsync] 带 numprocs，实际进程叫
 # lingxingsync_00 并归在 lingxingsync 组下。裸 `supervisorctl restart lingxingsync`
@@ -65,7 +66,7 @@ fi
 AFTER="$("${GIT[@]}" rev-parse --short HEAD)"
 log "版本：${BEFORE} → ${AFTER}"
 
-if [ "${BEFORE}" = "${AFTER}" ]; then
+if [ "${BEFORE}" = "${AFTER}" ] && [ "${FORCE_DEPLOY}" != "1" ]; then
   log "代码无变化，跳过编译与重启"
   exit 0
 fi

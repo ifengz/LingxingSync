@@ -104,6 +104,35 @@ git status --short
 
 只确认目标改动后再 push `main`。`config.yaml`、二进制、日志和备份文件不得进入 commit。
 
+## 首次修复脏线上仓库
+
+当前线上旧脚本会在 `git fetch` 前因 dubious ownership 失败，所以第一次必须手工执行。以下命令只针对明确文件，先备份再恢复，不使用 `reset --hard`、`clean` 或自动覆盖：
+
+```bash
+cd /www/wwwroot/lingxing-sync
+BACKUP_DIR=/www/backup/lingxing-sync-20260809
+mkdir -p "${BACKUP_DIR}"
+
+# 先确认目标和当前状态，不读取 config.yaml 内容
+git -c safe.directory=/www/wwwroot/lingxing-sync status --short --untracked-files=all
+git -c safe.directory=/www/wwwroot/lingxing-sync fetch --prune origin
+git -c safe.directory=/www/wwwroot/lingxing-sync diff -- code/migrations/009_rename_account.sql
+
+# 备份线上临时迁移改动，再恢复该单个 tracked 文件
+cp -a code/migrations/009_rename_account.sql "${BACKUP_DIR}/009_rename_account.sql"
+git -c safe.directory=/www/wwwroot/lingxing-sync restore \
+  --source=origin/main -- code/migrations/009_rename_account.sql
+
+# 配置备份移出仓库，禁止直接打印或删除其内容；文件名按 status 的实际结果替换
+mv code/config.yaml.bak.20260808164148 "${BACKUP_DIR}/config.yaml.bak.20260808164148"
+
+git -c safe.directory=/www/wwwroot/lingxing-sync status --short --untracked-files=all
+git -c safe.directory=/www/wwwroot/lingxing-sync pull --ff-only origin main
+FORCE_DEPLOY=1 BRANCH=main bash code/deploy.sh
+```
+
+如果 `009` 的 diff 不是临时补丁，先停在这里，不要执行 `restore`；把备份内容转成正式 migration commit 后再部署。`FORCE_DEPLOY=1` 只用于这次 bootstrap，之后正常 push 由 WebHook 触发即可。
+
 ## 部署后固定入口复核
 
 ```bash
