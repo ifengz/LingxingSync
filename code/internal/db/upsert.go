@@ -41,6 +41,25 @@ ORDER BY ORDINAL_POSITION
 	return cols, nil
 }
 
+// GetJSONColumns returns the JSON-typed columns for a table. The worker caches
+// this once at startup so JSON-specific input handling stays column-aware.
+func GetJSONColumns(db *sqlx.DB, table string) (map[string]bool, error) {
+	const q = `
+SELECT COLUMN_NAME
+FROM INFORMATION_SCHEMA.COLUMNS
+WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND DATA_TYPE = 'json'
+`
+	var cols []string
+	if err := db.Select(&cols, q, table); err != nil {
+		return nil, fmt.Errorf("db.GetJSONColumns: 查 %s JSON 列失败: %w", table, err)
+	}
+	result := make(map[string]bool, len(cols))
+	for _, col := range cols {
+		result[col] = true
+	}
+	return result, nil
+}
+
 // currentDB 尽力返回当前库名，仅用于错误信息，失败不影响主流程。
 func currentDB(db *sqlx.DB) string {
 	var name string
@@ -64,7 +83,7 @@ func currentDB(db *sqlx.DB) string {
 //   - 生成 INSERT ... VALUES (...),(...) ... ON DUPLICATE KEY UPDATE 非主键列=VALUES(列)
 //   - 每行字段缺失 → 写 nil → SQL NULL
 //   - 单批失败立即返回 error（fail-loud：类型不兼容绝不能写进脏数据）
-func UpsertRows(db *sqlx.DB, table string, rows []map[string]any, allowedCols []string, accountID string) error {
+func UpsertRows(db *sqlx.DB, table string, rows []map[string]any, allowedCols []string, jsonCols map[string]bool, accountID string) error {
 	if len(rows) == 0 {
 		return nil
 	}
@@ -117,7 +136,7 @@ func UpsertRows(db *sqlx.DB, table string, rows []map[string]any, allowedCols []
 			// 类型不兼容时 Exec 会报错，符合 fail-loud。
 			// 例外：slice/map（领星 JSON 字段，如 afn_fulfillable_quantity_multi）
 			// 须先 JSON 序列化为字符串，driver 才能写入 JSON 列，否则报 unsupported type。
-			vals = append(vals, normalizeUpsertValue(v))
+			vals = append(vals, normalizeUpsertValue(v, jsonCols[c]))
 		}
 		_ = i // 仅占位，避免 unused 警告
 	}
@@ -135,15 +154,19 @@ func UpsertRows(db *sqlx.DB, table string, rows []map[string]any, allowedCols []
 // afn_fulfillable_quantity_multi）先 JSON 序列化为字符串，否则 driver 报
 // "unsupported type"、无法写入 MySQL JSON 列。
 //
-// 其余一切（数字、字符串、bool、nil）原样透传——不改名、不转型，
+// JSON 列的空字符串表示上游没有值，写成 SQL NULL；其他一切（数字、字符串、bool、nil）原样透传——不改名、不转型，
 // 类型不兼容时交给 Exec fail-loud（宪法：不静默兜底、不写脏数据）。
-func normalizeUpsertValue(v any) any {
+func normalizeUpsertValue(v any, jsonColumn bool) any {
+	if jsonColumn {
+		if s, ok := v.(string); ok && s == "" {
+			return nil
+		}
+	}
 	switch v.(type) {
 	case []any, map[string]any:
 		b, err := json.Marshal(v)
 		if err != nil {
-			// 序列化失败极罕见（领星 JSON 已能 unmarshal 成这些类型）；
-			// 兜底为 nil→SQL NULL，避免 driver 直接崩，同时不写脏数据。
+			// 序列化失败极罕见（领星 JSON 已能 unmarshal 成这些类型）。
 			return nil
 		}
 		return string(b)

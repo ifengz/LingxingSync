@@ -72,7 +72,8 @@ type EndpointWorker struct {
 	Client   *api.Client
 	DB       *sqlx.DB
 	Limiters *LimiterRegistry
-	Columns  []string // 启动时 GetTableColumns 缓存，避免每页查表
+	Columns  []string        // 启动时 GetTableColumns 缓存，避免每页查表
+	JSONCols map[string]bool // 启动时缓存 JSON 列，避免把空字符串写入 JSON
 
 	// fatalErr 记录启动断言失败的原因（最常见：目标表未建）。非 nil 时该 worker
 	// 永久拒绝同步，但仍然注册、仍然在 UI 上可见，不拖垮进程。
@@ -118,6 +119,7 @@ type EndpointWorker struct {
 // 限流器从 Limiters 注册表取（同 (quota_group, path) 共享）。
 func New(ep config.Endpoint, acc config.Account, client *api.Client, dbx *sqlx.DB, reg *LimiterRegistry) (*EndpointWorker, error) {
 	var cols []string
+	var jsonCols map[string]bool
 	var fatalErr error
 	if !ep.Probe {
 		c, err := db.GetTableColumns(dbx, ep.Table)
@@ -128,6 +130,12 @@ func New(ep config.Endpoint, acc config.Account, client *api.Client, dbx *sqlx.D
 			fatalErr = fmt.Errorf("表 %s 无列定义（建表了吗？）", ep.Table)
 		default:
 			cols = c
+		}
+		if fatalErr == nil {
+			jsonCols, err = db.GetJSONColumns(dbx, ep.Table)
+			if err != nil {
+				fatalErr = fmt.Errorf("表 %s 的 JSON 列元数据不可用: %w", ep.Table, err)
+			}
 		}
 	}
 	if fatalErr == nil && !ep.Probe {
@@ -159,6 +167,7 @@ func New(ep config.Endpoint, acc config.Account, client *api.Client, dbx *sqlx.D
 		DB:       dbx,
 		Limiters: reg,
 		Columns:  cols,
+		JSONCols: jsonCols,
 		fatalErr: fatalErr,
 		warnings: warnings,
 		trigger:  make(chan triggerReq, 1), // 缓冲 1：非阻塞 Trigger
@@ -555,7 +564,7 @@ func (w *EndpointWorker) fetchAllPages(ctx context.Context, taskID int64, params
 			return totalRecords, pages, false
 		}
 		if len(list) > 0 {
-			if uerr := db.UpsertRows(w.DB, w.Endpoint.Table, list, w.Columns, w.Account.ID); uerr != nil {
+			if uerr := db.UpsertRows(w.DB, w.Endpoint.Table, list, w.Columns, w.JSONCols, w.Account.ID); uerr != nil {
 				_ = db.InsertTaskLog(w.DB, taskID, pages+1, httpStatus, apiCode, len(list), durationMs, "upsert: "+uerr.Error())
 				log.Printf("[worker:%s] UpsertRows 出错 offset=%d: %v", w.Endpoint.Name, offset, uerr)
 				return totalRecords, pages, false
