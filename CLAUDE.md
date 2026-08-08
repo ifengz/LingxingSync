@@ -57,7 +57,7 @@
     - 进程重启了 ≠ 新配置生效了（结构性改动要确认走的是 restart 而非 reload）。
 
     没实测过的就说「没测」，不说「应该没问题」。
-14. **宪法层改动独立 commit**：宪法层 = `CLAUDE.md` + `doc/core/00-09` 这十份编号文档。改它必须单独一个 commit，不与业务代码、测试、UI、迁移、过程文件混提。任务执行中发现宪法层需要调整 → **停下来先报冲突和待改文件，等用户确认**，不自行顺手改。
+14. **宪法层改动独立 commit**：宪法层 = `CLAUDE.md` + `doc/core/00-09` 这十份编号文档 + `doc/core/05-ui-components.md`。改它必须单独一个 commit，不与业务代码、测试、UI、迁移、过程文件混提。任务执行中发现宪法层需要调整 → **停下来先报冲突和待改文件，等用户确认**，不自行顺手改。
 
     `doc/core/` 下的其余文件**不是宪法**，随业务改动一起提即可：`progress.md`（过程记录）、`findings.md`（调查结论）、`lessons.md`、`task_plan.md`、`10-frontend-rework-flow.md`（执行规格，含已废弃条目）、`sync-field-source-map.md`、`otherlingxinggithub.md`、`LINGXING_API_INTEGRATION.md`。把过程文件当宪法保护只会让「记一笔进展」也要单独 commit，纯属自我设障。
 
@@ -172,6 +172,7 @@ LingxingSync/
 │   ├── 03-config.md
 │   ├── 04-api.md
 │   ├── 05-ui.md               ← UI 红线（对应本文件 §6）
+│   ├── 05-ui-components.md    ← 共享 UI 组件与逐页验收（宪法层）
 │   ├── 06-deployment.md
 │   ├── 07-add-endpoint.md     ← 加接口五步（对应本文件 §4.4）
 │   ├── 08-api-reference.md    ← 领星 OpenAPI 接入参考
