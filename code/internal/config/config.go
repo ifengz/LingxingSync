@@ -128,6 +128,10 @@ type Endpoint struct {
 	IterateByStore bool     `yaml:"iterate_by_store"` // true=对每个 sid 跑一次
 	StoreParamName string   `yaml:"store_param_name"` // 迭代时注入的参数名，默认 sid
 	StoreSids      []string `yaml:"store_sids"`       // 店铺白名单：空=同步该账号全部 sid；非空=只同步列出的 sid（仅 iterate_by_store 生效）
+	// StoreType 限定 iterate_by_store 只迭代该类型店铺（"SC"/"VC"，对齐 ls_stores.store_type）。
+	// 空=不过滤（迭代账号全部店铺，向后兼容）。SC 接口喂 VC 店铺 sid（或反之）会拉到错数据，
+	// 故 SC 迭代接口应填 "SC"、VC 迭代接口填 "VC"。
+	StoreType string `yaml:"store_type"`
 
 	// 探测模式（临时）：true 时不要求目标表存在，worker 跳过建表断言与 Upsert，
 	// 仅把领星返回的原始 JSON 存进 sync_task_logs.error_raw，用于摸清真实字段名后再正式建表。
@@ -241,6 +245,9 @@ func (c *Config) validate() error {
 		}
 		if e.Rate.Bucket <= 0 || e.Rate.IntervalMs <= 0 || e.Rate.Dimension == "" {
 			return fmt.Errorf("endpoint %s 的 rate.bucket/interval_ms/dimension 必填且 >0", e.Name)
+		}
+		if e.StoreType != "" && e.StoreType != "SC" && e.StoreType != "VC" {
+			return fmt.Errorf("endpoint %s 的 store_type=%q 非法：只能是 SC / VC / 空", e.Name, e.StoreType)
 		}
 		if e.Cron == "" {
 			return fmt.Errorf("endpoint %s 缺 cron", e.Name)

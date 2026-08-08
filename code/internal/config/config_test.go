@@ -122,6 +122,31 @@ func TestValidateAcceptsValidSlugAccountID(t *testing.T) {
 	}
 }
 
+func TestValidateStoreType(t *testing.T) {
+	mk := func(storeType string) *Config {
+		return &Config{
+			Database: Database{Host: "h", User: "u", DB: "d"},
+			Accounts: []Account{{ID: "sc_us_1", Name: "n", AppKey: "k", AppSecret: "s"}},
+			Endpoints: []Endpoint{{
+				Name: "inv", Account: "sc_us_1", Path: "/inv", Method: "GET", Table: "ls_inventory",
+				RecordIDFields: []string{"sid"}, Cron: "0 * * * *",
+				Rate:      Rate{Bucket: 1, IntervalMs: 1000, Dimension: "account+path"},
+				StoreType: storeType,
+			}},
+		}
+	}
+	for _, ok := range []string{"", "SC", "VC"} {
+		if err := mk(ok).validate(); err != nil {
+			t.Fatalf("store_type=%q 应合法: %v", ok, err)
+		}
+	}
+	for _, bad := range []string{"sc", "vc", "ALL", "x"} {
+		if err := mk(bad).validate(); err == nil {
+			t.Fatalf("store_type=%q 应被拒", bad)
+		}
+	}
+}
+
 func TestFindAccountCaseInsensitive(t *testing.T) {
 	cfg := &Config{Accounts: []Account{{ID: "sc_us_1", Name: "self", AppKey: "k", AppSecret: "s"}}}
 	for _, q := range []string{"sc_us_1", "SC_US_1", "Sc_Us_1", " sc_us_1 "} {

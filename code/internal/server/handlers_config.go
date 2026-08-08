@@ -150,6 +150,7 @@ type endpointDTO struct {
 	IterateByStore bool           `json:"iterate_by_store"`
 	StoreParamName string         `json:"store_param_name"`
 	StoreSids      []string       `json:"store_sids"`
+	StoreType      string         `json:"store_type"`
 }
 
 func endpointToDTO(e config.Endpoint) endpointDTO {
@@ -170,6 +171,7 @@ func endpointToDTO(e config.Endpoint) endpointDTO {
 		IterateByStore: e.IterateByStore,
 		StoreParamName: e.StoreParamName,
 		StoreSids:      e.StoreSids,
+		StoreType:      e.StoreType,
 	}
 }
 
@@ -199,6 +201,7 @@ func dtoToEndpoint(d endpointDTO) config.Endpoint {
 		IterateByStore: d.IterateByStore,
 		StoreParamName: d.StoreParamName,
 		StoreSids:      d.StoreSids,
+		StoreType:      d.StoreType,
 	}
 }
 
@@ -601,8 +604,9 @@ func (s *Server) apiSaveStoreSelection(w http.ResponseWriter, r *http.Request) {
 		errJSON(w, http.StatusBadRequest, "请求体格式错误: "+err.Error())
 		return
 	}
-	// 全集以本地 ls_stores 为准，杜绝前端伪造 sid 越权写入。
-	allSIDs, err := db.QuerySIDsForAccount(s.dbx, id)
+	// 全集以本地 ls_stores 为准，杜绝前端伪造 sid 越权写入。店铺选择是账号级、跨接口共用，
+	// 不按 store_type 过滤（传空）：选择表存全部店铺的开关，由各接口的 store_type 在迭代时再筛。
+	allSIDs, err := db.QuerySIDsForAccount(s.dbx, id, "")
 	if err != nil {
 		errJSON(w, http.StatusServiceUnavailable, err.Error())
 		return

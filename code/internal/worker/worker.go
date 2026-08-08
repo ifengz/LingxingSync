@@ -303,7 +303,7 @@ func (w *EndpointWorker) doSync(ctx context.Context, req triggerReq) {
 	if w.Endpoint.IterateByStore {
 		// 账号级同步闸门（migrations/004）：只迭代 store_sync_selection 里 enabled=1 的店铺；
 		// 该账号从未保存过选择时退回全放行（向后兼容）。此闸门在 endpoint.StoreSids 白名单之上游。
-		sids, qerr := db.QueryEnabledSIDsForAccount(w.DB, w.Account.ID)
+		sids, qerr := db.QueryEnabledSIDsForAccount(w.DB, w.Account.ID, w.Endpoint.StoreType)
 		if qerr != nil {
 			log.Printf("[worker:%s] QueryEnabledSIDsForAccount 失败: %v", w.Endpoint.Name, qerr)
 			status = "error"
