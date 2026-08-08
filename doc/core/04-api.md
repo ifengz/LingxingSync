@@ -279,13 +279,23 @@ HTTP 状态码：`200` = ok；`400` = 参数错误；`500` = 内部错误。
 保存该账号的自动测试连接/Token 续租计划。body 为 `{ "cron": "*/20 * * * *", "enabled": true }`；Cron 必须为合法 5 段表达式，成功后热重建调度。
 
 ### POST /api/accounts/:id/stores/sync
-触发该账号唯一的 `is_store_source: true` 店铺目录接口。账号没有或有多个店铺来源接口时返回 409；接口 Cron、限流与启停仍由 `/sync` 管理。
+触发该账号**全部** `is_store_source: true` 店铺目录接口，逐个独立入队。SC 与 VC 店铺来自两个不同上游接口却写同一张 `ls_stores`，必须同时触发才能刷全目录，故不限制「唯一」。
+
+单个接口不可用时**只跳过它**，其余照常入队（对应 CLAUDE.md §1.8「缺表/缺列只炸自己」）；跳过原因：`未就绪` / `已禁用` / `目标表未就绪`（启动断言未过）/ `运行中`。仅当该账号**一个店铺来源接口都没有**时返回 409。接口 Cron、限流与启停仍由 `/sync` 管理。
+
+```json
+{ "ok": true, "data": {
+    "message": "店铺目录刷新已加入队列: sc_stores；跳过: vc_stores(目标表未就绪)",
+    "endpoints": ["sc_stores"],
+    "queued": true } }
+{ "ok": false, "error": "该账号未配置店铺目录接口: sc_us" }
+```
 
 ### DELETE /api/accounts/:id
 删除账号。**若仍有 endpoint 引用该账号 → 409 拦截**，返回引用列表，不级联删除。
 
 ```json
-{ "ok": false, "error": "账号 sc_us 仍被 3 个接口引用，请先删除接口: [sc_stores, sc_inventory, sc_ads_daily]" }
+{ "ok": false, "error": "账号 sc_us 仍被 3 个接口引用，请先删除接口: [sc_stores, sc_inventory, sc_sales_orders]" }
 ```
 
 ### POST /api/endpoints
