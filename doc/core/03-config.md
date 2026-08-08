@@ -155,6 +155,7 @@ retention:
 | `endpoints[].is_store_source` | bool | 否 | true = 店铺来源接口，启动时优先同步 |
 | `endpoints[].iterate_by_store` | bool | 否 | true = Worker 对每个 sid 循环一次（需配合 `is_store_source` 接口） |
 | `endpoints[].store_param_name` | string | 否 | 迭代时注入店铺ID 的参数名，默认 `sid` |
+| `endpoints[].store_type` | string | 否 | 限定 `iterate_by_store` 只迭代该类型店铺：`SC` / `VC` / 空（不过滤）。对齐 `ls_stores.store_type`。SC 接口喂 VC 店铺 sid 会拉到错数据，故 SC 迭代接口应填 `SC` |
 | `endpoints[].store_sids` | array | 否 | 店铺白名单；空 = 同步该账号全部 sid，非空 = 只同步列出的 sid。仅对 `iterate_by_store: true` 生效 |
 | `retention.task_logs_days` | int | 否 | 默认 90 |
 
