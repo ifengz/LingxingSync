@@ -159,13 +159,6 @@ type endpointOut struct {
 	Table     string   `json:"table"`
 	Enabled   bool     `json:"enabled"`
 	LastSync  *rfc3339 `json:"last_sync"` // 该表 MAX(synced_at)，来自 DB（重启不失忆）；无数据/查询失败为 null
-
-	// FatalError 非空 = 该接口启动断言未过（最常见：目标表没建），永久不可同步。
-	// Warnings = 不阻断同步但需要人看见的问题（如表缺配置声明的列，字段会被静默丢弃）。
-	// 两者都来自 worker 的运行时快照（registry），不是配置文件里的东西——没有它们，
-	// 「缺表只炸自己」就只有日志可见、页面上查不出是哪个接口坏了（§8 要求可读提示）。
-	FatalError string   `json:"fatal_error,omitempty"`
-	Warnings   []string `json:"warnings,omitempty"`
 }
 
 func (s *Server) apiEndpoints(w http.ResponseWriter, r *http.Request) {
@@ -180,19 +173,10 @@ func (s *Server) apiEndpoints(w http.ResponseWriter, r *http.Request) {
 				lastSync = toRFC3339(ts)
 			}
 		}
-		// 降级/告警状态取自 worker 快照。worker 不存在（配置刚加、进程还没重启）时
-		// 留空即可，不报错——本接口是只读展示，不该因为一个接口没就绪就整表失败。
-		var fatalErr string
-		var warnings []string
-		if w0 := s.reg.Get(e.Name); w0 != nil {
-			st := w0.Status()
-			fatalErr, warnings = st.FatalError, st.Warnings
-		}
 		items = append(items, endpointOut{
 			Name: e.Name, Display: e.Display,
 			AccountID: e.Account, Table: e.Table, Enabled: e.Enabled,
-			LastSync:   lastSync,
-			FatalError: fatalErr, Warnings: warnings,
+			LastSync: lastSync,
 		})
 	}
 	okJSON(w, items)

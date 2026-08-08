@@ -500,6 +500,16 @@ window.syncManage = function () {
       const base = this.scheduleBaseline[e.name];
       return base !== undefined && this.rowSnap(e) !== base;
     },
+    // 行底色优先级：未保存改动 > 硬故障 > 告警 > 正常。
+    // dirty 排在最前是因为它对应「你有改动待保存」这个即时动作，比长期存在的健康状态更急；
+    // fatal（表没建）与 warn（缺声明列）都是重启前不会自行消失的状态，让位给 dirty 不会丢信息
+    // ——原因文字仍在名称格里常显。
+    rowClass(e) {
+      if (this.rowDirty(e)) return 'bg-amber-50 ring-1 ring-inset ring-amber-200';
+      if (e.fatal_error) return 'bg-red-50 ring-1 ring-inset ring-red-200';
+      if ((e.warnings || []).length) return 'bg-amber-50/40';
+      return 'hover:bg-slate-50/70';
+    },
     // 取消：回滚该行到基线（cron/bucket/interval/store_sids_text/enabled）。
     revertRow(e) {
       const base = this.scheduleBaseline[e.name];

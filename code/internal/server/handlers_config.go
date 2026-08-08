@@ -151,6 +151,16 @@ type endpointDTO struct {
 	StoreParamName string         `json:"store_param_name"`
 	StoreSids      []string       `json:"store_sids"`
 	StoreType      string         `json:"store_type"`
+
+	// 以下两个是**只读运行态**，由 apiGetConfig 从 worker registry 填充，
+	// dtoToEndpoint 故意不映射它们——运行态永远写不回 config.yaml。
+	//
+	// 为什么放在这个双向 DTO 里而不是另开接口：前端 saveRow 用
+	// Object.assign({}, e) 整行回传，而 decodeJSON 开了 DisallowUnknownFields。
+	// 若这两个键只出现在响应里、不在 DTO 里，坏接口那一行一保存就 400。
+	// omitempty 保证健康行根本不带这两个键，回传体与改动前完全一致。
+	FatalError string   `json:"fatal_error,omitempty"` // 非空=该接口不可同步（最常见：表没建）
+	Warnings   []string `json:"warnings,omitempty"`    // 不阻断同步的表结构告警（缺声明列）
 }
 
 func endpointToDTO(e config.Endpoint) endpointDTO {
@@ -271,11 +281,26 @@ func (s *Server) applyConfigWrite(w http.ResponseWriter, old, snap *config.Confi
 // ---------------------------------------------------------------------------
 
 // apiGetConfig 返回完整配置供 UI 编辑；app_secret 经 Mask 脱敏，绝不明文回传。
+//
+// 除配置本身，还附带每个接口的只读运行态（fatal_error / warnings），让同步配置页
+// 能把「表没建」的接口直接标红并写明原因——否则用户只能去翻启动日志。
+// registry 里查不到该 name（刚热加载新增、还没重启）时两者留空，属正确表现：
+// 那个接口确实还没有 worker，谈不上健康与否。
 func (s *Server) apiGetConfig(w http.ResponseWriter, r *http.Request) {
 	masked := s.store.Mask()
+	eps := endpointsToDTO(masked.Endpoints)
+	for i := range eps {
+		w0 := s.reg.Get(eps[i].Name)
+		if w0 == nil {
+			continue
+		}
+		st := w0.Status()
+		eps[i].FatalError = st.FatalError
+		eps[i].Warnings = st.Warnings
+	}
 	okJSON(w, configOut{
 		Accounts:  accountsToDTO(masked.Accounts),
-		Endpoints: endpointsToDTO(masked.Endpoints),
+		Endpoints: eps,
 	})
 }
 

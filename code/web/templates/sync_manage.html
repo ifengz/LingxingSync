@@ -220,10 +220,25 @@
           </thead>
           <tbody class="divide-y divide-slate-100">
             <template x-for="e in schedule" :key="e.name">
-              <tr :class="rowDirty(e) ? 'bg-amber-50 ring-1 ring-inset ring-amber-200' : 'hover:bg-slate-50/70'" class="transition-colors">
+              <tr :class="rowClass(e)" class="transition-colors">
                 <td class="px-4 py-3 align-middle">
-                  <div class="font-medium text-slate-800" x-text="e.display || e.name"></div>
+                  <div class="flex items-center gap-1.5">
+                    <div class="font-medium text-slate-800" x-text="e.display || e.name"></div>
+                    <template x-if="e.fatal_error">
+                      <span class="rounded bg-red-500 px-1.5 py-0.5 text-[10px] font-bold text-white">不可同步</span>
+                    </template>
+                  </div>
                   <div class="mt-0.5 font-mono text-[10px] text-slate-400" x-text="e.name"></div>
+                  <!-- 硬故障（最常见：目标表没建）：整行标红并写明原因，不用去翻启动日志。 -->
+                  <template x-if="e.fatal_error">
+                    <div class="mt-1.5 rounded border border-red-200 bg-red-50 px-2 py-1.5 text-[11px] leading-snug text-red-700"
+                         x-text="e.fatal_error"></div>
+                  </template>
+                  <!-- 告警：同步仍在跑，只是配置声明的列表里没有，那些字段会被静默丢弃。 -->
+                  <template x-for="wn in (e.warnings || [])" :key="wn">
+                    <div class="mt-1.5 rounded border border-amber-200 bg-amber-50 px-2 py-1.5 text-[11px] leading-snug text-amber-800"
+                         x-text="wn"></div>
+                  </template>
                 </td>
                 <td class="px-4 py-3 align-middle">
                   <input x-model="e.cron"
