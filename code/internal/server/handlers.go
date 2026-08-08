@@ -73,12 +73,6 @@ type pageData struct {
 	// EndpointNames 提供给某些页面（如 logs）做下拉选项的初始值
 	EndpointNames []string
 	AccountIDs    []string
-	// DB 连接信息（供 datasources 页面注入 window.__DB__ 显示只读连接串）。
-	// 密码永不下发：前端连接串里密码恒显示 ****（见 app.js connStr）。
-	DBHost string
-	DBPort int
-	DBUser string
-	DBName string
 }
 
 func (s *Server) newPageData(active string) pageData {
@@ -97,11 +91,6 @@ func (s *Server) newPageData(active string) pageData {
 		SecretRequired: s.cfg.Server.Secret != "",
 		EndpointNames:  names,
 		AccountIDs:     ids,
-		// DB 连接信息：仅 host/port/user/db，密码不带（前端连接串恒显示 ****）。
-		DBHost: s.cfg.Database.Host,
-		DBPort: s.cfg.Database.Port,
-		DBUser: s.cfg.Database.User,
-		DBName: s.cfg.Database.DB,
 	}
 }
 

@@ -739,7 +739,6 @@ window.taskDetail = function () {
 window.dataSources = function () {
   return {
     endpoints: [],
-    connOpen: false,
     expanded: null,
     metaLoading: false,
     columns: [],
@@ -750,7 +749,7 @@ window.dataSources = function () {
       const eps = await window.apiGet('/api/endpoints').catch(window.toastError);
       this.endpoints = eps || [];
     },
-    // 只刷新主表（数据源列表），不重载页面、不影响连接信息卡与已展开字段外的状态。
+    // 只刷新主表（数据源列表），不重载页面、不影响已展开字段外的状态。
     async refresh() {
       if (this.refreshing) return;
       this.refreshing = true;
@@ -765,7 +764,7 @@ window.dataSources = function () {
       }
     },
     accountOf(e) { return e.account_id || '—'; },
-    // 最后写入：e.last_sync 为 null（表空/从未落库/表未建）→「从未」；否则相对时间（复用全局 fmtRel）。
+    // 表内最近更新时间：e.last_sync 来自整张表 MAX(synced_at)，不是单个账号或任务的成功时间。
     fmtLastSync(e) { return e.last_sync ? window.fmtRel(e.last_sync) : '从未'; },
     async toggleExpand(idx) {
       if (this.expanded === idx) { this.expanded = null; return; }
@@ -781,21 +780,6 @@ window.dataSources = function () {
       if (!d || !d.columns) { this.colError = '未能读取字段结构'; return; }
       this.columns = d.columns; // [{name,type,is_primary}]
     },
-    connStr() {
-      // 只读展示用，密码隐藏。真实连接信息由 datasources.html 注入 window.__DB__
-      // （pageDataSources → newPageData 从 cfg.Database 填充；密码永不下发）。
-      // fallback 仅在注入缺失时兜底，避免空白。
-      const db = window.__DB__ || { host: '127.0.0.1', port: 3306, user: 'lingxing', db: 'lingxing' };
-      return 'mysql://' + db.user + ':****@' + db.host + ':' + db.port + '/' + db.db;
-    },
-    async copyConn() {
-      try {
-        await navigator.clipboard.writeText(this.connStr());
-        window.dispatchEvent(new CustomEvent('sync-toast', { detail: { type: 'success', msg: '已复制连接串' } }));
-      } catch (e) {
-        window.dispatchEvent(new CustomEvent('sync-toast', { detail: { type: 'error', msg: '复制失败：' + e.message } }));
-      }
-    }
   };
 };
 
