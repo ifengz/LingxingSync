@@ -44,6 +44,7 @@ UI 上路 B 收在「高级 / 开发者」折叠区，默认隐藏，避免非�
 | path + method | 文档标题区 | config `url` |
 | 请求参数 | Request Parameters 表 | `extra_params` + 内置分页参数 |
 | 幂等键 | Response 唯一标识字段 | `record_id_fields` |
+| 响应形态 | Response Data 是分页列表还是单个对象 | `response_shape`，默认 `list`；单对象接口填 `object` |
 | 限流档案 | Rate Limit 区块 | config `rate:` 块（原样抄，不猜） |
 | 目标表结构 | Response Data 表 | 建表 DDL 列名 |
 

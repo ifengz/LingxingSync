@@ -128,6 +128,7 @@ type Endpoint struct {
 	Method         string         `yaml:"method"`           // GET / POST
 	Table          string         `yaml:"table"`            // 目标数据表名
 	RecordIDFields []string       `yaml:"record_id_fields"` // 唯一键字段数组（复合主键用多元素）
+	ResponseShape  string         `yaml:"response_shape"`   // list（默认）或 object（data 单对象）
 	Rate           Rate           `yaml:"rate"`
 	Cron           string         `yaml:"cron"`
 	Enabled        bool           `yaml:"enabled"`
@@ -244,6 +245,14 @@ func Load(path string) (*Config, error) {
 	return &c, nil
 }
 
+// ResponseShapeOrDefault 返回 endpoint 的响应形态，空值保持既有分页列表行为。
+func (e Endpoint) ResponseShapeOrDefault() string {
+	if strings.TrimSpace(e.ResponseShape) == "" {
+		return "list"
+	}
+	return strings.ToLower(strings.TrimSpace(e.ResponseShape))
+}
+
 // validate 做启动断言式校验，fail-loud：缺字段直接 error，不静默兜底。
 func (c *Config) validate() error {
 	if c.Database.Host == "" || c.Database.User == "" || c.Database.DB == "" {
@@ -297,6 +306,10 @@ func (c *Config) validate() error {
 		}
 		if e.Rate.Bucket <= 0 || e.Rate.IntervalMs <= 0 || e.Rate.Dimension == "" {
 			return fmt.Errorf("endpoint %s 的 rate.bucket/interval_ms/dimension 必填且 >0", e.Name)
+		}
+		responseShape := strings.ToLower(strings.TrimSpace(e.ResponseShape))
+		if responseShape != "" && responseShape != "list" && responseShape != "object" {
+			return fmt.Errorf("endpoint %s 的 response_shape=%q 非法：只能是 list / object", e.Name, e.ResponseShape)
 		}
 		if e.StoreType != "" && e.StoreType != "SC" && e.StoreType != "VC" {
 			return fmt.Errorf("endpoint %s 的 store_type=%q 非法：只能是 SC / VC / 空", e.Name, e.StoreType)

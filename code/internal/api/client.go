@@ -140,12 +140,18 @@ func isSuccessMessage(msg string) bool {
 //   - apiCode 同上
 //   - error 非 nil 时，result 为 nil；error 内含 code/msg，fail-loud
 func (c *Client) Fetch(ctx context.Context, method, path string, params map[string]any) (*FetchResult, int, int, error) {
+	return c.FetchWithShape(ctx, method, path, params, "list")
+}
+
+// FetchWithShape 拉取一页，并按 endpoint 声明的响应形态解析 data。
+// responseShape 为空时按 list 处理；object 仅用于 data 是单个业务对象的接口。
+func (c *Client) FetchWithShape(ctx context.Context, method, path string, params map[string]any, responseShape string) (*FetchResult, int, int, error) {
 	m := strings.ToUpper(strings.TrimSpace(method))
 	if m == "" {
 		m = http.MethodPost // 领星业务接口默认 POST
 	}
 
-	result, httpStatus, apiCode, err := c.fetchOnce(ctx, m, path, params)
+	result, httpStatus, apiCode, err := c.fetchOnce(ctx, m, path, params, responseShape)
 	if err != nil {
 		// token 过期类错误：强制刷新后重试一次（宪法 §8）。
 		// fetchOnce 返回的 err 在 token 过期段会带 sentinel errTokenExpired。
@@ -153,7 +159,7 @@ func (c *Client) Fetch(ctx context.Context, method, path string, params map[stri
 			if ferr := c.holder.ForceRefresh(ctx); ferr != nil {
 				return nil, httpStatus, apiCode, fmt.Errorf("lingxing fetch: token refresh failed after expired (refresh err: %v): %w", ferr, err)
 			}
-			return c.fetchOnce(ctx, m, path, params)
+			return c.fetchOnce(ctx, m, path, params, responseShape)
 		}
 		return nil, httpStatus, apiCode, err
 	}
@@ -161,7 +167,7 @@ func (c *Client) Fetch(ctx context.Context, method, path string, params map[stri
 }
 
 // fetchOnce 执行一次完整的请求（签名 → 发送 → 解析），不做 token 重试。
-func (c *Client) fetchOnce(ctx context.Context, method, path string, params map[string]any) (*FetchResult, int, int, error) {
+func (c *Client) fetchOnce(ctx context.Context, method, path string, params map[string]any, responseShape string) (*FetchResult, int, int, error) {
 	// 1. 取 access_token
 	token, err := c.holder.Get(ctx)
 	if err != nil {
@@ -288,7 +294,7 @@ func (c *Client) fetchOnce(ctx context.Context, method, path string, params map[
 	}
 
 	// 10. 解析 data → FetchResult
-	result, err := parseFetchResult(ar.Data)
+	result, err := parseFetchResultWithShape(ar.Data, responseShape)
 	if err != nil {
 		return nil, resp.StatusCode, ar.Code.asInt(), fmt.Errorf("lingxing fetch: parse data: %w, body=%s", err, truncateForLog(raw))
 	}
@@ -326,16 +332,53 @@ func applyTopLevelTotal(result *FetchResult, topLevelTotal int) {
 // parseFetchResult 把 data（json.RawMessage）解析成 FetchResult。
 //
 // fail-loud 原则（CLAUDE.md §3 / 宪法 §5）：领星返回格式异常时必须报错，不猜测字段名、
-// 不推断分页、不静默兜底成 0 行。data 的合法形态只有两种：
+// 不推断分页、不静默兜底成 0 行。默认 list 模式的合法形态只有两种：
 //   - 对象 {"list":[...], "total":N, "has_more":bool}（标准分页响应）
 //   - 数组 [{...}, ...]（少数接口直接返回数组）
 //
 // data 为空对象/数组时返回空 List（属合法的"无数据"）；data 是对象但缺 list 字段、
-// 或既非对象非数组时，返回 error——避免领星改字段后被静默吞成 0 行假成功。
+// 或既非对象非数组时，返回 error。单对象接口必须显式使用 response_shape=object。
 func parseFetchResult(data json.RawMessage) (*FetchResult, error) {
+	return parseFetchResultWithShape(data, "list")
+}
+
+// parseFetchResultWithShape 解析分页列表或显式声明的单对象响应。
+// 默认 list 模式保持 fail-loud，避免把上游字段变更误当成一行业务数据。
+func parseFetchResultWithShape(data json.RawMessage, responseShape string) (*FetchResult, error) {
 	r := &FetchResult{List: []map[string]any{}}
 	if len(data) == 0 || string(data) == "null" {
 		return r, nil
+	}
+	responseShape = strings.ToLower(strings.TrimSpace(responseShape))
+	if responseShape == "" {
+		responseShape = "list"
+	}
+	if responseShape == "object" {
+		var obj map[string]json.RawMessage
+		if err := json.Unmarshal(data, &obj); err != nil {
+			return nil, fmt.Errorf("data is not a single object: %w", err)
+		}
+		if len(obj) == 0 {
+			return r, nil
+		}
+		if _, ok := obj["list"]; ok {
+			return nil, fmt.Errorf("object response contains pagination field 'list'; use response_shape=list")
+		}
+		for _, key := range []string{"total", "has_more", "hasMore"} {
+			if _, ok := obj[key]; ok {
+				return nil, fmt.Errorf("object response contains pagination field %q; use response_shape=list", key)
+			}
+		}
+		var row map[string]any
+		if err := json.Unmarshal(data, &row); err != nil {
+			return nil, fmt.Errorf("unmarshal single object: %w", err)
+		}
+		r.List = []map[string]any{row}
+		r.Total = 1
+		return r, nil
+	}
+	if responseShape != "list" {
+		return nil, fmt.Errorf("unsupported response shape %q", responseShape)
 	}
 
 	// 形态一：data 是对象 {list, total, has_more}

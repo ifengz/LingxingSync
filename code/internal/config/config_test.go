@@ -147,6 +147,37 @@ func TestValidateStoreType(t *testing.T) {
 	}
 }
 
+func TestValidateResponseShape(t *testing.T) {
+	mk := func(shape string) *Config {
+		return &Config{
+			Database: Database{Host: "h", User: "u", DB: "d"},
+			Accounts: []Account{{ID: "sc_us_1", Name: "n", AppKey: "k", AppSecret: "s"}},
+			Endpoints: []Endpoint{{
+				Name: "product_info", Account: "sc_us_1", Path: "/productInfo", Method: "POST", Table: "ls_product_info",
+				RecordIDFields: []string{"sku"}, Cron: "0 * * * *",
+				Rate: Rate{Bucket: 1, IntervalMs: 1000, Dimension: "account+path"}, ResponseShape: shape,
+			}},
+		}
+	}
+	for _, shape := range []string{"", "list", "object"} {
+		if err := mk(shape).validate(); err != nil {
+			t.Fatalf("response_shape=%q 应合法: %v", shape, err)
+		}
+	}
+	if err := mk("single").validate(); err == nil {
+		t.Fatal("response_shape=single 应被拒绝")
+	}
+}
+
+func TestResponseShapeOrDefault(t *testing.T) {
+	if got := (Endpoint{}).ResponseShapeOrDefault(); got != "list" {
+		t.Fatalf("空 response_shape 默认值 = %q, want list", got)
+	}
+	if got := (Endpoint{ResponseShape: " object "}).ResponseShapeOrDefault(); got != "object" {
+		t.Fatalf("response_shape 归一化值 = %q, want object", got)
+	}
+}
+
 func TestFindAccountCaseInsensitive(t *testing.T) {
 	cfg := &Config{Accounts: []Account{{ID: "sc_us_1", Name: "self", AppKey: "k", AppSecret: "s"}}}
 	for _, q := range []string{"sc_us_1", "SC_US_1", "Sc_Us_1", " sc_us_1 "} {

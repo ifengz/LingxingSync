@@ -134,6 +134,7 @@ retention:
 | `endpoints[].method` | string | 是 | `GET` 或 `POST`（从文档"请求方式"原样抄） |
 | `endpoints[].table` | string | 是 | 目标数据表名（必须已建表） |
 | `endpoints[].record_id_fields` | array | 是 | 唯一键字段数组（单键 `["field"]`；复合键 `["f1","f2"]`）|
+| `endpoints[].response_shape` | string | 否 | `list`（默认，分页列表）或 `object`（`data` 为单个业务对象时包装为一行） |
 | `endpoints[].rate.bucket` | int | 是 | 令牌桶容量（领星文档原值；=1 时强制串行） |
 | `endpoints[].rate.interval_ms` | int | 是 | 单店铺调用最小间隔（毫秒） |
 | `endpoints[].rate.multi_interval_ms` | int | 是 | 多店铺调用最小间隔（毫秒；无多店铺场景填 0） |
