@@ -248,67 +248,55 @@ window.syncManage = function () {
     endpoints: [],        // 手动同步勾选用：[{name,display,account_id,iterate_by_store,window_days}]
     schedule: [],         // 定时调度表：完整 endpoint 配置对象数组（来自 /api/config）
     accounts: [],         // 账号 id 列表（去重保序）
-    // form.endpoint(单值) → form.endpoints(数组)（决策①：多选）
-    // storeSids 不在 form 上集中存：T2 要求按账号分区，故选择态落在 storesByAccount[acc].selected
-    form: { endpoints: [], date_from: '', date_to: '' },
+    // 矩阵选择模型：账号（form.accounts）× 数据类型（form.types，键=path）。
+    // 两账号同类型接口（name 不同但 path 相同）在 UI 只列一份「数据类型」，避免整段重复；
+    // 触发时按「选中账号 × 选中类型」笛卡尔积解析回真实接口 name（见 resolvedEndpoints）。
+    // storeSids 不在 form 上集中存：按账号分区，选择态落在 storesByAccount[acc].selected。
+    form: { accounts: [], types: [], date_from: '', date_to: '' },
     // ---- T2 店铺网格（按账号分区）----
     // storesByAccount[accountId] = { items:[StoreSummary], loading:false, loaded:true,
     //                                 selected:{sid:true}, query:'' }
     storesByAccount: {},
-    runningList: [],
+    // recentTasks 不渲染成任何表格或摘要：任务态一律去 /logs 页看，本页不重复展示。
+    // 唯一用途：定时调度 Tab 的 lastRunOf() —— 给每行接口填「上次运行」。
     recentTasks: [],
     needRestart: false,   // 结构性变更后显示重启横幅
     // 定时调度：内联直接编辑（无「编辑」按钮）。scheduleBaseline[name] 存该行加载/保存后的
     // 基线快照，用于「整行 dirty 判定 + 取消回滚」（复用店铺选择的 baseline 模式，保持一致）。
     scheduleBaseline: {},
-    showAddForm: false,
+    // 高级/开发者「手动填合同」折叠区开关（清单没有的接口才用）。默认收起。
+    advancedAdd: false,
+    // 接口清单（从后端 /api/catalog 拉）：templates=模板列表，accounts=可选账号。
+    // catalogPick[key] = 该模板当前在下拉里选中的账号 id。
+    catalog: { templates: [], accounts: [] },
+    catalogPick: {},
     // 保守限流默认：桶 1 / 间隔 1000ms（对齐 otherlingxinggithub.md §3「业务 API ≥0.6s」留足余量）。
     // extra_params_text 是 JSON 文本输入，保存时解析成对象；解析失败拦截不发请求。
     addForm: { name: '', display: '', account: '', path: '', method: 'GET', table: '', record_id_fields: '', cron: '', bucket: 1, interval_ms: 1000, multi_interval_ms: 0, window_days: 0, iterate_by_store: false, store_param_name: '', extra_params_text: '' },
-    polling: null,        // T3：5s 轮询句柄（仅手动 Tab 启用）
 
     // Alpine 自动调一次（早于模板里的 x-init="load()"）。
     // 这里只挂 $watch：选中接口变化时，懒加载涉及账号的店铺（T2）。
     init() {
       if (this.$watch) {
-        this.$watch('form.endpoints', () => {
-          for (const acc of this.storeAccounts) this.ensureStores(acc);
-        });
+        // 账号或类型选择变化 → 懒加载涉及账号的店铺（T2）。
+        const reload = () => { for (const acc of this.storeAccounts) this.ensureStores(acc); };
+        this.$watch('form.accounts', reload);
+        this.$watch('form.types', reload);
       }
       // 概览「添加接口」深链：/sync?tab=schedule&add=1 → 直接落到定时调度 Tab 并展开添加表单。
       // 不复制表单到概览，只把用户引导到唯一的添加入口（CLAUDE.md：不重复配置逻辑）。
       const q = new URLSearchParams(window.location.search);
-      if (q.get('tab') === 'schedule') this.tab = 'schedule';
-      if (q.get('add') === '1') { this.tab = 'schedule'; this.showAddForm = true; }
-      // T3：仅手动 Tab 轮询「最近同步任务」+ 运行态；schedule Tab 不轮询，避免无谓请求。
-      // 轮询失败由 loadRunning/loadRecentTasks 内的 toastError 静默吞掉。
-      if (this.tab === 'manual') this.startPolling();
+      if (q.get('tab') === 'schedule' || q.get('add') === '1') this.tab = 'schedule';
     },
     // blankAddForm 返回添加表单的初始/重置态：与 data 里的 addForm 初值保持一致，
     // 保存成功后调用它清空表单（保守限流默认桶 1 / 间隔 1000ms）。
     blankAddForm() {
       return { name: '', display: '', account: '', path: '', method: 'GET', table: '', record_id_fields: '', cron: '', bucket: 1, interval_ms: 1000, multi_interval_ms: 0, window_days: 0, iterate_by_store: false, store_param_name: '', extra_params_text: '' };
     },
-    destroy() {
-      // Alpine 组件卸载时清 timer，避免切页泄漏
-      this.stopPolling();
-    },
-    startPolling() {
-      this.stopPolling();
-      this.polling = setInterval(() => {
-        // 仅刷新「最近同步任务」+ 运行态；不重拉整份 /api/config（定时配置无需每 5s 拉）
-        this.loadRunning();
-        this.loadRecentTasks();
-      }, 5000);
-    },
-    stopPolling() {
-      if (this.polling) { clearInterval(this.polling); this.polling = null; }
-    },
-    // Tab 切换：进 manual 启轮询、进 schedule 停轮询（避免无谓请求）
+    // 本页不再有 5s 轮询：手动 Tab 只做「选接口 → 触发」，触发结果看 toast，任务态看 /logs；
+    // 定时调度 Tab 的「上次运行」在 load() 时取一次即够。故无 timer，也就不需要 destroy()。
     switchTab(t) {
       this.tab = t;
-      if (t === 'manual') this.startPolling();
-      else this.stopPolling();
     },
 
     async load() {
@@ -319,9 +307,9 @@ window.syncManage = function () {
         this.schedule = (cfg.endpoints || []).map(e => this.normalizeRow(e));
         this.scheduleBaseline = {};
         for (const e of this.schedule) this.scheduleBaseline[e.name] = this.rowSnap(e);
-        // 保留 iterate_by_store/window_days：T1 分组与 T2 网格判定都需要
+        // 保留 path（矩阵去重键）/iterate_by_store/window_days：T1 类型合并与 T2 网格判定都需要
         this.endpoints = this.schedule.map(e => ({
-          name: e.name, display: e.display, account_id: e.account,
+          name: e.name, display: e.display, account_id: e.account, path: e.path,
           iterate_by_store: !!e.iterate_by_store, window_days: e.window_days || 0
         }));
         const seen = new Set();
@@ -329,51 +317,102 @@ window.syncManage = function () {
         for (const e of this.endpoints) {
           if (e.account_id && !seen.has(e.account_id)) { seen.add(e.account_id); this.accounts.push(e.account_id); }
         }
-        // 配置若变了，已选接口可能失效；选中态不跨次保留属决策③的自然结果
-        this.form.endpoints = this.form.endpoints.filter(n => this.endpoints.some(e => e.name === n));
+        // 配置若变了，已选账号/类型可能失效，剔除不再存在的（选中态不跨次保留属决策③的自然结果）
+        this.form.accounts = this.form.accounts.filter(a => this.accounts.includes(a));
+        const validPaths = new Set(this.endpoints.map(e => e.path));
+        this.form.types = this.form.types.filter(p => validPaths.has(p));
       }
-      await this.loadRunning();
+      await this.loadCatalog();
       await this.loadRecentTasks();
     },
-    async loadRunning() {
-      const d = await window.apiGet('/api/status').catch(window.toastError);
-      if (!d) return;
-      this.runningList = (d.workers || []).filter(w => w.status === 'running');
+    // 接口清单（从清单添加的主路径数据）。失败静默：清单拉不到不影响调度表。
+    async loadCatalog() {
+      const d = await window.apiGet('/api/catalog').catch(window.toastError);
+      if (d) this.catalog = { templates: d.templates || [], accounts: d.accounts || [] };
     },
+    // 启用清单里的一个模板到所选账号：选账号 → 点启用 → 复用后端 /api/catalog/enable。
+    // 成功即结构性变更（need_restart），提示重启后刷新清单（已启用的账号会被划掉）。
+    async enableCatalog(key) {
+      const account = this.catalogPick[key];
+      if (!account) { window.toast('warn', '请先为该接口选择账号'); return; }
+      const r = await window.apiPost('/api/catalog/enable', { key, account }).catch(window.toastError);
+      if (r) {
+        if (r.need_restart) this.needRestart = true;
+        window.toast('success', r.message || '已启用，需重启生效');
+        this.catalogPick[key] = '';
+        await this.load();
+      }
+    },
+    // 只为定时调度 Tab 的 lastRunOf()（每行「上次运行」）取一批最近任务，不做任何列表渲染。
+    // 取 50 条而非 8 条：8 条覆盖不到全部接口，lastRunOf 会大面积显示「—」。
     async loadRecentTasks() {
-      const d = await window.apiGet('/api/tasks?page=1&page_size=8').catch(window.toastError);
+      const d = await window.apiGet('/api/tasks?page=1&page_size=50').catch(window.toastError);
       if (d) this.recentTasks = d.items || [];
     },
 
-    // ---- T1：数据类型多选辅助 ----
-    // 按账号分组（账号是根维度），返回 [{account, items:[endpoint]}]，顺序与 accounts 一致
-    get endpointsByAccount() {
-      const groups = [];
-      for (const acc of this.accounts) {
-        const items = this.endpoints.filter(e => e.account_id === acc);
-        if (items.length) groups.push({ account: acc, items });
-      }
-      return groups;
+    // ---- T1：账号 × 数据类型矩阵辅助 ----
+    // 账号勾选（根维度）。切换 / 判定选中 / 全选清空。
+    toggleAccount(acc) {
+      const i = this.form.accounts.indexOf(acc);
+      if (i >= 0) this.form.accounts.splice(i, 1); else this.form.accounts.push(acc);
     },
-    // 已选数据类型数量
-    get selectedCount() { return this.form.endpoints.length; },
-    // 顶部「全选 / 清空」
-    selectAllEndpoints() { this.form.endpoints = this.endpoints.map(e => e.name); },
-    clearEndpoints() { this.form.endpoints = []; },
+    isAccountPicked(acc) { return this.form.accounts.includes(acc); },
+    selectAllAccounts() { this.form.accounts = this.accounts.slice(); },
+    clearAccounts() { this.form.accounts = []; },
+
+    // 数据类型清单：按 path 去重（两账号同类型接口 path 相同，合并成一张卡）。
+    // key=path；label 去掉尾部「（…）」括注（如「SC 店铺列表（联营）」→「SC 店铺列表」），
+    // 使自营/联营同类型显示为同一份；iterate_by_store 只要任一账号该类型为 true 即 true。
+    get dataTypes() {
+      const byPath = new Map();
+      for (const e of this.endpoints) {
+        const label = (e.display || e.name).replace(/（[^）]*）\s*$/, '').trim();
+        const cur = byPath.get(e.path);
+        if (cur) {
+          cur.iterate_by_store = cur.iterate_by_store || !!e.iterate_by_store;
+        } else {
+          byPath.set(e.path, { key: e.path, label, iterate_by_store: !!e.iterate_by_store });
+        }
+      }
+      return Array.from(byPath.values());
+    },
+    // 按分类切片（SC / VC / 其他），供模板一行一类渲染。空类由模板过滤。
+    dataTypesByCategory() {
+      const t = this.dataTypes;
+      return [
+        { label: 'SC 链接', items: t.filter(x => /^SC/i.test(x.label)) },
+        { label: 'VC 链接', items: t.filter(x => /^VC/i.test(x.label)) },
+        { label: '其他', items: t.filter(x => !/^(SC|VC)/i.test(x.label)) },
+      ];
+    },
+    toggleType(key) {
+      const i = this.form.types.indexOf(key);
+      if (i >= 0) this.form.types.splice(i, 1); else this.form.types.push(key);
+    },
+    isTypePicked(key) { return this.form.types.includes(key); },
+    selectAllTypes() { this.form.types = this.dataTypes.map(t => t.key); },
+    clearTypes() { this.form.types = []; },
+
+    // 解析：选中账号 × 选中类型(path) → 真实接口对象数组（笛卡尔积，跳过不存在的组合）。
+    // 这是矩阵模型与后端「按 name 触发」之间的唯一映射点，所有下游逻辑都读它。
+    get resolvedEndpoints() {
+      const accs = new Set(this.form.accounts);
+      const paths = new Set(this.form.types);
+      return this.endpoints.filter(e => accs.has(e.account_id) && paths.has(e.path));
+    },
+    // 已选组合数（真实要触发的接口数），顶部计数用。
+    get selectedCount() { return this.resolvedEndpoints.length; },
 
     // ---- T2：店铺勾选网格辅助 ----
-    // 当前选中接口里，存在 iterate_by_store:true 的 → 才显示网格
+    // 解析出的接口里存在 iterate_by_store:true → 才显示网格
     get showStoreGrid() {
-      if (!this.form.endpoints.length) return false;
-      const sel = new Set(this.form.endpoints);
-      return this.endpoints.some(e => sel.has(e.name) && e.iterate_by_store);
+      return this.resolvedEndpoints.some(e => e.iterate_by_store);
     },
-    // 需要加载店铺的账号集合 = 选中且 iterate_by_store 的接口所属账号（去重保序）
+    // 需要加载店铺的账号集合 = 解析出的、iterate_by_store 接口所属账号（去重保序）
     get storeAccounts() {
-      const sel = new Set(this.form.endpoints);
       const out = [];
-      for (const e of this.endpoints) {
-        if (sel.has(e.name) && e.iterate_by_store && !out.includes(e.account_id)) out.push(e.account_id);
+      for (const e of this.resolvedEndpoints) {
+        if (e.iterate_by_store && !out.includes(e.account_id)) out.push(e.account_id);
       }
       return out;
     },
@@ -442,8 +481,13 @@ window.syncManage = function () {
 
     // ---- 立即同步（T1 fan-out + T2 按接口账号切分 store_sids）----
     async triggerSync() {
-      if (!this.form.endpoints.length) { window.toast('warn', '请至少选择一个数据类型'); return; }
-      const sel = this.form.endpoints.slice();
+      const resolved = this.resolvedEndpoints;
+      if (!resolved.length) {
+        if (!this.form.accounts.length) { window.toast('warn', '请至少选择一个账号'); return; }
+        if (!this.form.types.length) { window.toast('warn', '请至少选择一个数据类型'); return; }
+        window.toast('warn', '所选账号与数据类型没有可触发的接口组合'); return;
+      }
+      const sel = resolved.map(e => e.name);
       // 为每个接口构造请求体：只有 iterate_by_store 且该账号有勾选时才带 store_sids；
       // 不勾 = 不传 = 后端按配置白名单（决策③：每次进页面空选）
       const buildReq = (name) => {
@@ -468,18 +512,9 @@ window.syncManage = function () {
       if (failN) window.toast('error', '失败 ' + failN + ' 个：' + failed.join(', '));
       setTimeout(() => this.load(), 500);
     },
-    async cancel(name, taskID) {
-      const ok = await window.syncConfirm('确定取消 ' + name + ' 的运行任务吗？');
-      if (!ok) return;
-      const r = await window.apiPost('/api/sync/' + encodeURIComponent(name) + '/cancel', { task_id: taskID }).catch(window.toastError);
-      if (r) { window.toast('success', '已请求取消'); setTimeout(() => this.loadRunning(), 500); }
-    },
     lastRunOf(name) {
       const task = this.recentTasks.find(x => x.endpoint === name);
       return task ? window.fmtRel(task.started_at) : '—';
-    },
-    taskStatusText(status) {
-      return ({ success: '成功', running: '运行中', error: '失败', cancelled: '已取消' })[status] || status;
     },
 
     // ---- 定时调度：内联直接编辑（cron / bucket / interval / store_sids / enabled）----
@@ -575,7 +610,7 @@ window.syncManage = function () {
       if (r) {
         if (r.need_restart) this.needRestart = true;
         window.toast('success', r.message || '已添加，需重启生效');
-        this.showAddForm = false;
+        this.advancedAdd = false;
         this.addForm = this.blankAddForm();
         await this.load();
       }
@@ -924,7 +959,8 @@ window.settingsApi = function () {
       if (!r) return;
       if (r.need_restart) this.needRestart = true;
       this.newForm = { id: '', name: '', quota_group: '', app_key: '', app_secret: '' };
-      this.selectedAccountId = body.id;
+      // 后端撞名（大小写不敏感）时会自动改配 ID，用响应回显的 account_id，不能沿用填入值。
+      this.selectedAccountId = r.account_id || body.id;
       window.toast('success', r.message || '账号已保存');
       await this.load();
     },

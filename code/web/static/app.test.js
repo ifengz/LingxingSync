@@ -19,7 +19,39 @@ assert.equal(typeof sandbox.window.syncConfirm, 'function');
 
 const entryManage = sandbox.window.syncManage();
 assert.equal(entryManage.tab, 'manual');
-assert.equal(entryManage.showAddForm, false);
+assert.equal(entryManage.advancedAdd, false);
+
+// 触发同步矩阵模型：两账号同 path 接口在 UI 合并成一份数据类型；
+// 勾账号 × 勾类型 → resolvedEndpoints 笛卡尔积解析回真实 name。
+{
+  const m = sandbox.window.syncManage();
+  m.accounts = ['sc_us_1', 'sc_us_2'];
+  m.endpoints = [
+    { name: 'sc_stores', display: 'SC 店铺列表', account_id: 'sc_us_1', path: '/stores', iterate_by_store: false },
+    { name: 'sc_stores_aff', display: 'SC 店铺列表（联营）', account_id: 'sc_us_2', path: '/stores', iterate_by_store: false },
+    { name: 'sc_inventory', display: 'SC FBA 库存', account_id: 'sc_us_1', path: '/inv', iterate_by_store: true },
+    { name: 'sc_inventory_aff', display: 'SC FBA 库存（联营）', account_id: 'sc_us_2', path: '/inv', iterate_by_store: true },
+  ];
+  // 4 个接口按 path 去重成 2 个数据类型，label 去掉「（联营）」后缀后一致
+  assert.equal(m.dataTypes.length, 2, 'dataTypes 应按 path 去重成 2 个');
+  const storeType = m.dataTypes.find(t => t.key === '/stores');
+  assert.equal(storeType.label, 'SC 店铺列表', 'label 应去掉尾部（联营）括注');
+  assert.equal(m.dataTypes.find(t => t.key === '/inv').iterate_by_store, true, '任一账号该类型按店铺则合并为 true');
+
+  // 勾 2 账号 × 勾 1 类型(/stores) → 2 个真实接口
+  m.form.accounts = ['sc_us_1', 'sc_us_2'];
+  m.form.types = ['/stores'];
+  assert.equal(JSON.stringify(m.resolvedEndpoints.map(e => e.name).sort()), JSON.stringify(['sc_stores', 'sc_stores_aff']));
+  assert.equal(m.selectedCount, 2);
+  assert.equal(m.showStoreGrid, false, '/stores 非按店铺，不显示网格');
+
+  // 只勾 1 账号 × 勾 2 类型 → 只该账号的 2 个接口；含按店铺类型 → 显示网格
+  m.form.accounts = ['sc_us_2'];
+  m.form.types = ['/stores', '/inv'];
+  assert.equal(JSON.stringify(m.resolvedEndpoints.map(e => e.name).sort()), JSON.stringify(['sc_inventory_aff', 'sc_stores_aff']));
+  assert.equal(m.showStoreGrid, true, '选中 /inv（按店铺）应显示网格');
+  assert.equal(JSON.stringify(m.storeAccounts), JSON.stringify(['sc_us_2']), 'storeAccounts 只含选中且按店铺接口的账号');
+}
 
 const confirmation = sandbox.window.syncConfirm('删除账号？', '确认');
 root.confirmResolve(true);
@@ -32,12 +64,36 @@ void (async () => {
     request = { url, body };
     return { message: '已请求取消' };
   };
-  const cancelManage = sandbox.window.syncManage();
-  cancelManage.load = async () => {};
-  await cancelManage.cancel('orders', 42);
+  // 取消任务的入口只剩同步日志页（/logs）行内按钮：同步管理页已不再渲染任务历史表，
+  // 那张表与 /logs 读同一个 GET /api/tasks，属重复展示。契约不变：POST /api/sync/{endpoint}/cancel。
+  const cancelLogs = sandbox.window.logsPage();
+  cancelLogs.load = async () => {};
+  await cancelLogs.cancelRow({ endpoint: 'orders', id: 42 });
 
   assert.equal(request.url, '/api/sync/orders/cancel');
   assert.equal(request.body.task_id, 42);
+
+  // 防回归：同步管理页不得再出现任务历史表、也不得出现运行态摘要条。
+  // 任务状态明细只有一个去处 —— 同步日志页（/logs）。
+  const noTableManage = sandbox.window.syncManage();
+  assert.equal(typeof noTableManage.cancel, 'undefined');
+  assert.equal(typeof noTableManage.taskStatusText, 'undefined');
+  assert.equal(typeof noTableManage.runningCount, 'undefined');
+  assert.equal(typeof noTableManage.recentErrorCount, 'undefined');
+  assert.equal(typeof noTableManage.lastTaskLabel, 'undefined');
+  assert.equal(typeof noTableManage.loadRunning, 'undefined');
+  assert.equal(typeof noTableManage.startPolling, 'undefined');
+  assert.equal(typeof noTableManage.stopPolling, 'undefined');
+  assert.equal('runningList' in noTableManage, false);
+  assert.equal('polling' in noTableManage, false);
+
+  // recentTasks 现在唯一的消费者：定时调度 Tab 的「上次运行」列。
+  const lastRun = sandbox.window.syncManage();
+  lastRun.recentTasks = [
+    { id: 2, endpoint: 'sc_stores', status: 'success', started_at: new Date(Date.now() - 30000).toISOString() }
+  ];
+  assert.ok(lastRun.lastRunOf('sc_stores').endsWith('秒前'), 'lastRunOf 应给相对时间：' + lastRun.lastRunOf('sc_stores'));
+  assert.equal(lastRun.lastRunOf('sc_orders'), '—');
 
   const calls = [];
   sandbox.window.apiGet = async (url) => {
