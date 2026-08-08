@@ -58,36 +58,14 @@ endpoints:
     enabled: true
     window_days: 0
 
-  - name: sc_sales_orders
-    display: "SC 销售订单"
-    account: "sc_us"
-    # ⚠️ path 不带 /openapi 前缀：baseURL 本身已是 https://openapi.lingxing.com，
-    # 早期误写 "/openapi/erp/sc/orders/list" 会拼成 /openapi/openapi/... → 领星回
-    # HTTP 200 + code=500 + msg="404 NOT_FOUND"。本路径已用真实账号 probe 跑通。
-    path: "/erp/sc/data/mws/orders"
-    method: "POST"
-    table: "ls_sales_orders"
-    # 领星返回 amazon_order_id，没有 order_id；写错会 NOT NULL 主键取空值落不了库。
-    record_id_fields: ["amazon_order_id"]
-    rate:
-      bucket: 5
-      interval_ms: 200
-      multi_interval_ms: 1000
-      dimension: "account+path"
-    cron: "*/10 * * * *"
-    enabled: true
-    window_days: 7                      # 本接口必填 start_date/end_date
-    extra_params:
-      date_type: 1                      # 1=按订购时间【站点时间】筛选（该接口无 type 参数）
-
   - name: sc_inventory
     display: "SC FBA 库存"
     account: "sc_us"
-    # 同 sc_sales_orders 的坑：早期误写 "/openapi/erp/sc/inventory/list"（不存在）。
-    # 本路径与 006 迁移建的 ls_inventory 同源，生产已跑通（单次 5079 行）。
+    # 早期误写 "/openapi/erp/sc/inventory/list"（不存在）。
+    # 本路径与 006 迁移建的 ls_fba_inventory 同源，生产已跑通（单次 5079 行）。
     path: "/erp/sc/routing/fba/fbaStock/fbaList"
     method: "GET"
-    table: "ls_inventory"
+    table: "ls_fba_inventory"
     # 同一 fnsku 在多店铺各一行，唯一键必须带 sid。
     record_id_fields: ["sid", "fnsku"]
     rate:
@@ -104,6 +82,41 @@ endpoints:
     # store_type 限定只迭代该类型店铺（SC/VC，对齐 ls_stores.store_type）；空=不过滤。
     # SC 接口喂 VC 店铺 sid（或反之）会拉到错数据，故 SC 迭代接口必须填 "SC"。
     store_type: "SC"
+
+  - name: sc_listing
+    display: "SC Listing"
+    account: "sc_us"
+    path: "/erp/sc/data/mws/listing"
+    method: "POST"
+    table: "ls_sc_listing"
+    record_id_fields: ["sid", "seller_sku"]
+    rate:
+      bucket: 1
+      interval_ms: 1000
+      multi_interval_ms: 1000
+      dimension: "account+path"
+    cron: "0 */6 * * *"
+    enabled: true
+    window_days: 0
+    iterate_by_store: true
+    store_param_name: "sid"
+    store_type: "SC"
+
+  - name: sc_products
+    display: "SC 产品列表"
+    account: "sc_us"
+    path: "/erp/sc/routing/data/local_inventory/productList"
+    method: "POST"
+    table: "ls_sc_products"
+    record_id_fields: ["sku"]
+    rate:
+      bucket: 1
+      interval_ms: 1000
+      multi_interval_ms: 0
+      dimension: "account+path"
+    cron: "0 */6 * * *"
+    enabled: true
+    window_days: 0
 
   # 「SC 广告日报」示例已删除，不是遗漏。原来那段的
   #   path: "/openapi/erp/sc/ads/daily"   record_id_fields: ["report_id"]

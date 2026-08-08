@@ -68,31 +68,12 @@ endpoints:
     enabled: true
     window_days: 0
 
-  - name: sc_sales_orders        # 任务标识，全局唯一，字母下划线
-    display: "SC 销售订单"        # UI 展示名
-    account: "sc_us"             # 对应 accounts[].id
-    # ⚠️ path 不带 /openapi 前缀：baseURL 已是 https://openapi.lingxing.com
-    path: "/erp/sc/data/mws/orders"
-    method: "POST"
-    table: "ls_sales_orders"     # 写入的目标表
-    record_id_fields: ["amazon_order_id"]  # 唯一键字段（复合主键用数组）
-    rate:                        # 从领星官方文档 Rate Limit 区块原样抄写
-      bucket: 5                  # 令牌桶容量（=1 时强制串行）
-      interval_ms: 200           # 单店铺调用最小间隔
-      multi_interval_ms: 1000    # 多店铺调用最小间隔
-      dimension: "account+path"  # 限流维度（领星按此维度共享配额）
-    cron: "*/10 * * * *"         # 标准 5 段 cron（服务器本地时间）
-    enabled: true
-    window_days: 7               # 每次拉取过去 N 天数据（滚动窗口）
-    extra_params:                # 接口特有参数（透传给 API）
-      type: 1                    # FBA=1, FBM=2
-
   - name: sc_inventory
     display: "SC FBA 库存"
     account: "sc_us"
     path: "/erp/sc/routing/fba/fbaStock/fbaList"
     method: "GET"
-    table: "ls_inventory"
+    table: "ls_fba_inventory"
     record_id_fields: ["sid", "fnsku"]   # 同一 fnsku 多店铺各一行，必须带 sid
     rate:
       bucket: 1                  # 桶=1 → 串行：请求返回后才能发下一个
@@ -134,6 +115,7 @@ retention:
 | `endpoints[].method` | string | 是 | `GET` 或 `POST`（从文档"请求方式"原样抄） |
 | `endpoints[].table` | string | 是 | 目标数据表名（必须已建表） |
 | `endpoints[].record_id_fields` | array | 是 | 唯一键字段数组（单键 `["field"]`；复合键 `["f1","f2"]`）|
+| `endpoints[].response_shape` | string | 否 | `list`（默认，分页列表）或 `object`（`data` 为单个业务对象时包装为一行） |
 | `endpoints[].rate.bucket` | int | 是 | 令牌桶容量（领星文档原值；=1 时强制串行） |
 | `endpoints[].rate.interval_ms` | int | 是 | 单店铺调用最小间隔（毫秒） |
 | `endpoints[].rate.multi_interval_ms` | int | 是 | 多店铺调用最小间隔（毫秒；无多店铺场景填 0） |

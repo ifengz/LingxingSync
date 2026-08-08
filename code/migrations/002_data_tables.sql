@@ -46,8 +46,8 @@ CREATE TABLE IF NOT EXISTS ls_sales_orders (
     INDEX idx_gmt_modified   (account_id, gmt_modified)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- ls_inventory：FBA 库存（宪法 §3）
-CREATE TABLE IF NOT EXISTS ls_inventory (
+-- ls_fba_inventory：SC FBA 库存（宪法 §3）
+CREATE TABLE IF NOT EXISTS ls_fba_inventory (
     fnsku             VARCHAR(32)    NOT NULL,
     account_id        VARCHAR(32)    NOT NULL,
     asin              VARCHAR(16)    NULL,

@@ -111,6 +111,12 @@ func (e Endpoint) WindowEndFieldOrDefault() string {
 	return "end_date"
 }
 
+// DateRangeCapable reports whether this endpoint has a verified range contract.
+// Snapshot endpoints and single-date endpoints must not receive start/end parameters.
+func (e Endpoint) DateRangeCapable() bool {
+	return e.DateField == "" && (e.WindowDays > 0 || e.WindowStartField != "" || e.WindowEndField != "")
+}
+
 // Rate 是单个接口的限流档案，从领星文档 Rate Limit 区块原样抄写。
 type Rate struct {
 	Bucket          int    `yaml:"bucket"`            // 令牌桶容量；=1 时强制串行
@@ -128,6 +134,7 @@ type Endpoint struct {
 	Method         string         `yaml:"method"`           // GET / POST
 	Table          string         `yaml:"table"`            // 目标数据表名
 	RecordIDFields []string       `yaml:"record_id_fields"` // 唯一键字段数组（复合主键用多元素）
+	ResponseShape  string         `yaml:"response_shape"`   // list（默认）或 object（data 单对象）
 	Rate           Rate           `yaml:"rate"`
 	Cron           string         `yaml:"cron"`
 	Enabled        bool           `yaml:"enabled"`
@@ -136,7 +143,7 @@ type Endpoint struct {
 
 	// 窗口参数名（WindowDays>0 时注入的那两个参数叫什么）。
 	// 领星各接口对日期参数的命名不统一，实测两派并存：
-	//   - 蛇形 start_date/end_date：/erp/sc/data/mws/orders、/basicOpen/platformOrder/vcOrder/pageList
+	//   - 蛇形 start_date/end_date：/basicOpen/platformOrder/vcOrder/pageList
 	//   - 驼峰 startDate/endDate：  /basicOpen/vc/report/{sales,realtimeSales,traffic,inventory}/list
 	// 名字对不上，领星一律回 code=400 "参数有误"。因此做成可配置，而不是在 worker 里
 	// 按 path 写 if——那会违反 CLAUDE.md §1.3「加接口零代码改动」。
@@ -159,6 +166,31 @@ type Endpoint struct {
 	// 空=不过滤（迭代账号全部店铺，向后兼容）。SC 接口喂 VC 店铺 sid（或反之）会拉到错数据，
 	// 故 SC 迭代接口应填 "SC"、VC 迭代接口填 "VC"。
 	StoreType string `yaml:"store_type"`
+
+	// ---- 行整形（落库前把领星返回的行"摆正"，两个机制都是通用的、配置驱动的）----
+	//
+	// 背景：通用 Upsert 的前提是「一行的每个字段都在顶层，列名 = 字段名」。领星有少数
+	// 接口不满足这个前提，最典型的是产品表现 /bd/productPerformance/openApi/asinList：
+	//   - 唯一键 asin 不在顶层，埋在 asins[0].asin 里（顶层 138 个字段全是指标）
+	//   - 店铺号 sid 压根不返回——它是请求参数，领星认为调用方自己知道
+	// 结果是通用 Upsert 认不出行身份，主键列写 NULL，整批 fail。
+	// polabel2 的 sc-performance.ts 也遇到同一件事，它的解法是给这个接口单写代码
+	// （asin 取不到就退到 asins[0].asin，sid 用 request.storeId 补）。本项目不能那么做——
+	// 会违反 CLAUDE.md §1.3「加接口零代码改动」。故抽成下面两个配置项，任何「身份埋在
+	// 嵌套里」或「身份只在请求参数里」的接口都能复用，不必改一行 Go 代码。
+
+	// FieldPaths 把嵌套字段提升到顶层：键 = 目标列名，值 = 在返回行里的取值路径。
+	// 路径语法：点号进对象，[n] 进数组，例如 "asins[0].asin"、"small_cate_rank.rank"。
+	// 仅在目标列缺失或为空时才写入（领星哪天把字段提到顶层，以顶层实际值为准，不覆盖）。
+	// 路径取不到值就跳过该列，不报错——因为「这行确实没有」和「配置写错了」在这里
+	// 无法区分，真正的 fail-loud 交给主键列 NOT NULL 约束（写不进去必然报错）。
+	FieldPaths map[string]string `yaml:"field_paths"`
+
+	// InjectParams 把请求参数回填进每一行：列出参数名即可（如 ["sid"]）。
+	// 用于领星"不回显请求参数"的接口——sid 是我们迭代时传进去的，行里没有它就
+	// 没法区分这行属于哪个店铺。同样只在该列缺失或为空时写入：领星若回显了自己的
+	// 值，以领星的为准（若两者不一致，说明接口行为变了，应当被主键冲突暴露出来）。
+	InjectParams []string `yaml:"inject_params"`
 
 	// 探测模式（临时）：true 时不要求目标表存在，worker 跳过建表断言与 Upsert，
 	// 仅把领星返回的原始 JSON 存进 sync_task_logs.error_raw，用于摸清真实字段名后再正式建表。
@@ -219,6 +251,14 @@ func Load(path string) (*Config, error) {
 	return &c, nil
 }
 
+// ResponseShapeOrDefault 返回 endpoint 的响应形态，空值保持既有分页列表行为。
+func (e Endpoint) ResponseShapeOrDefault() string {
+	if strings.TrimSpace(e.ResponseShape) == "" {
+		return "list"
+	}
+	return strings.ToLower(strings.TrimSpace(e.ResponseShape))
+}
+
 // validate 做启动断言式校验，fail-loud：缺字段直接 error，不静默兜底。
 func (c *Config) validate() error {
 	if c.Database.Host == "" || c.Database.User == "" || c.Database.DB == "" {
@@ -272,6 +312,10 @@ func (c *Config) validate() error {
 		}
 		if e.Rate.Bucket <= 0 || e.Rate.IntervalMs <= 0 || e.Rate.Dimension == "" {
 			return fmt.Errorf("endpoint %s 的 rate.bucket/interval_ms/dimension 必填且 >0", e.Name)
+		}
+		responseShape := strings.ToLower(strings.TrimSpace(e.ResponseShape))
+		if responseShape != "" && responseShape != "list" && responseShape != "object" {
+			return fmt.Errorf("endpoint %s 的 response_shape=%q 非法：只能是 list / object", e.Name, e.ResponseShape)
 		}
 		if e.StoreType != "" && e.StoreType != "SC" && e.StoreType != "VC" {
 			return fmt.Errorf("endpoint %s 的 store_type=%q 非法：只能是 SC / VC / 空", e.Name, e.StoreType)

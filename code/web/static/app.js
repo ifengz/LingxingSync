@@ -250,7 +250,9 @@ window.syncManage = function () {
         // 保留 path（矩阵去重键）/iterate_by_store/window_days：T1 类型合并与 T2 网格判定都需要
         this.endpoints = this.schedule.map(e => ({
           name: e.name, display: e.display, account_id: e.account, path: e.path,
-          iterate_by_store: !!e.iterate_by_store, store_type: e.store_type || '', window_days: e.window_days || 0
+          iterate_by_store: !!e.iterate_by_store, store_type: e.store_type || '', window_days: e.window_days || 0,
+          date_field: e.date_field || '', date_offset_days: e.date_offset_days || 0,
+          date_range_capable: !!e.date_range_capable
         }));
         // 账号 ID→名称映射：勾选项与店铺网格显示账号名（自营领星）而非机器 ID（sc_us_1）。
         this.accountNames = {};
@@ -347,6 +349,28 @@ window.syncManage = function () {
     },
     // 已选组合数（真实要触发的接口数），顶部计数用。
     get selectedCount() { return this.resolvedEndpoints.length; },
+
+    get dateRangeIssue() {
+      const from = this.form.date_from;
+      const to = this.form.date_to;
+      if (!from && !to) return '';
+      if (!from || !to) return '同步日期必须同时填写开始和结束日期';
+      if (from > to) return '结束日期不能早于开始日期';
+      const unsupported = this.resolvedEndpoints.filter(e =>
+        !e.date_range_capable && !(e.date_field && from === to));
+      if (unsupported.length) return '所选接口不支持此日期范围：' + unsupported.map(e => e.display || e.name).join('、');
+      return '';
+    },
+    get dateRangeHint() {
+      const selected = this.resolvedEndpoints;
+      if (!selected.length) return '选择接口后可设置本次同步日期；不填则沿用接口默认策略。';
+      const ranges = selected.filter(e => e.date_range_capable).length;
+      const singles = selected.filter(e => e.date_field).length;
+      if (!ranges && !singles) return '所选接口是快照/全量接口，日期范围不适用。';
+      if (singles && !ranges) return '所选接口按单日同步，只能选择同一天。';
+      if (singles) return '范围接口可选起止日期；单日接口只能选择同一天。';
+      return '仅本次生效，不修改定时同步的默认窗口。';
+    },
 
     // ---- T2：店铺勾选网格辅助 ----
     // 解析出的接口里存在 iterate_by_store:true → 才显示网格
@@ -448,15 +472,21 @@ window.syncManage = function () {
         window.toast('warn', '所选账号与数据类型没有可触发的接口组合'); return;
       }
       const sel = resolved.map(e => e.name);
+      if (this.dateRangeIssue) { window.toast('warn', this.dateRangeIssue); return; }
       // 为每个接口构造请求体：只有 iterate_by_store 且该账号有勾选时才带 store_sids；
       // 不勾 = 不传 = 后端按配置白名单（决策③：每次进页面空选）
       const buildReq = (name) => {
         const e = this.endpoints.find(x => x.name === name);
+        const body = {};
+        if (this.form.date_from && this.form.date_to) {
+          body.date_from = this.form.date_from;
+          body.date_to = this.form.date_to;
+        }
         if (e && e.iterate_by_store) {
           const sids = this.selectedSidsOf(e.account_id);
-          if (sids.length) return { store_sids: sids };
+          if (sids.length) body.store_sids = sids;
         }
-        return {};
+        return body;
       };
       // Promise.allSettled：一个接口 409（已在跑）不阻断其它（决策①）
       const results = await Promise.allSettled(sel.map(name =>
@@ -491,6 +521,8 @@ window.syncManage = function () {
         cron: e.cron || '',
         bucket: e.rate ? Number(e.rate.bucket) : 1,
         interval_ms: e.rate ? Number(e.rate.interval_ms) : 0,
+        window_days: Number(e.window_days) || 0,
+        date_offset_days: Number(e.date_offset_days) || 0,
         store_sids_text: (e.store_sids_text || '').split(',').map(s => s.trim()).filter(Boolean).join(','),
         enabled: !!e.enabled
       });
@@ -500,6 +532,16 @@ window.syncManage = function () {
       const base = this.scheduleBaseline[e.name];
       return base !== undefined && this.rowSnap(e) !== base;
     },
+    // 行底色优先级：未保存改动 > 硬故障 > 告警 > 正常。
+    // dirty 排在最前是因为它对应「你有改动待保存」这个即时动作，比长期存在的健康状态更急；
+    // fatal（表没建）与 warn（缺声明列）都是重启前不会自行消失的状态，让位给 dirty 不会丢信息
+    // ——原因文字仍在名称格里常显。
+    rowClass(e) {
+      if (this.rowDirty(e)) return 'bg-amber-50 ring-1 ring-inset ring-amber-200';
+      if (e.fatal_error) return 'bg-red-50 ring-1 ring-inset ring-red-200';
+      if ((e.warnings || []).length) return 'bg-amber-50/40';
+      return 'hover:bg-slate-50/70';
+    },
     // 取消：回滚该行到基线（cron/bucket/interval/store_sids_text/enabled）。
     revertRow(e) {
       const base = this.scheduleBaseline[e.name];
@@ -508,6 +550,8 @@ window.syncManage = function () {
       e.cron = b.cron;
       e.rate.bucket = b.bucket;
       e.rate.interval_ms = b.interval_ms;
+      e.window_days = b.window_days;
+      e.date_offset_days = b.date_offset_days;
       e.store_sids_text = b.store_sids_text;
       e.enabled = b.enabled;
     },
@@ -596,8 +640,14 @@ window.logsPage = function () {
     total: 0,
     endpointNames: (window.__PAGE__ && window.__PAGE__.endpointNames) || [],
     accountIDs: (window.__PAGE__ && window.__PAGE__.accountIDs) || [],
+    accountOptions: (window.__PAGE__ && window.__PAGE__.accountOptions) || [],
     polling: null,        // T3：5s 轮询句柄
     refreshing: false,    // 手动刷新按钮态（转圈 + 禁用）
+    requesting: false,    // 请求互斥，避免轮询和手动刷新重叠
+    lastUpdatedAt: '',
+    datePreset: '',
+    dateRangeOpen: false,
+    dateRangeError: '',
     filters: {
       endpoint: q.get('endpoint') || '',
       account: q.get('account') || '',
@@ -619,18 +669,90 @@ window.logsPage = function () {
       if (this.polling) { clearInterval(this.polling); this.polling = null; }
     },
 
-    async load() {
-      this.refreshing = true;
-      const params = new URLSearchParams();
-      for (const k of ['endpoint', 'account', 'status', 'date_from', 'date_to', 'page', 'page_size']) {
-        const v = this.filters[k];
-        if (v !== '' && v != null) params.set(k, v);
+    async load(showFeedback = false) {
+      if (this.requesting) return;
+      this.requesting = true;
+      this.refreshing = showFeedback;
+      try {
+        const params = new URLSearchParams();
+        for (const k of ['endpoint', 'account', 'status', 'date_from', 'date_to', 'page', 'page_size']) {
+          const v = this.filters[k];
+          if (v !== '' && v != null) params.set(k, v);
+        }
+        const d = await window.apiGet('/api/tasks?' + params.toString()).catch(window.toastError);
+        if (!d) return;
+        this.tasks = d.items || [];
+        this.total = d.total || 0;
+        this.lastUpdatedAt = new Date().toLocaleTimeString('zh-CN', {
+          hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
+        });
+      } finally {
+        this.requesting = false;
+        this.refreshing = false;
       }
-      const d = await window.apiGet('/api/tasks?' + params.toString()).catch(window.toastError);
-      this.refreshing = false;
-      if (!d) return;
-      this.tasks = d.items || [];
-      this.total = d.total || 0;
+    },
+    refreshList() {
+      return this.load(true);
+    },
+    accountLabel(id) {
+      const account = this.accountOptions.find(item => item.id === id);
+      return account ? account.name : id;
+    },
+    dateRangeLabel() {
+      if (this.filters.date_from && this.filters.date_to) {
+        return this.filters.date_from.replaceAll('-', '/') + ' - ' + this.filters.date_to.replaceAll('-', '/');
+      }
+      if (this.filters.date_from) return this.filters.date_from.replaceAll('-', '/') + ' - 结束日期';
+      if (this.filters.date_to) return '开始日期 - ' + this.filters.date_to.replaceAll('-', '/');
+      return '选择日期范围';
+    },
+    formatDate(date) {
+      const month = String(date.getMonth() + 1).padStart(2, '0');
+      const day = String(date.getDate()).padStart(2, '0');
+      return date.getFullYear() + '-' + month + '-' + day;
+    },
+    async applyDatePreset(preset) {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const start = new Date(today);
+      const end = new Date(today);
+      const offsets = { yesterday: 1, last_7_days: 6, last_30_days: 29 };
+
+      if (preset === 'this_month') {
+        start.setDate(1);
+      } else if (offsets[preset]) {
+        start.setDate(start.getDate() - offsets[preset]);
+        if (preset === 'yesterday') end.setDate(end.getDate() - 1);
+      }
+
+      this.filters.date_from = this.formatDate(start);
+      this.filters.date_to = this.formatDate(end);
+      this.datePreset = preset;
+      this.dateRangeError = '';
+      this.dateRangeOpen = false;
+      this.filters.page = 1;
+      await this.load();
+    },
+    dateRangeChanged() {
+      this.datePreset = '';
+      this.dateRangeError = '';
+      if (!this.filters.date_from || !this.filters.date_to) return;
+      if (this.filters.date_from > this.filters.date_to) {
+        this.dateRangeError = '结束日期不能早于开始日期';
+        return;
+      }
+      this.dateRangeOpen = false;
+      this.filters.page = 1;
+      this.load();
+    },
+    clearDateRange() {
+      this.filters.date_from = '';
+      this.filters.date_to = '';
+      this.datePreset = '';
+      this.dateRangeError = '';
+      this.dateRangeOpen = false;
+      this.filters.page = 1;
+      this.load();
     },
     gotoPage(p) {
       if (p < 1) p = 1;
@@ -729,7 +851,6 @@ window.taskDetail = function () {
 window.dataSources = function () {
   return {
     endpoints: [],
-    connOpen: false,
     expanded: null,
     metaLoading: false,
     columns: [],
@@ -740,7 +861,7 @@ window.dataSources = function () {
       const eps = await window.apiGet('/api/endpoints').catch(window.toastError);
       this.endpoints = eps || [];
     },
-    // 只刷新主表（数据源列表），不重载页面、不影响连接信息卡与已展开字段外的状态。
+    // 只刷新主表（数据源列表），不重载页面、不影响已展开字段外的状态。
     async refresh() {
       if (this.refreshing) return;
       this.refreshing = true;
@@ -755,7 +876,7 @@ window.dataSources = function () {
       }
     },
     accountOf(e) { return e.account_id || '—'; },
-    // 最后写入：e.last_sync 为 null（表空/从未落库/表未建）→「从未」；否则相对时间（复用全局 fmtRel）。
+    // 表内最近更新时间：e.last_sync 来自整张表 MAX(synced_at)，不是单个账号或任务的成功时间。
     fmtLastSync(e) { return e.last_sync ? window.fmtRel(e.last_sync) : '从未'; },
     async toggleExpand(idx) {
       if (this.expanded === idx) { this.expanded = null; return; }
@@ -771,21 +892,6 @@ window.dataSources = function () {
       if (!d || !d.columns) { this.colError = '未能读取字段结构'; return; }
       this.columns = d.columns; // [{name,type,is_primary}]
     },
-    connStr() {
-      // 只读展示用，密码隐藏。真实连接信息由 datasources.html 注入 window.__DB__
-      // （pageDataSources → newPageData 从 cfg.Database 填充；密码永不下发）。
-      // fallback 仅在注入缺失时兜底，避免空白。
-      const db = window.__DB__ || { host: '127.0.0.1', port: 3306, user: 'lingxing', db: 'lingxing' };
-      return 'mysql://' + db.user + ':****@' + db.host + ':' + db.port + '/' + db.db;
-    },
-    async copyConn() {
-      try {
-        await navigator.clipboard.writeText(this.connStr());
-        window.dispatchEvent(new CustomEvent('sync-toast', { detail: { type: 'success', msg: '已复制连接串' } }));
-      } catch (e) {
-        window.dispatchEvent(new CustomEvent('sync-toast', { detail: { type: 'error', msg: '复制失败：' + e.message } }));
-      }
-    }
   };
 };
 
@@ -994,6 +1100,15 @@ window.settingsApi = function () {
     },
     get storeSelectedCount() {
       return Object.values(this.storeSel).filter(Boolean).length;
+    },
+    get storeAllSelected() {
+      const items = this.storeSummary.items || [];
+      return items.length > 0 && items.every(store => !!this.storeSel[store.sid]);
+    },
+    toggleAllStores(checked) {
+      const next = {};
+      (this.storeSummary.items || []).forEach(store => { next[store.sid] = !!checked; });
+      this.storeSel = next;
     },
     get storeDirty() {
       const cur = this.storeSel, base = this.storeSelBaseline;

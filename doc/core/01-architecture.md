@@ -6,6 +6,8 @@
 
 ## 1. 六条设计原则（直接对应用户需求）
 
+> 这六条是**目标层**。`CLAUDE.md §1` 在此之上还有 7–11「写码红线」（简洁优先 / 缺表列只炸自己 / 代码最短 / 少嵌套 / 写完核对宪法）与 12–14「工程纪律」（禁止空壳 / 动作≠验证 / 宪法层独立 commit），以及一张**规模上限表**。冲突时以 `CLAUDE.md` 为准。
+
 | # | 需求 | 实现 |
 |---|---|---|
 | 1 | 各接口独立，互不影响 | 每个「账号+接口」一个独立 goroutine；panic 只 recover 自身，不传播 |
@@ -285,6 +287,18 @@ syscall.Exec(exe, os.Args, os.Environ())
 | BullMQ / 外部任务队列 | 多进程竞争同队列（polabel2 `6cbdefa8` 死锁教训） |
 | staging → canonical 三层 | 本系统不服务高一致性场景，一张结构化表够 |
 | Docker | 宝塔直接跑 Go 二进制 + Supervisor 守护，Docker 反而增加复杂度 |
+| Redis / 任何常驻第三方服务 | 部署形态是「单二进制 + MySQL」，多一个常驻件就多一处用户看不懂的故障点 |
+| 多进程 / 多实例 | 令牌器是进程内的；多实例即失去限流语义，且必然引出跨进程协调 = 锁 |
+| K8s / 编排 / 微服务拆分 | 2 账号 12 接口 24 goroutine，拆分没有收益，只有运维成本 |
+| 对象存储 | 本项目不存文件，只落结构化行 |
+| 外部调度器（crontab / Airflow 等） | 已有进程内 robfig/cron，外部调度会和它抢触发权 |
+| 连接池以外的 DB 中间件 | 直连 MySQL 即可，中间件会掩盖真实错误、破坏 fail-loud |
+
+**默认答案是「不做」，举证责任在提议加东西的一方。** 领星 OpenAPI 的全部难度是：AES 签名 → 换 token → GET/POST 翻页 → Upsert 落库；GitHub 上多个同类项目都用最朴素的方式跑通，没有一个需要上面这些。任何「必须引入 X 才能解决」的说法，**先怀疑方案写错了，不是规模到了**。
+
+**同样禁止在代码里自造复杂度**（不引入任何外部依赖也能违规）：分布式锁、租约、状态机、事件总线、插件系统、多层抽象、泛型框架、为「将来可扩展」预留的接口层。polabel2 的 admission 表和父子任务状态机就是这么长出来的，一个第三方服务都没装。宁可代码笨一点、重复一点，也不要让用户看不懂自己的系统。
+
+规模依据见 `CLAUDE.md §1「规模上限」`：账号 ≤10、去重接口 ≤40、Worker ≤400、单表千万行内走索引不分库分表。判断该不该加东西时以这些数字为准，不以「将来可能会大」为准。
 
 ---
 
@@ -297,7 +311,15 @@ syscall.Exec(exe, os.Args, os.Environ())
 ```go
 // GetTableColumns 查 INFORMATION_SCHEMA，取目标表的所有列名。
 // Worker 启动时调用一次，结果存到 endpoint.Columns []string。
-// 缺表 → 返回 error → main.go 打印 FATAL 并 os.Exit(1)（启动断言）。
+//
+// 缺表 → 返回 error → worker.New 把原因记进该 worker 的 fatalErr，**按接口粒度降级**：
+// 该「账号+接口」永久 status=error、拒绝同步、每次触发写一条带可读原因的 error 任务行，
+// 但仍然注册、仍在 UI 可见；其余 Worker 与 HTTP :7799 照常运行，进程不退出。
+// 依据 CLAUDE.md §1.1「任一接口挂掉不影响其他接口」+ §8「缺表/缺列只炸自己」。
+//
+// 注意：这里**不是** os.Exit(1)。早期版本在 main.go 里 log.Fatalf，后果是一张表没建
+// 就连带停掉其余所有接口、7799 打不开、连排查界面都没有 —— 违反 §1.1，已废弃。
+// fail-loud 的落点是「这一个接口大声失败」，不是「整个进程自杀」。
 func GetTableColumns(db *sqlx.DB, table string) ([]string, error) {
     const q = `SELECT COLUMN_NAME
                FROM INFORMATION_SCHEMA.COLUMNS

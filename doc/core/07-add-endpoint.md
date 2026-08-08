@@ -44,6 +44,7 @@ UI 上路 B 收在「高级 / 开发者」折叠区，默认隐藏，避免非�
 | path + method | 文档标题区 | config `url` |
 | 请求参数 | Request Parameters 表 | `extra_params` + 内置分页参数 |
 | 幂等键 | Response 唯一标识字段 | `record_id_fields` |
+| 响应形态 | Response Data 是分页列表还是单个对象 | `response_shape`，默认 `list`；单对象接口填 `object` |
 | 限流档案 | Rate Limit 区块 | config `rate:` 块（原样抄，不猜） |
 | 目标表结构 | Response Data 表 | 建表 DDL 列名 |
 
@@ -108,8 +109,8 @@ endpoints:
     account: "sc_us"             # 必须是 accounts[].id 中存在的值
     # ⚠️ path 不要带 /openapi 前缀：baseURL 本身已是 https://openapi.lingxing.com，
     # 写成 "/openapi/erp/..." 会拼成 /openapi/openapi/... → 领星回
-    # HTTP 200 + code=500 + msg="404 NOT_FOUND"（历史上 sc_sales_orders /
-    # sc_inventory 都栽在这里）。领星文档的 "API Path" 一般形如 /erp/sc/...，原样抄即可。
+    # HTTP 200 + code=500 + msg="404 NOT_FOUND"（历史上 sc_inventory 栽在这里）。
+    # 领星文档的 "API Path" 一般形如 /erp/sc/...，原样抄即可。
     # 另：本段 sc_settlements 只是格式示例，path/唯一键均未经实证，勿直接照抄使用。
     path: "/erp/sc/data/settlements/list"       # 从领星文档"API Path"原样抄（不加 /openapi）
     method: "POST"                              # 从领星文档"请求方式"原样抄
@@ -175,4 +176,4 @@ A：表中该列 NOT NULL 改为允许 NULL。fail-loud 只针对「必须存在
 A：领星接口通常是 `data.list[]`，每个 item 里有唯一键。`record_id_field` 填这个 item 内的字段名，如 `"order_id"`。
 
 **Q：两个账号要同步同一接口怎么配？**
-A：配两个 endpoint 段，name 不同（`sc_sales_orders_us` 和 `vc_sales_orders_de`），table 可以相同（靠 `account_id` 列区分），也可以不同。
+A：配两个 endpoint 段，name 不同（例如 `sc_inventory_us` 和 `sc_inventory_de`），table 可以相同（靠 `account_id` 列区分），也可以不同。

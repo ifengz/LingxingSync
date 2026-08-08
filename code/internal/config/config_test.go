@@ -128,7 +128,7 @@ func TestValidateStoreType(t *testing.T) {
 			Database: Database{Host: "h", User: "u", DB: "d"},
 			Accounts: []Account{{ID: "sc_us_1", Name: "n", AppKey: "k", AppSecret: "s"}},
 			Endpoints: []Endpoint{{
-				Name: "inv", Account: "sc_us_1", Path: "/inv", Method: "GET", Table: "ls_inventory",
+				Name: "inv", Account: "sc_us_1", Path: "/inv", Method: "GET", Table: "ls_fba_inventory",
 				RecordIDFields: []string{"sid"}, Cron: "0 * * * *",
 				Rate:      Rate{Bucket: 1, IntervalMs: 1000, Dimension: "account+path"},
 				StoreType: storeType,
@@ -144,6 +144,37 @@ func TestValidateStoreType(t *testing.T) {
 		if err := mk(bad).validate(); err == nil {
 			t.Fatalf("store_type=%q 应被拒", bad)
 		}
+	}
+}
+
+func TestValidateResponseShape(t *testing.T) {
+	mk := func(shape string) *Config {
+		return &Config{
+			Database: Database{Host: "h", User: "u", DB: "d"},
+			Accounts: []Account{{ID: "sc_us_1", Name: "n", AppKey: "k", AppSecret: "s"}},
+			Endpoints: []Endpoint{{
+				Name: "product_info", Account: "sc_us_1", Path: "/productInfo", Method: "POST", Table: "ls_product_info",
+				RecordIDFields: []string{"sku"}, Cron: "0 * * * *",
+				Rate: Rate{Bucket: 1, IntervalMs: 1000, Dimension: "account+path"}, ResponseShape: shape,
+			}},
+		}
+	}
+	for _, shape := range []string{"", "list", "object"} {
+		if err := mk(shape).validate(); err != nil {
+			t.Fatalf("response_shape=%q 应合法: %v", shape, err)
+		}
+	}
+	if err := mk("single").validate(); err == nil {
+		t.Fatal("response_shape=single 应被拒绝")
+	}
+}
+
+func TestResponseShapeOrDefault(t *testing.T) {
+	if got := (Endpoint{}).ResponseShapeOrDefault(); got != "list" {
+		t.Fatalf("空 response_shape 默认值 = %q, want list", got)
+	}
+	if got := (Endpoint{ResponseShape: " object "}).ResponseShapeOrDefault(); got != "object" {
+		t.Fatalf("response_shape 归一化值 = %q, want object", got)
 	}
 }
 

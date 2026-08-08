@@ -89,6 +89,30 @@ func TestParseFetchResultFailLoud(t *testing.T) {
 	}
 }
 
+func TestParseFetchResultObjectShape(t *testing.T) {
+	r, err := parseFetchResultWithShape([]byte(`{"id":12610,"sku":"SKU-1"}`), "object")
+	if err != nil {
+		t.Fatalf("单对象响应不应报错: %v", err)
+	}
+	if len(r.List) != 1 || r.List[0]["sku"] != "SKU-1" {
+		t.Fatalf("单对象应包装为一行，得到 %#v", r.List)
+	}
+	if r.Total != 1 || r.HasMorePresent || r.HasMore {
+		t.Fatalf("单对象分页语义错误: %+v", r)
+	}
+}
+
+func TestParseFetchResultObjectShapeRejectsPaginationMetadata(t *testing.T) {
+	for _, data := range []string{
+		`{"list":[],"total":0}`,
+		`{"sku":"SKU-1","has_more":false}`,
+	} {
+		if _, err := parseFetchResultWithShape([]byte(data), "object"); err == nil {
+			t.Fatalf("单对象模式不应吞掉分页对象: %s", data)
+		}
+	}
+}
+
 // TestSoftFailGuard 验证软失败闸：领星返回 code=0（看似成功）但 data=null 且 msg
 // 带错误文案（如缺 summary_field）时，必须判为业务错误，不能静默记成成功 0 条。
 // 这是 fail-loud 红线（CLAUDE.md §3 / 宪法 §5）在 client 层的补洞。

@@ -15,6 +15,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -71,14 +72,14 @@ type pageData struct {
 	AccountCount   int
 	SecretRequired bool
 	// EndpointNames 提供给某些页面（如 logs）做下拉选项的初始值
-	EndpointNames []string
-	AccountIDs    []string
-	// DB 连接信息（供 datasources 页面注入 window.__DB__ 显示只读连接串）。
-	// 密码永不下发：前端连接串里密码恒显示 ****（见 app.js connStr）。
-	DBHost string
-	DBPort int
-	DBUser string
-	DBName string
+	EndpointNames  []string
+	AccountIDs     []string
+	AccountOptions []pageAccountOption
+}
+
+type pageAccountOption struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
 }
 
 func (s *Server) newPageData(active string) pageData {
@@ -87,8 +88,14 @@ func (s *Server) newPageData(active string) pageData {
 		names = append(names, e.Name)
 	}
 	ids := make([]string, 0, len(s.cfg.Accounts))
+	accountOptions := make([]pageAccountOption, 0, len(s.cfg.Accounts))
 	for _, a := range s.cfg.Accounts {
 		ids = append(ids, a.ID)
+		name := strings.TrimSpace(a.Name)
+		if name == "" {
+			name = a.ID
+		}
+		accountOptions = append(accountOptions, pageAccountOption{ID: a.ID, Name: name})
 	}
 	return pageData{
 		Active:         active,
@@ -97,11 +104,7 @@ func (s *Server) newPageData(active string) pageData {
 		SecretRequired: s.cfg.Server.Secret != "",
 		EndpointNames:  names,
 		AccountIDs:     ids,
-		// DB 连接信息：仅 host/port/user/db，密码不带（前端连接串恒显示 ****）。
-		DBHost: s.cfg.Database.Host,
-		DBPort: s.cfg.Database.Port,
-		DBUser: s.cfg.Database.User,
-		DBName: s.cfg.Database.DB,
+		AccountOptions: accountOptions,
 	}
 }
 
@@ -328,6 +331,26 @@ func (s *Server) apiTaskLogs(w http.ResponseWriter, r *http.Request) {
 type syncTriggerIn struct {
 	Force     bool     `json:"force"`
 	StoreSids []string `json:"store_sids"` // 可选：本次只同步这些店铺；空=按配置白名单
+	DateFrom  string   `json:"date_from"`
+	DateTo    string   `json:"date_to"`
+}
+
+func validateSyncDateRange(dateFrom, dateTo string) error {
+	if dateFrom == "" || dateTo == "" {
+		return fmt.Errorf("日期范围必须同时填写开始和结束日期")
+	}
+	from, err := time.Parse("2006-01-02", dateFrom)
+	if err != nil {
+		return fmt.Errorf("开始日期必须是 YYYY-MM-DD")
+	}
+	to, err := time.Parse("2006-01-02", dateTo)
+	if err != nil {
+		return fmt.Errorf("结束日期必须是 YYYY-MM-DD")
+	}
+	if from.After(to) {
+		return fmt.Errorf("结束日期不能早于开始日期")
+	}
+	return nil
 }
 
 // apiSyncTrigger 立即触发某 endpoint 的同步。
@@ -345,10 +368,32 @@ func (s *Server) apiSyncTrigger(w http.ResponseWriter, r *http.Request) {
 		errJSON(w, http.StatusConflict, "接口已禁用，请先在同步配置的定时调度中启用: "+name)
 		return
 	}
+	// 启动断言未过（最常见：目标表没建）→ 直接把原因告诉用户，不入队跑一个必败任务。
+	if fe := w0.Status().FatalError; fe != "" {
+		errJSON(w, http.StatusConflict, "接口不可同步（"+fe+"），请先建表并重启进程: "+name)
+		return
+	}
 	var in syncTriggerIn
-	_ = decodeJSON(r, &in) // body 可选
+	if err := decodeJSON(r, &in); err != nil {
+		errJSON(w, http.StatusBadRequest, "请求体格式错误: "+err.Error())
+		return
+	}
+	in.DateFrom = strings.TrimSpace(in.DateFrom)
+	in.DateTo = strings.TrimSpace(in.DateTo)
+	if in.DateFrom != "" || in.DateTo != "" {
+		if err := validateSyncDateRange(in.DateFrom, in.DateTo); err != nil {
+			errJSON(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if w0.Endpoint.DateField != "" && in.DateFrom == in.DateTo {
+			// Single-date endpoints use the same day for their verified DateField.
+		} else if !w0.Endpoint.DateRangeCapable() {
+			errJSON(w, http.StatusBadRequest, "该接口不支持日期范围：快照接口同步当前全量，单日接口按自身日期配置执行")
+			return
+		}
+	}
 
-	if !w0.TriggerManual(in.StoreSids) {
+	if !w0.TriggerManualWithRange(in.StoreSids, in.DateFrom, in.DateTo) {
 		errJSON(w, http.StatusConflict, "同步任务已在运行或队列中，请在同步日志查看结果: "+name)
 		return
 	}

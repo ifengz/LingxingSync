@@ -20,7 +20,7 @@ build:
 run: build
 	./$(BIN) -config config.yaml
 
-# 后台运行（带 mock 模式可选，见 internal/api）
+# 本地前台运行与生产使用同一真实 API 路径
 dev: build
 	./$(BIN) -config config.yaml
 

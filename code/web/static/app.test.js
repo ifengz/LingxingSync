@@ -21,6 +21,26 @@ const entryManage = sandbox.window.syncManage();
 assert.equal(entryManage.tab, 'manual');
 assert.equal(entryManage.advancedAdd, false);
 
+// 手动日期只允许已声明日期合同的接口，并且单日接口只能选同一天。
+{
+  const m = sandbox.window.syncManage();
+  m.accounts = ['sc_us'];
+  m.endpoints = [
+    { name: 'range', display: '范围报表', account_id: 'sc_us', path: '/range', date_range_capable: true },
+    { name: 'single', display: '单日报表', account_id: 'sc_us', path: '/single', date_field: 'event_date' },
+    { name: 'snapshot', display: '快照', account_id: 'sc_us', path: '/snapshot' },
+  ];
+  m.form.accounts = ['sc_us'];
+  m.form.types = ['/range', '/single'];
+  m.form.date_from = '2026-08-01';
+  m.form.date_to = '2026-08-03';
+  assert.match(m.dateRangeIssue, /单日报表/);
+  m.form.date_to = '2026-08-01';
+  assert.equal(m.dateRangeIssue, '');
+  m.form.types = ['/snapshot'];
+  assert.match(m.dateRangeIssue, /快照/);
+}
+
 // 触发同步矩阵模型：两账号同 path 接口在 UI 合并成一份数据类型；
 // 勾账号 × 勾类型 → resolvedEndpoints 笛卡尔积解析回真实 name。
 {
@@ -93,6 +113,22 @@ void (async () => {
   assert.equal(request.url, '/api/sync/orders/cancel');
   assert.equal(request.body.task_id, 42);
 
+  // 日志日期范围：快捷范围必须作为一个入口更新起止日期、回到第一页并重拉主表。
+  const logs = sandbox.window.logsPage();
+  let dateRangeLoads = 0;
+  logs.filters.page = 3;
+  logs.load = async () => { dateRangeLoads++; };
+  await logs.applyDatePreset('last_7_days');
+  assert.match(logs.filters.date_from, /^\d{4}-\d{2}-\d{2}$/);
+  assert.match(logs.filters.date_to, /^\d{4}-\d{2}-\d{2}$/);
+  assert.equal(logs.filters.page, 1);
+  assert.equal(dateRangeLoads, 1);
+
+  sandbox.window.__PAGE__ = { accountOptions: [{ id: 'sc_us_1', name: '美国自营' }] };
+  const namedLogs = sandbox.window.logsPage();
+  assert.equal(namedLogs.accountLabel('sc_us_1'), '美国自营');
+  assert.equal(namedLogs.accountLabel('unknown'), 'unknown');
+
   // 防回归：同步管理页不得再出现任务历史表、也不得出现运行态摘要条。
   // 任务状态明细只有一个去处 —— 同步日志页（/logs）。
   const noTableManage = sandbox.window.syncManage();
@@ -162,6 +198,19 @@ void (async () => {
   assert.equal(settings.storeStatusText(null), '-');
   assert.equal(settings.storeStatusText('9'), '9', '未知状态原样显示');
 
+  // 表头复选框只批量修改当前账号已加载的店铺，并复用既有 dirty/save 流程。
+  settings.storeSummary.items = [{ sid: 'store-1' }, { sid: 'store-2' }];
+  settings.storeSel = { 'store-1': true, 'store-2': false };
+  settings.storeSelBaseline = { 'store-1': true, 'store-2': false };
+  assert.equal(settings.storeAllSelected, false);
+  settings.toggleAllStores(true);
+  assert.equal(settings.storeAllSelected, true);
+  assert.equal(settings.storeSelectedCount, 2);
+  assert.equal(settings.storeDirty, true);
+  settings.toggleAllStores(false);
+  assert.equal(settings.storeAllSelected, false);
+  assert.equal(settings.storeSelectedCount, 0);
+
   settings.accountForm.name = '美国主账号';
   await settings.saveAccount();
   const accountSave = calls.find(c => c.method === 'PUT' && c.url === '/api/accounts/sc_us');
@@ -178,7 +227,8 @@ void (async () => {
   const schedule = {
     name: 'sc_stores', display: '店铺目录', account: 'sc_us', path: '/stores', method: 'POST', table: 'ls_stores',
     record_id_fields: ['sid'], rate: { bucket: 2, interval_ms: 1000, multi_interval_ms: 0, dimension: 'account+path' },
-    cron: '*/30 * * * *', enabled: true, store_sids: [], store_sids_text: ''
+    cron: '*/30 * * * *', enabled: true, store_sids: [], store_sids_text: '',
+    window_days: 7, date_offset_days: 0
   };
   manage.scheduleBaseline = { sc_stores: manage.rowSnap(schedule) };
   schedule.cron = '*/40 * * * *';
@@ -186,6 +236,8 @@ void (async () => {
   const cronSave = calls.find(c => c.method === 'PUT' && c.url === '/api/endpoints/sc_stores');
   assert.equal(cronSave.body.cron, '*/40 * * * *');
   assert.equal(cronSave.body.rate.bucket, 2);
+  assert.equal(cronSave.body.window_days, 7);
+  assert.equal(cronSave.body.date_offset_days, 0);
 })().catch((error) => {
   process.nextTick(() => { throw error; });
 });

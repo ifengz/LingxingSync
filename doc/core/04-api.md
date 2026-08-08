@@ -27,8 +27,8 @@ HTTP 状态码：`200` = ok；`400` = 参数错误；`500` = 内部错误。
   "data": {
     "workers": [
       {
-        "name": "sc_sales_orders",
-        "display": "SC 销售订单",
+        "name": "sc_inventory",
+        "display": "SC FBA 库存",
         "account_id": "sc_us",
         "status": "idle",           // idle | running | error | disabled
         "last_run_at": "2026-08-06T10:30:00Z",
@@ -54,16 +54,26 @@ HTTP 状态码：`200` = ok；`400` = 参数错误；`500` = 内部错误。
 ### POST /api/sync/:name
 手动触发指定接口立即同步一次。
 
-**路径参数**：`name` = endpoint 标识（如 `sc_sales_orders`）
+**路径参数**：`name` = endpoint 标识（如 `sc_inventory`）
 
 **请求体**（可选）
 ```json
-{ "force": true }    // force=true：忽略 enabled=false，强制触发
+{
+  "force": true,
+  "store_sids": ["store-1"],
+  "date_from": "2026-08-01",
+  "date_to": "2026-08-03"
+}
 ```
+
+`store_sids` 只对按店铺接口生效。`date_from` 与 `date_to` 必须同时传入，格式为
+`YYYY-MM-DD` 且开始日期不晚于结束日期；它们只覆盖本次手动任务，不会修改接口默认配置。
+只有已声明日期范围合同的接口接受范围；快照接口传日期返回 `400`。单日接口只能传同一天，
+映射到其配置的 `date_field`；单日接口的跨日同步需另行按日执行。
 
 **响应**
 ```json
-{ "ok": true, "data": { "task_id": 123 } }
+{ "ok": true, "data": { "message": "任务已加入队列，请在同步日志查看结果: sc_inventory", "endpoint": "sc_inventory", "queued": true } }
 ```
 
 ---
@@ -99,8 +109,8 @@ HTTP 状态码：`200` = ok；`400` = 参数错误；`500` = 内部错误。
     "items": [
       {
         "id": 456,
-        "endpoint": "sc_sales_orders",
-        "display": "SC 销售订单",
+        "endpoint": "sc_inventory",
+        "display": "SC FBA 库存",
         "account_id": "sc_us",
         "status": "success",
         "trigger_type": "cron",
@@ -154,7 +164,7 @@ HTTP 状态码：`200` = ok；`400` = 参数错误；`500` = 内部错误。
 {
   "ok": true,
   "data": [
-    { "name": "sc_sales_orders", "display": "SC 销售订单", "account_id": "sc_us", "enabled": true }
+    { "name": "sc_inventory", "display": "SC FBA 库存", "account_id": "sc_us", "enabled": true }
   ]
 }
 ```
@@ -210,7 +220,7 @@ HTTP 状态码：`200` = ok；`400` = 参数错误；`500` = 内部错误。
 
 ### POST /api/settings/reload
 应用配置变更。**热加载语义**：
-- **可热加载**（不重启，就下次触发生效）：已有接口的 `enabled` / `cron` / `rate` / `window_days` / `extra_params` / `store_sids`。
+- **可热加载**（不重启，就下次触发生效）：已有接口的 `enabled` / `cron` / `rate` / `window_days` / `date_offset_days` / `extra_params` / `store_sids`。
 - **需重启**（结构性变更）：增删账号、增删接口、改 `path` / `method` / `table` / `database.*`。
 
 ```json
@@ -264,10 +274,19 @@ HTTP 状态码：`200` = ok；`400` = 参数错误；`500` = 内部错误。
     "accounts": [
       { "id": "sc_us", "name": "自营-美国", "quota_group": "sc_us", "app_key": "ak_123", "app_secret": "abcd****wxyz", "connection_check": { "cron": "*/20 * * * *", "enabled": true } }
     ],
-    "endpoints": [ { "name": "sc_stores", "display": "SC 店铺列表", "account": "sc_us", "path": "...", "method": "GET", "table": "ls_stores", "record_id_fields": ["sid"], "rate": {...}, "cron": "...", "enabled": true, "store_sids": [] } ]
+    "endpoints": [ { "name": "sc_stores", "display": "SC 店铺列表", "account": "sc_us", "path": "...", "method": "GET", "table": "ls_stores", "record_id_fields": ["sid"], "rate": {...}, "cron": "...", "enabled": true, "store_sids": [], "window_days": 0, "window_start_field": "", "window_end_field": "", "date_field": "", "date_offset_days": 0, "date_range_capable": false } ]
   }
 }
 ```
+
+每个 endpoint 还可能带两个**只读运行态**字段（取自 worker 快照，健康接口两者都不出现）：
+
+| 字段 | 含义 |
+|---|---|
+| `fatal_error` | 非空 = 该接口启动断言未过（最常见：目标表没建），永久不可同步。`/sync` 页据此整行标红并显示原因；手动触发返回 409。 |
+| `warnings[]` | 不阻断同步但需人看见的问题，当前唯一来源：配置声明的列（`record_id_fields` / `field_paths` 目标）在目标表里不存在，这些字段会被 Upsert 静默丢弃。 |
+
+两者**永远写不回 `config.yaml`**：它们在 DTO 里只为满足前端整行回传（`saveRow` 用 `Object.assign` 回传全部键，而 PUT 侧开了 `DisallowUnknownFields`，字段不在 DTO 就会 400），后端 `dtoToEndpoint` 故意不映射它们。
 
 ### POST /api/accounts
 新增账号。body = 单个 account 对象（含 app_secret 明文）。id 全局唯一，否则 400。
@@ -279,20 +298,31 @@ HTTP 状态码：`200` = ok；`400` = 参数错误；`500` = 内部错误。
 保存该账号的自动测试连接/Token 续租计划。body 为 `{ "cron": "*/20 * * * *", "enabled": true }`；Cron 必须为合法 5 段表达式，成功后热重建调度。
 
 ### POST /api/accounts/:id/stores/sync
-触发该账号唯一的 `is_store_source: true` 店铺目录接口。账号没有或有多个店铺来源接口时返回 409；接口 Cron、限流与启停仍由 `/sync` 管理。
+触发该账号**全部** `is_store_source: true` 店铺目录接口，逐个独立入队。SC 与 VC 店铺来自两个不同上游接口却写同一张 `ls_stores`，必须同时触发才能刷全目录，故不限制「唯一」。
+
+单个接口不可用时**只跳过它**，其余照常入队（对应 CLAUDE.md §1.8「缺表/缺列只炸自己」）；跳过原因：`未就绪` / `已禁用` / `目标表未就绪`（启动断言未过）/ `运行中`。仅当该账号**一个店铺来源接口都没有**时返回 409。接口 Cron、限流与启停仍由 `/sync` 管理。
+
+```json
+{ "ok": true, "data": {
+    "message": "店铺目录刷新已加入队列: sc_stores；跳过: vc_stores(目标表未就绪)",
+    "endpoints": ["sc_stores"],
+    "queued": true } }
+{ "ok": false, "error": "该账号未配置店铺目录接口: sc_us" }
+```
 
 ### DELETE /api/accounts/:id
 删除账号。**若仍有 endpoint 引用该账号 → 409 拦截**，返回引用列表，不级联删除。
 
 ```json
-{ "ok": false, "error": "账号 sc_us 仍被 3 个接口引用，请先删除接口: [sc_stores, sc_inventory, sc_ads_daily]" }
+{ "ok": false, "error": "账号 sc_us 仍被 2 个接口引用，请先删除接口: [sc_stores, sc_inventory]" }
 ```
 
 ### POST /api/endpoints
 新增接口。body = 单个 endpoint 对象。name 全局唯一、account 必须存在、table 必须已建表，否则 400。
 
 ### PUT /api/endpoints/:name
-更新接口（改 path/method/table 属结构性变更，返回 need_restart:true）。
+更新接口（改 path/method/table 属结构性变更，返回 need_restart:true）。`window_days` 与
+`date_offset_days` 属热加载字段；前者调整范围接口的滚动窗口，后者调整单日接口的 T-N 日期。
 
 ### DELETE /api/endpoints/:name
 删除接口（停止其调度，不删已同步数据）。

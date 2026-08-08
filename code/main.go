@@ -12,7 +12,7 @@
 // flags:
 //
 //	-config   配置文件路径（默认 config.yaml）
-//	-mock     本地无凭证时用造数据跑通链路（生产绝不开启）
+//	-validate-config  只加载并校验配置，不连接数据库或启动服务
 //	-base-url 领星 OpenAPI 根，默认 https://openapi.lingxing.com
 package main
 
@@ -44,7 +44,7 @@ var webFS embed.FS
 
 func main() {
 	configPath := flag.String("config", "config.yaml", "配置文件路径")
-	mockMode := flag.Bool("mock", false, "本地验证：用造数据跑通链路（生产不开）")
+	validateConfig := flag.Bool("validate-config", false, "只校验配置，不连接数据库或启动服务")
 	baseURL := flag.String("base-url", "https://openapi.lingxing.com", "领星 OpenAPI 根地址")
 	flag.Parse()
 
@@ -54,10 +54,9 @@ func main() {
 		log.Fatalf("[main] 加载配置失败: %v", err)
 	}
 	log.Printf("[main] 配置加载完成：%d 账号，%d 接口", len(cfg.Accounts), len(cfg.Endpoints))
-
-	if *mockMode {
-		api.MockMode = true
-		log.Printf("[main] ⚠️ MOCK 模式已开启：API 返回造数据，生产绝不可用")
+	if *validateConfig {
+		log.Printf("[main] 配置校验通过：%s", *configPath)
+		return
 	}
 
 	// 2. 连 MySQL + 迁移
@@ -76,6 +75,8 @@ func main() {
 	clients := api.NewClientRegistry(cfg.Accounts, *baseURL)
 	limiterReg := worker.NewLimiterRegistry() // 限流器按 (quota_group, path) 共享
 	var storeSourceWorkers []*worker.EndpointWorker
+	degraded := 0 // 降级为不可同步的接口数（缺表等），仅用于启动摘要日志
+	warned := 0   // 有告警但仍可同步的条目数（缺声明列等），仅用于启动摘要日志
 
 	for i := range cfg.Endpoints {
 		ep := cfg.Endpoints[i]
@@ -86,14 +87,39 @@ func main() {
 		client := clients.Get(acc.ID)
 		w, err := worker.New(ep, *acc, client, dbx, limiterReg)
 		if err != nil {
-			// GetTableColumns 失败 = 缺表，启动断言
-			log.Fatalf("[main] 构造 Worker %s 失败（是否未建表？）: %v", ep.Name, err)
+			// 走到这里说明 worker.New 出了「非缺表」的真实构造错误（目前不存在这种路径）。
+			// 缺表不再走 error：New 会把 worker 降级成 fatalErr 态并正常返回，
+			// 只让这一个接口不可同步，绝不顶掉整个进程（CLAUDE.md §1.1）。
+			log.Printf("[main] ⚠️ 构造 Worker %s 失败，已跳过该接口，其余接口照常启动: %v", ep.Name, err)
+			degraded++
+			continue
 		}
 		registry.Register(w)
 		if ep.IsStoreSource {
 			storeSourceWorkers = append(storeSourceWorkers, w)
 		}
+		st := w.Status()
+		if st.FatalError != "" {
+			// 最常见：目标表没建。接口标 error 挂在 UI 上，用户能看见原因并去建表，
+			// 而不是面对一个打不开的 7799。
+			log.Printf("[main] ⚠️ Worker 降级（不可同步，其余接口不受影响）：%s（table=%s）: %s", ep.Name, ep.Table, st.FatalError)
+			degraded++
+			continue
+		}
+		// 告警不阻断同步：表建了但缺配置声明的列，那些字段会被静默丢弃。
+		// 只打出来给人看，不改变同步行为（见 worker.missingDeclaredColumns 的取舍说明）。
+		for _, wn := range st.Warnings {
+			log.Printf("[main] ⚠️ Worker 告警（同步仍会执行）：%s: %s", ep.Name, wn)
+			warned++
+		}
 		log.Printf("[main] Worker 就绪：%s（account=%s, table=%s）", ep.Name, ep.Account, ep.Table)
+	}
+	if degraded > 0 {
+		log.Printf("[main] ⚠️ 共 %d/%d 个接口降级为不可同步（多半是没建表），请在同步配置页查看红色错误原因后建表并重启",
+			degraded, len(cfg.Endpoints))
+	}
+	if warned > 0 {
+		log.Printf("[main] ⚠️ 共 %d 条表结构告警：配置声明的列在表里不存在，这些字段会被静默丢弃（同步仍在跑，补列后重启即可）", warned)
 	}
 
 	// 4 & 5. 启动所有 Worker goroutine（ctx 统一管理生命周期）
