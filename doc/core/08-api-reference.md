@@ -193,11 +193,14 @@ type PageParams struct {
 
 ## 4. 分页规则
 
-- 使用 `offset + length` 游标分页
+- 分页参数必须按接口合同逐项确认；常见形态是 `offset + length`，也有接口使用 `page + pageSize`，不能跨接口猜测。
+- 当前同步机 Worker 的通用分页实现使用 `offset + length`：`offset` 从 0 开始，下一页按实际取到的行数前进。
 - 大多数接口返回 `has_more: true/false` 或 `total` 字段
 - 判断终止：`has_more == false` 或 `offset + length >= total`
 - 安全边界：单页 `length` 不超过 200（部分接口 50）
 - 建议每页取完后 sleep 100-300ms，防止触发限流
+
+分页是否可并行不是由 `bucket > 1` 单独决定。只有在接口已确认支持多个在途请求、首屏 `total` 可靠且同步期间结果稳定时，才允许预计算多个 offset；否则保持串行，避免数据变化造成漏行或重复。
 
 ---
 
@@ -205,9 +208,22 @@ type PageParams struct {
 
 | 触发条件 | 响应特征 | 处理方式 |
 |---|---|---|
-| 请求过快 | HTTP 429 或 `code=4002` | 等待后重试，指数退避 |
-| Token 过期 | `code=40001` 或类似 | 刷新 token，重试一次 |
+| 请求过快 | HTTP 429、`code=3001008` 或限流文案 | 优先使用 `Retry-After`；没有时按 `5s/15s/30s/60s/120s` 冷却，最多 5 次 |
+| 上游临时异常 | `code=103` | 按 `30s/60s/120s` 延迟后有限重试；不把普通 103 当令牌桶限流 |
+| Performance 频繁请求 | 路径 `/bd/productPerformance/openApi/asinList` 且 `code=103` 消息明确含“频繁请求” | 按限流冷却处理，使用 `Retry-After` 或 `5s/15s/30s/60s/120s`，最多 5 次 |
+| Token 过期/不正确 | `code=2001003` / `code=2001005` | 当前 credential 单飞刷新 token，再重试原请求 1 次 |
+| 未授权 | `code=2001004` | 直接报错，人工检查接口授权，不重试 |
+| IP 白名单 | `code=3001002` 或 `ip not permit` | 直接报错，检查固定出口 IP 和领星白名单，不重试 |
+| 参数/签名错误 | 参数缺失、`code=2001006`、`code=2001007` 等 | 直接报错，修正合同、签名或时钟，不指数重试 |
 | 并发取 token | 领星直接拒绝 | singleflight 保证只有一个 goroutine 取 |
+
+### 5.1 请求级退避合同
+
+- `Retry-After` 是可选响应头，支持“秒数”和 HTTP-date 两种格式；存在且可解析时优先使用。
+- 当前实现不能假设领星每个业务错误都会返回该响应头；业务码 `3001008`/`103` 必须保留本地退避表作为兜底。
+- 网络超时、连接中断等错误如果请求可能已经到达领星，不能按 `500ms` 立即补发；当前按 2 分钟远端令牌保护窗口后再尝试，避免制造新的 `3001008`。
+- 所有重试都必须重新经过同一个 `(quota_group, path)` 限流器；重试不能绕过限流器。
+- 达到对应最大次数后必须以 error 结束，不能把空数据或部分数据标记为 success。
 
 **限流的正确模型**（见 [09-endpoint-contract.md §格4](09-endpoint-contract.md)）：
 
