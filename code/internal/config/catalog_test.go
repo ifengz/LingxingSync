@@ -114,3 +114,12 @@ func TestInventoryCatalogCarriesStoreType(t *testing.T) {
 		t.Fatalf("store_type = %q, want SC", ep.StoreType)
 	}
 }
+func TestSCFBAInventoryCatalogTable(t *testing.T) {
+	e, err := FindCatalogEntry("sc_inventory")
+	if err != nil {
+		t.Fatalf("FindCatalogEntry: %v", err)
+	}
+	if e.Table != "ls_fba_inventory" {
+		t.Fatalf("SC FBA 库存目标表 = %q, want ls_fba_inventory", e.Table)
+	}
+}

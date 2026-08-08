@@ -27,3 +27,16 @@ func TestRenameAccountMigrationPreservesConflicts(t *testing.T) {
 		t.Fatal("账号迁移必须只更新不冲突的行")
 	}
 }
+func TestFBAInventoryTableRenameMigrationIsPresent(t *testing.T) {
+	raw, err := os.ReadFile("../../migrations/001_rename_ls_inventory_to_ls_fba_inventory.sql")
+	if err != nil {
+		t.Fatalf("读取 FBA 库存表迁移失败: %v", err)
+	}
+	sql := strings.ToUpper(string(raw))
+	if !strings.Contains(sql, "RENAME TABLE LS_INVENTORY TO LS_FBA_INVENTORY") {
+		t.Fatal("FBA 库存表迁移必须把旧表重命名为 ls_fba_inventory")
+	}
+	if !strings.Contains(sql, "INFORMATION_SCHEMA.TABLES") {
+		t.Fatal("FBA 库存表迁移必须先检查旧表和新表是否存在")
+	}
+}

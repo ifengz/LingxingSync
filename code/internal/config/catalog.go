@@ -107,11 +107,11 @@ var catalogEntries = []CatalogEntry{
 		Key:     "sc_inventory",
 		Display: "SC FBA 库存",
 		Summary: "亚马逊 FBA 在库/在途库存快照，全量。",
-		// 与 006 迁移建的 ls_inventory 同源的真实路径（生产已跑通，单次 5079 行）。
+		// 与 006 迁移建的 ls_fba_inventory 同源的真实路径（生产已跑通，单次 5079 行）。
 		// 早期误写 "/openapi/erp/sc/inventory/list"（不存在），同 sc_sales_orders 的坑。
 		Path:      "/erp/sc/routing/fba/fbaStock/fbaList",
 		Method:    "GET",
-		Table:     "ls_inventory",
+		Table:     "ls_fba_inventory",
 		RecordIDs: []string{"sid", "fnsku"}, // 同一 fnsku 在多店铺各一行，必须带 sid
 		Rate:      Rate{Bucket: 1, IntervalMs: 1000, MultiIntervalMs: 10000, Dimension: "account+path"},
 

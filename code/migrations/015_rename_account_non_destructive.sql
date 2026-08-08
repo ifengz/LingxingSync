@@ -71,25 +71,25 @@ SET old.account_id = 'sc_us_1'
 WHERE old.account_id COLLATE utf8mb4_bin = 'sc_us' AND target.account_id IS NULL;
 
 INSERT INTO migration_account_conflicts (table_name, old_account_id, new_account_id, conflict_count, detected_at)
-SELECT 'ls_inventory', 'Sc_us', 'sc_us_2', COUNT(*), NOW()
-FROM ls_inventory old JOIN ls_inventory target
+SELECT 'ls_fba_inventory', 'Sc_us', 'sc_us_2', COUNT(*), NOW()
+FROM ls_fba_inventory old JOIN ls_fba_inventory target
   ON target.account_id COLLATE utf8mb4_bin = 'sc_us_2' AND old.sid <=> target.sid AND old.fnsku <=> target.fnsku
 WHERE old.account_id COLLATE utf8mb4_bin = 'Sc_us'
 HAVING COUNT(*) > 0
 ON DUPLICATE KEY UPDATE conflict_count = VALUES(conflict_count), detected_at = VALUES(detected_at);
-UPDATE ls_inventory old LEFT JOIN ls_inventory target
+UPDATE ls_fba_inventory old LEFT JOIN ls_fba_inventory target
   ON target.account_id COLLATE utf8mb4_bin = 'sc_us_2' AND old.sid <=> target.sid AND old.fnsku <=> target.fnsku
 SET old.account_id = 'sc_us_2'
 WHERE old.account_id COLLATE utf8mb4_bin = 'Sc_us' AND target.account_id IS NULL;
 
 INSERT INTO migration_account_conflicts (table_name, old_account_id, new_account_id, conflict_count, detected_at)
-SELECT 'ls_inventory', 'sc_us', 'sc_us_1', COUNT(*), NOW()
-FROM ls_inventory old JOIN ls_inventory target
+SELECT 'ls_fba_inventory', 'sc_us', 'sc_us_1', COUNT(*), NOW()
+FROM ls_fba_inventory old JOIN ls_fba_inventory target
   ON target.account_id COLLATE utf8mb4_bin = 'sc_us_1' AND old.sid <=> target.sid AND old.fnsku <=> target.fnsku
 WHERE old.account_id COLLATE utf8mb4_bin = 'sc_us'
 HAVING COUNT(*) > 0
 ON DUPLICATE KEY UPDATE conflict_count = VALUES(conflict_count), detected_at = VALUES(detected_at);
-UPDATE ls_inventory old LEFT JOIN ls_inventory target
+UPDATE ls_fba_inventory old LEFT JOIN ls_fba_inventory target
   ON target.account_id COLLATE utf8mb4_bin = 'sc_us_1' AND old.sid <=> target.sid AND old.fnsku <=> target.fnsku
 SET old.account_id = 'sc_us_1'
 WHERE old.account_id COLLATE utf8mb4_bin = 'sc_us' AND target.account_id IS NULL;

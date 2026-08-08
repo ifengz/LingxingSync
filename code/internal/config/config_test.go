@@ -128,7 +128,7 @@ func TestValidateStoreType(t *testing.T) {
 			Database: Database{Host: "h", User: "u", DB: "d"},
 			Accounts: []Account{{ID: "sc_us_1", Name: "n", AppKey: "k", AppSecret: "s"}},
 			Endpoints: []Endpoint{{
-				Name: "inv", Account: "sc_us_1", Path: "/inv", Method: "GET", Table: "ls_inventory",
+				Name: "inv", Account: "sc_us_1", Path: "/inv", Method: "GET", Table: "ls_fba_inventory",
 				RecordIDFields: []string{"sid"}, Cron: "0 * * * *",
 				Rate:      Rate{Bucket: 1, IntervalMs: 1000, Dimension: "account+path"},
 				StoreType: storeType,

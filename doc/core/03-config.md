@@ -92,7 +92,7 @@ endpoints:
     account: "sc_us"
     path: "/erp/sc/routing/fba/fbaStock/fbaList"
     method: "GET"
-    table: "ls_inventory"
+    table: "ls_fba_inventory"
     record_id_fields: ["sid", "fnsku"]   # 同一 fnsku 多店铺各一行，必须带 sid
     rate:
       bucket: 1                  # 桶=1 → 串行：请求返回后才能发下一个

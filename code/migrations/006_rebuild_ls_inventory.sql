@@ -1,4 +1,4 @@
--- 重建 ls_inventory：列名一字不差对齐领星 /erp/sc/routing/fba/fbaStock/fbaList 返回字段。
+-- 重建 ls_fba_inventory：列名一字不差对齐领星 /erp/sc/routing/fba/fbaStock/fbaList 返回字段。
 -- 探测来源：本地探测模式抓取的真实响应（26 行样本，共 50 个字段）。
 -- 字段类型按领星返回样例推断：数值量类用 INT/DECIMAL，文本类用 VARCHAR，数组/对象类用 JSON。
 -- 原则：领星返回什么就存什么，不做任何改名/拆分/转换（通用 Upsert：列名=字段名）。
@@ -7,13 +7,13 @@
 --
 -- 幂等守卫（重要，勿简化回裸 DROP TABLE）：
 -- migrate.go 每次进程启动都把 migrations/ 下所有 .sql 全量重跑（不维护 schema_versions）。
--- 这里原本是裸 `DROP TABLE IF EXISTS ls_inventory`，后果是**每次重启都清空库存表**——
+-- 这里原本是裸 `DROP TABLE IF EXISTS ls_fba_inventory`，后果是**每次重启都清空库存表**——
 -- 而宪法 §4.6 规定结构性改配置就要重启进程，等于正常运维动作就丢数据。
--- 实测复现：06:03 成功同步 5079 行，重启一次后 ls_inventory 变 0 行。
+-- 实测复现：06:03 成功同步 5079 行，重启一次后 ls_fba_inventory 变 0 行。
 -- 因此只在「表还是旧结构」时才 DROP；已是新结构则空转。
 --
 -- 判据列必须是「只有新结构才有」的列（2026-08-08 修正）：
--- 原判据是 fnsku，但 002_data_tables.sql 建的旧 ls_inventory **本来就有 fnsku**
+-- 原判据是 fnsku，但 002_data_tables.sql 建的旧 ls_fba_inventory **本来就有 fnsku**
 -- （旧主键就是 (account_id, fnsku)）。于是守卫在全新库上恒判「已是新结构」→ 不 DROP，
 -- 下面的 CREATE TABLE IF NOT EXISTS 又因表已存在而空转 → 整个 006 等于没执行。
 -- 后果：全新部署拿到 002 的 13 列旧表（缺 39 列），主键退化成 (account_id, fnsku)，
@@ -25,21 +25,21 @@
 --   表不存在        → DROP IF EXISTS 空转，CREATE 建对。
 -- 唯一键依据：领星 fbaStock/fbaList 请求带 sid、响应回读 sid，故店铺维度必须进主键
 -- （与 polabel2 同接口的去重键含 store_id 一致）。
-SET @ls_inventory_is_old := (
+SET @ls_fba_inventory_is_old := (
     SELECT COUNT(*) = 0
     FROM INFORMATION_SCHEMA.COLUMNS
     WHERE TABLE_SCHEMA = DATABASE()
-      AND TABLE_NAME = 'ls_inventory'
+      AND TABLE_NAME = 'ls_fba_inventory'
       AND COLUMN_NAME = 'sid'
 );
-SET @ls_inventory_sql := IF(@ls_inventory_is_old,
-    'DROP TABLE IF EXISTS ls_inventory',
+SET @ls_fba_inventory_sql := IF(@ls_fba_inventory_is_old,
+    'DROP TABLE IF EXISTS ls_fba_inventory',
     'DO 0');
-PREPARE ls_inv_stmt FROM @ls_inventory_sql;
+PREPARE ls_inv_stmt FROM @ls_fba_inventory_sql;
 EXECUTE ls_inv_stmt;
 DEALLOCATE PREPARE ls_inv_stmt;
 
-CREATE TABLE IF NOT EXISTS ls_inventory (
+CREATE TABLE IF NOT EXISTS ls_fba_inventory (
     account_id              VARCHAR(32)    NOT NULL COMMENT '本系统内部账号 ID',
 
     -- 领星返回字段（顺序按探测样本，列名严格对齐 API）

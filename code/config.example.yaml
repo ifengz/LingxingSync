@@ -84,10 +84,10 @@ endpoints:
     display: "SC FBA 库存"
     account: "sc_us"
     # 同 sc_sales_orders 的坑：早期误写 "/openapi/erp/sc/inventory/list"（不存在）。
-    # 本路径与 006 迁移建的 ls_inventory 同源，生产已跑通（单次 5079 行）。
+    # 本路径与 006 迁移建的 ls_fba_inventory 同源，生产已跑通（单次 5079 行）。
     path: "/erp/sc/routing/fba/fbaStock/fbaList"
     method: "GET"
-    table: "ls_inventory"
+    table: "ls_fba_inventory"
     # 同一 fnsku 在多店铺各一行，唯一键必须带 sid。
     record_id_fields: ["sid", "fnsku"]
     rate:

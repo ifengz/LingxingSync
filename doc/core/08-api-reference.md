@@ -266,7 +266,7 @@ type PageParams struct {
 
 | 接口 | 方法 | 路径 | 说明 | DB 表 |
 |---|---|---|---|---|
-| FBA 库存 | POST | `/basicOpen/inventory/fba/list`（待验证） | 参考 httpx 仓 `api.warehouse` | `ls_inventory_fba` |
+| FBA 库存 | POST | `/basicOpen/inventory/fba/list`（待验证） | 参考 httpx 仓 `api.warehouse` | `ls_fba_inventory` |
 
 ### 6.5 广告报表（按优先级）
 

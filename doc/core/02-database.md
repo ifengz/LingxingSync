@@ -112,10 +112,10 @@ CREATE TABLE ls_sales_orders (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 ```
 
-### ls_inventory（FBA 库存）
+### ls_fba_inventory（SC FBA 库存）
 
 ```sql
-CREATE TABLE ls_inventory (
+CREATE TABLE ls_fba_inventory (
     fnsku             VARCHAR(32)    NOT NULL,
     account_id        VARCHAR(32)    NOT NULL,
     asin              VARCHAR(16)    NULL,
