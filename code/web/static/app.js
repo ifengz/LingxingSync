@@ -1067,6 +1067,15 @@ window.settingsApi = function () {
     get storeSelectedCount() {
       return Object.values(this.storeSel).filter(Boolean).length;
     },
+    get storeAllSelected() {
+      const items = this.storeSummary.items || [];
+      return items.length > 0 && items.every(store => !!this.storeSel[store.sid]);
+    },
+    toggleAllStores(checked) {
+      const next = {};
+      (this.storeSummary.items || []).forEach(store => { next[store.sid] = !!checked; });
+      this.storeSel = next;
+    },
     get storeDirty() {
       const cur = this.storeSel, base = this.storeSelBaseline;
       const keys = new Set([...Object.keys(cur), ...Object.keys(base)]);

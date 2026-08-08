@@ -178,6 +178,19 @@ void (async () => {
   assert.equal(settings.storeStatusText(null), '-');
   assert.equal(settings.storeStatusText('9'), '9', '未知状态原样显示');
 
+  // 表头复选框只批量修改当前账号已加载的店铺，并复用既有 dirty/save 流程。
+  settings.storeSummary.items = [{ sid: 'store-1' }, { sid: 'store-2' }];
+  settings.storeSel = { 'store-1': true, 'store-2': false };
+  settings.storeSelBaseline = { 'store-1': true, 'store-2': false };
+  assert.equal(settings.storeAllSelected, false);
+  settings.toggleAllStores(true);
+  assert.equal(settings.storeAllSelected, true);
+  assert.equal(settings.storeSelectedCount, 2);
+  assert.equal(settings.storeDirty, true);
+  settings.toggleAllStores(false);
+  assert.equal(settings.storeAllSelected, false);
+  assert.equal(settings.storeSelectedCount, 0);
+
   settings.accountForm.name = '美国主账号';
   await settings.saveAccount();
   const accountSave = calls.find(c => c.method === 'PUT' && c.url === '/api/accounts/sc_us');
