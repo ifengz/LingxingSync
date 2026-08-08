@@ -3,8 +3,27 @@
 -- 字段类型按领星返回样例推断：数值量类用 INT/DECIMAL，文本类用 VARCHAR，数组/对象类用 JSON。
 -- 原则：领星返回什么就存什么，不做任何改名/拆分/转换（通用 Upsert：列名=字段名）。
 
--- 先删旧表（旧的 quantity/reserved_quantity 等列名与领星不符，已无价值）
-DROP TABLE IF EXISTS ls_inventory;
+-- 先删旧表（旧的 quantity/reserved_quantity 等列名与领星不符，已无价值）。
+--
+-- 幂等守卫（重要，勿简化回裸 DROP TABLE）：
+-- migrate.go 每次进程启动都把 migrations/ 下所有 .sql 全量重跑（不维护 schema_versions）。
+-- 这里原本是裸 `DROP TABLE IF EXISTS ls_inventory`，后果是**每次重启都清空库存表**——
+-- 而宪法 §4.6 规定结构性改配置就要重启进程，等于正常运维动作就丢数据。
+-- 实测复现：06:03 成功同步 5079 行，重启一次后 ls_inventory 变 0 行。
+-- 因此只在「表还是旧结构（没有 fnsku 列）」时才 DROP；已是新结构则空转。
+SET @ls_inventory_is_old := (
+    SELECT COUNT(*) = 0
+    FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = 'ls_inventory'
+      AND COLUMN_NAME = 'fnsku'
+);
+SET @ls_inventory_sql := IF(@ls_inventory_is_old,
+    'DROP TABLE IF EXISTS ls_inventory',
+    'DO 0');
+PREPARE ls_inv_stmt FROM @ls_inventory_sql;
+EXECUTE ls_inv_stmt;
+DEALLOCATE PREPARE ls_inv_stmt;
 
 CREATE TABLE IF NOT EXISTS ls_inventory (
     account_id              VARCHAR(32)    NOT NULL COMMENT '本系统内部账号 ID',
