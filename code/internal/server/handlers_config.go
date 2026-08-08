@@ -237,7 +237,9 @@ func (s *Server) refreshLimitersFromConfig(cfg *config.Config) {
 // applyConfigWrite 保存 snap（调用方已在其上完成本次改动），成功后按
 // ClassifyChange(old, snap) 决定是否立即热加载，最终统一响应 {message, need_restart}。
 // 失败时已写好 400 响应，调用方直接 return。
-func (s *Server) applyConfigWrite(w http.ResponseWriter, old, snap *config.Config, message string) {
+// extra 里的键会并入响应 JSON（如建账号回传自动配定的 account_id），供前端读结构化字段
+// 而非解析 message 文案。
+func (s *Server) applyConfigWrite(w http.ResponseWriter, old, snap *config.Config, message string, extra ...map[string]any) {
 	if err := s.store.Save(snap); err != nil {
 		errJSON(w, http.StatusBadRequest, err.Error())
 		return
@@ -252,7 +254,13 @@ func (s *Server) applyConfigWrite(w http.ResponseWriter, old, snap *config.Confi
 	}
 	// 单管理员工具：接受良性的指针切换竞态（无锁快速刷新，供其它 handler 读到新配置）。
 	s.cfg = snap
-	okJSON(w, map[string]any{"message": message, "need_restart": kind == config.ChangeRestart})
+	resp := map[string]any{"message": message, "need_restart": kind == config.ChangeRestart}
+	for _, m := range extra {
+		for k, v := range m {
+			resp[k] = v
+		}
+	}
+	okJSON(w, resp)
 }
 
 // ---------------------------------------------------------------------------
@@ -272,8 +280,29 @@ func (s *Server) apiGetConfig(w http.ResponseWriter, r *http.Request) {
 // API: POST /api/accounts
 // ---------------------------------------------------------------------------
 
-// apiCreateAccount 新增账号。id/name/app_key/app_secret 必填；app_secret 不能
-// 是脱敏占位串；id 必须全局唯一。新增账号属结构性变更，恒为 need_restart:true。
+// nextAvailableAccountID 在填入的 base 与现有账号大小写不敏感撞名时，自动往后找第一个
+// 可用的 base_2 / base_3 …（延用 sc_us_1/sc_us_2 的命名直觉），保证系统自动区分、不靠人眼。
+// base 本身可用则原样返回。account_id 列宽 32，超长的后缀不会产生（base 已过 slug 校验 ≤32，
+// 实际账号数远达不到需要截断的规模）。
+func nextAvailableAccountID(base string, accounts []config.Account) string {
+	taken := make(map[string]bool, len(accounts))
+	for _, a := range accounts {
+		taken[config.NormID(a.ID)] = true
+	}
+	if !taken[config.NormID(base)] {
+		return base
+	}
+	for n := 2; ; n++ {
+		cand := fmt.Sprintf("%s_%d", base, n)
+		if !taken[config.NormID(cand)] {
+			return cand
+		}
+	}
+}
+
+// apiCreateAccount 新增账号。name/app_key/app_secret 必填；app_secret 不能是脱敏占位串。
+// id 须符合 slug 字符集；与现有账号大小写不敏感撞名时自动改配可用 ID（base_2/base_3…），
+// 响应回显最终 id。新增账号属结构性变更，恒为 need_restart:true。
 func (s *Server) apiCreateAccount(w http.ResponseWriter, r *http.Request) {
 	var in accountDTO
 	if err := decodeJSON(r, &in); err != nil {
@@ -288,16 +317,24 @@ func (s *Server) apiCreateAccount(w http.ResponseWriter, r *http.Request) {
 		errJSON(w, http.StatusBadRequest, "app_secret 不能是脱敏后的占位串")
 		return
 	}
+	if !config.ValidAccountID(in.ID) {
+		errJSON(w, http.StatusBadRequest, "账号 id 非法：只允许字母/数字/下划线/连字符，首尾为字母或数字，长度 1–32")
+		return
+	}
 
 	old := s.store.Current()
 	snap := s.store.Snapshot()
-	if snap.FindAccount(in.ID) != nil {
-		errJSON(w, http.StatusBadRequest, "账号 id 已存在: "+in.ID)
-		return
-	}
+	// 撞名不再报错：以填入 id 为 base 自动配一个可用 id（大小写不敏感唯一），人不用操心。
+	requestedID := in.ID
+	finalID := nextAvailableAccountID(requestedID, snap.Accounts)
+	in.ID = finalID
 	snap.Accounts = append(snap.Accounts, dtoToAccount(in))
 
-	s.applyConfigWrite(w, old, snap, "账号已新增: "+in.ID)
+	msg := "账号已新增: " + finalID
+	if finalID != requestedID {
+		msg = fmt.Sprintf("账号已新增: %s（%q 已被占用，自动配为 %s）", finalID, requestedID, finalID)
+	}
+	s.applyConfigWrite(w, old, snap, msg, map[string]any{"account_id": finalID})
 }
 
 // ---------------------------------------------------------------------------
@@ -380,7 +417,7 @@ func (s *Server) apiDeleteAccount(w http.ResponseWriter, r *http.Request) {
 
 	var refs []string
 	for _, ep := range snap.Endpoints {
-		if ep.Account == id {
+		if config.NormID(ep.Account) == config.NormID(id) {
 			refs = append(refs, ep.Name)
 		}
 	}
@@ -392,7 +429,7 @@ func (s *Server) apiDeleteAccount(w http.ResponseWriter, r *http.Request) {
 
 	kept := make([]config.Account, 0, len(snap.Accounts))
 	for _, a := range snap.Accounts {
-		if a.ID != id {
+		if config.NormID(a.ID) != config.NormID(id) {
 			kept = append(kept, a)
 		}
 	}
@@ -513,7 +550,7 @@ func (s *Server) apiAccountStoreSync(w http.ResponseWriter, r *http.Request) {
 
 	var names []string
 	for _, ep := range cfg.Endpoints {
-		if ep.Account != id || !ep.IsStoreSource {
+		if config.NormID(ep.Account) != config.NormID(id) || !ep.IsStoreSource {
 			continue
 		}
 		names = append(names, ep.Name)

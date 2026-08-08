@@ -385,7 +385,7 @@ FROM ls_stores s
 LEFT JOIN vc_store_profiles p
   ON p.account_id = s.account_id AND p.sid = s.sid AND s.store_type = 'VC'
 WHERE s.account_id = ?
-ORDER BY s.store_name, s.sid`
+ORDER BY CASE WHEN s.store_type = 'VC' THEN 0 ELSE 1 END, s.store_name, s.sid`
 
 	items := make([]StoreSummary, 0)
 	if err := db.Select(&items, q, accountID); err != nil {

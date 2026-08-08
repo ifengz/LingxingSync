@@ -10,9 +10,30 @@ package config
 import (
 	"fmt"
 	"os"
+	"regexp"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
+
+// accountIDPattern 约束账号 ID 的字符集（参考 GitHub username 规则，放行下划线因本项目
+// 现有 ID 用它、且这是机器标识符不是公开 handle）：只允许字母/数字/下划线/连字符，
+// 首尾必须是字母或数字，总长 1–32（对齐 account_id VARCHAR(32) 列宽）。
+var accountIDPattern = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9_-]{0,30}[A-Za-z0-9])?$`)
+
+// NormID 是账号 ID 的归一化口径：去空白 + 转小写。全项目判定「两个账号 ID 是否同一个」
+// 都以它为准（大小写不敏感唯一，照搬 GitHub：Sc_us 与 sc_us 视为撞名）。DB account_id 列
+// 排序规则本就是 *_ci（大小写不敏感），此口径与存储层一致。
+func NormID(s string) string {
+	return strings.ToLower(strings.TrimSpace(s))
+}
+
+// ValidAccountID 报告 s 是否符合账号 ID 的 slug 字符集规范（见 accountIDPattern）。
+// 导出供 server 层建账号入口做写盘前的前置校验，与 validate() 复用同一条正则，
+// 保证「前置校验」与「落盘校验」判定完全一致。
+func ValidAccountID(s string) bool {
+	return accountIDPattern.MatchString(s)
+}
 
 // Config 是 config.yaml 的根结构。
 type Config struct {
@@ -175,16 +196,21 @@ func (c *Config) validate() error {
 	if len(c.Accounts) == 0 {
 		return fmt.Errorf("至少要配一个 account")
 	}
-	// account ID 全局唯一
-	seen := make(map[string]bool, len(c.Accounts))
+	// account ID：字符集受 slug 约束 + 大小写不敏感全局唯一（NormID 归一后查重）。
+	// seen 的 key 是归一化 ID，值是首次出现的原始 ID（用于报错时指明和谁撞了）。
+	seen := make(map[string]string, len(c.Accounts))
 	for i, a := range c.Accounts {
 		if a.ID == "" {
 			return fmt.Errorf("accounts[%d].id 不能为空", i)
 		}
-		if seen[a.ID] {
-			return fmt.Errorf("account id 重复: %s", a.ID)
+		if !accountIDPattern.MatchString(a.ID) {
+			return fmt.Errorf("account id %q 非法：只允许字母/数字/下划线/连字符，首尾为字母或数字，长度 1–32", a.ID)
 		}
-		seen[a.ID] = true
+		norm := NormID(a.ID)
+		if first, dup := seen[norm]; dup {
+			return fmt.Errorf("account id 撞名（大小写不敏感）: %q 与 %q 归一化后同为 %q", a.ID, first, norm)
+		}
+		seen[norm] = a.ID
 		if a.AppKey == "" || a.AppSecret == "" {
 			return fmt.Errorf("account %s 缺 app_key/app_secret", a.ID)
 		}
@@ -203,7 +229,7 @@ func (c *Config) validate() error {
 			return fmt.Errorf("endpoint name 重复: %s", e.Name)
 		}
 		endpointNames[e.Name] = true
-		if !seen[e.Account] {
+		if _, ok := seen[NormID(e.Account)]; !ok {
 			return fmt.Errorf("endpoint %s 的 account=%q 在 accounts 里找不到", e.Name, e.Account)
 		}
 		if e.Path == "" || e.Method == "" || e.Table == "" {
@@ -265,10 +291,13 @@ func (c *Config) ConflictingLimiterKey(e Endpoint) (string, bool) {
 	return "", false
 }
 
-// FindAccount 按 ID 查找账号，找不到返回 nil。
+// FindAccount 按 ID 查找账号，找不到返回 nil。大小写不敏感（照搬 GitHub：URL/API
+// 传 SC_US 也能命中 sc_us）。因 validate 已保证不存在仅大小写不同的账号 ID，归一化
+// 匹配至多命中一个，无歧义。
 func (c *Config) FindAccount(id string) *Account {
+	norm := NormID(id)
 	for i := range c.Accounts {
-		if c.Accounts[i].ID == id {
+		if NormID(c.Accounts[i].ID) == norm {
 			return &c.Accounts[i]
 		}
 	}

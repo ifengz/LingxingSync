@@ -228,6 +228,10 @@ func (s *Server) Routes() *http.ServeMux {
 	// 全部在 handlers_config.go 内定义并自注册，统一维护（宪法 §7.5）。
 	s.registerConfigRoutes(mux)
 
+	// ---- API 路由：接口清单（从模板挑一个 → 选账号 → 启用）----
+	// 全部在 handlers_catalog.go 内定义并自注册。
+	s.registerCatalogRoutes(mux)
+
 	return mux
 }
 

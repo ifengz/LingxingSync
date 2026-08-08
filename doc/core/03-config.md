@@ -135,7 +135,7 @@ retention:
 |---|---|---|---|
 | `server.port` | int | 是 | HTTP 监听端口，默认 7799 |
 | `database.*` | 对象 | 是 | MySQL 连接参数 |
-| `accounts[].id` | string | 是 | 全局唯一，写入每条数据的 account_id 列 |
+| `accounts[].id` | string | 是 | slug 规范（见下）；**大小写不敏感全局唯一**，写入每条数据的 account_id 列 |
 | `accounts[].app_key/app_secret` | string | 是 | 领星 OpenAPI 凭证 |
 | `accounts[].quota_group` | string | 否 | 限流分组；默认 = id；同公司多 key 设同值共享桶 |
 | `endpoints[].name` | string | 是 | 任务标识，字母+下划线，全局唯一 |
@@ -157,3 +157,16 @@ retention:
 | `endpoints[].store_param_name` | string | 否 | 迭代时注入店铺ID 的参数名，默认 `sid` |
 | `endpoints[].store_sids` | array | 否 | 店铺白名单；空 = 同步该账号全部 sid，非空 = 只同步列出的 sid。仅对 `iterate_by_store: true` 生效 |
 | `retention.task_logs_days` | int | 否 | 默认 90 |
+
+---
+
+## 账号 ID 规范（slug + 大小写不敏感唯一，参考 GitHub）
+
+`accounts[].id` 是写入每张表 `account_id` 列的机器标识符，消费方（polabel2 等）按它筛数据，因此有硬约束：
+
+1. **字符集（slug）**：只允许 `[A-Za-z0-9_-]`，首尾必须是字母或数字，长度 1–32（对齐 `account_id VARCHAR(32)` 列宽）。校验正则见 `internal/config/config.go` 的 `accountIDPattern`。
+2. **大小写不敏感全局唯一**：判重以 `NormID(id) = ToLower(TrimSpace(id))` 为准（参考 GitHub username 规则）。`sc_us` 与 `Sc_us` 归一化后相同，视为撞名，`validate()` 直接 fail-loud。DB `account_id` 列排序规则本就是 `*_ci`，此口径与存储层一致。
+3. **查找也大小写不敏感**：`FindAccount` 用 `NormID` 匹配，URL/API 传 `SC_US` 也能命中 `sc_us`。因规则 2 保证不存在仅大小写不同的 ID，归一化匹配至多命中一个，无歧义。
+4. **新增账号自动配 ID**：`POST /api/accounts` 时，若填入 ID 与现有账号大小写不敏感撞名，后端以它为 base 自动往后找可用的 `base_2`/`base_3`… 落定（如 `sc_us` 占用 → 配 `sc_us_2`），响应回显最终 `account_id`。系统自动区分，不靠人眼防撞。
+
+> 这套规则是对早期「仅大小写不同的两个账号」历史脏账的收敛（迁移见 `migrations/009_rename_account.sql`），也是「加账号极简单、不伤架构」原则在账号维度的落地。

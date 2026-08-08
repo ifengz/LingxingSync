@@ -436,12 +436,61 @@ func (w *EndpointWorker) fetchAllPages(ctx context.Context, taskID int64, params
 		pages++
 		_ = db.InsertTaskLog(w.DB, taskID, pages, httpStatus, apiCode, len(list), durationMs, "")
 
-		// 翻页判定：HasMore 且本页有数据则继续
-		if !result.HasMore || len(list) == 0 {
+		// 翻页判定（宪法 §4 doc/core/08-api-reference.md：has_more==false 或
+		// offset+length>=total 终止）。fetched = 旧 offset + 本页行数 = 已累计记录数。
+		fetched := offset + len(list)
+		if !shouldContinuePaging(result, len(list), fetched) {
 			return totalRecords, pages, true
 		}
-		offset += pageSize
+
+		// 运行时安全阀：领星若忽略 offset 或谎报 total 会导致死循环——达上限主动
+		// fail-loud 中止（ok=false → task 置 error），不静默截断也不空转。
+		if pages >= maxPagesPerSync {
+			msg := fmt.Sprintf("翻页超过安全上限 %d 页仍未终止（offset=%d total=%d），疑似 API 不认 offset 或 total 异常，主动中止",
+				maxPagesPerSync, offset, result.Total)
+			_ = db.InsertTaskLog(w.DB, taskID, pages, httpStatus, apiCode, len(list), durationMs, msg)
+			log.Printf("[worker:%s] %s", w.Endpoint.Name, msg)
+			return totalRecords, pages, false
+		}
+
+		// offset 是「行游标」（宪法 §4 offset+length），按实际取得行数前进，
+		// 兼容短页；对满页接口等价于 offset+=pageSize，行为不变。
+		offset = fetched
 	}
+}
+
+// maxPagesPerSync 是单次（单店铺）翻页的安全上限，防止领星忽略 offset 或谎报
+// total 导致死循环。200 行/页 × 上限 = 数百万行容量，远超任何报表单次实际量；
+// 触顶视为异常，fail-loud 中止（宪法 §5）。
+const maxPagesPerSync = 10000
+
+// shouldContinuePaging 依据领星分页契约（宪法 §4）判定是否继续翻页。纯函数，
+// 便于单测（worker 持有具体 *api.Client，无接口 seam，无法在沙箱内跑 HTTP 全链路）。
+//
+// 终止（满足任一即停）：
+//   - 本页空（pageLen==0）：无论 has_more/total 一律停，防呆杜绝死循环。
+//   - has_more 字段「存在且为 false」：领星显式说没有更多，以它为准。
+//   - has_more 字段「不存在」但 total>0 且已取满（fetched>=total）。
+//
+// 继续：
+//   - has_more 字段「存在且为 true」。
+//   - has_more 字段「不存在」、total>0 且 fetched<total（报表类接口只给 total 不给 has_more）。
+//
+// 无分页信号（has_more 不存在且 total<=0，如裸数组）→ 停在首页，绝不盲翻撞限流
+// （对应 parse 层 TestParseFetchResultNoHasMoreInference 的谨慎原则）。
+//
+// fetched = 含本页在内已累计的记录数（旧 offset + 本页行数）。
+func shouldContinuePaging(r *api.FetchResult, pageLen, fetched int) bool {
+	if pageLen == 0 {
+		return false
+	}
+	if r.HasMorePresent {
+		return r.HasMore
+	}
+	if r.Total > 0 {
+		return fetched < r.Total
+	}
+	return false
 }
 
 // probeSample 把探测模式抓到的结果拼成一段可读字符串存进 task_logs.error_raw，

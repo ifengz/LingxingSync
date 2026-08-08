@@ -18,7 +18,9 @@ var storeMappings = map[string]storeMapping{
 		fields: []storeField{
 			{source: "sid", target: "sid"},
 			{source: "name", target: "store_name"},
-			{source: "region", target: "country"},
+			// 领星 SC 接口同时返回 region(大区，如 NA)和 country(商城所在国家名称，如"西班牙")。
+			// 国家列取 country，不能取 region，否则北美区所有店铺都显示 NA。
+			{source: "country", target: "country"},
 		},
 	},
 	"/basicOpen/platformAuth/vcSeller/pageList": {
@@ -26,6 +28,8 @@ var storeMappings = map[string]storeMapping{
 		fields: []storeField{
 			{source: "vc_store_id", target: "sid"},
 			{source: "name", target: "store_name"},
+			// VC 接口只返回 region/region_name，不返回 country；
+			// 只能用 region 填国家列，勿改成 country（会触发 missing required field）。
 			{source: "region", target: "country"},
 		},
 	},

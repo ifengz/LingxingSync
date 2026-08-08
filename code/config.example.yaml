@@ -32,6 +32,13 @@ accounts:
 
 # ===== 接口同步任务 =====
 # rate 字段从领星官方接口文档 Rate Limit 区块原样抄写，不猜测
+#
+# 参数形态（三选一或组合，喂给领星的业务参数）：
+#   window_days: N        >0 时注入 start_date/end_date（近 N 天范围，报表/订单类常用）
+#   date_field: "xxx"     非空时注入「单个日期」参数（如销量统计的 event_date）
+#   date_offset_days: N   配合 date_field：0=今天，1=昨天（报表通常取昨天，T+1 才齐）
+#   extra_params: {...}   固定业务参数（如 type: 1）
+# 重试为 worker 层固定策略（网络/429/5xx 指数退避，最多 3 次），无需在此配置。
 endpoints:
   # 店铺来源接口：启动时优先同步，结果落 ls_stores 供 iterate_by_store 接口读取
   - name: sc_stores

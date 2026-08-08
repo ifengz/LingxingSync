@@ -147,7 +147,11 @@ func ClassifyChange(oldCfg, newCfg *Config) ChangeKind {
 	}
 	for id, oldA := range oldAccounts {
 		newA := newAccounts[id]
-		if oldA.AppKey != newA.AppKey ||
+		// oldA.ID != newA.ID：两者 NormID 相同（配到同一 key）但原始大小写不同，
+		// 即「仅大小写改名」。account_id 落库虽是 *_ci 不影响 upsert，但配对身份变了，
+		// 保守起见触发重启，与 accountsByID 注释声明一致。
+		if oldA.ID != newA.ID ||
+			oldA.AppKey != newA.AppKey ||
 			oldA.AppSecret != newA.AppSecret ||
 			oldA.QuotaGroup != newA.QuotaGroup ||
 			oldA.Name != newA.Name {
@@ -195,11 +199,14 @@ func ClassifyChange(oldCfg, newCfg *Config) ChangeKind {
 	return ChangeNone
 }
 
-// accountsByID 把账号列表按 ID 建索引，方便 ClassifyChange 做逐个比对。
+// accountsByID 把账号列表按归一化 ID 建索引，方便 ClassifyChange 做逐个比对。
+// 用 NormID 做 key，与 FindAccount/validate 的大小写不敏感口径一致：账号 ID 仅大小写
+// 变更时，新旧仍配成同一条、进入字段级比对（会因 oldA.ID != newA.ID 触发 ChangeRestart），
+// 而不是被误判成「删一个账号 + 加一个账号」。
 func accountsByID(accounts []Account) map[string]Account {
 	m := make(map[string]Account, len(accounts))
 	for _, a := range accounts {
-		m[a.ID] = a
+		m[NormID(a.ID)] = a
 	}
 	return m
 }
