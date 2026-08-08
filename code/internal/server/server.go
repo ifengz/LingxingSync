@@ -123,7 +123,6 @@ func sharedFuncs() template.FuncMap {
 		"listItems": func() []navItem {
 			return []navItem{
 				{Key: "settings_api", Href: "/settings/api", Label: "API配置"},
-				{Key: "sync_center", Href: "/", Label: "概览"},
 				{Key: "sync_manage", Href: "/sync", Label: "同步配置"},
 				{Key: "logs", Href: "/logs", Label: "同步日志"},
 				{Key: "datasources", Href: "/datasources", Label: "数据源"},
@@ -199,7 +198,7 @@ func (s *Server) Routes() *http.ServeMux {
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticSub))))
 
 	// ---- 页面路由（返回 HTML shell）----
-	mux.HandleFunc("GET /{$}", s.pageIndex)       // 同步中心（首页）
+	mux.HandleFunc("GET /{$}", s.pageIndex)       // 重定向到 /sync（概览页已删）
 	mux.HandleFunc("GET /sync", s.pageSyncManage) // 同步管理
 	mux.HandleFunc("GET /logs", s.pageLogs)       // 同步日志
 	mux.HandleFunc("GET /datasources", s.pageDataSources)

@@ -123,8 +123,13 @@ func (s *Server) renderPage(w http.ResponseWriter, page string, data pageData) {
 	}
 }
 
+// pageIndex 把首页 / 永久重定向到 /sync。
+//
+// 原「概览」页（sync_center）已删除：它只读进程内存状态（/api/status），
+// 进程重启即全部回落「空闲」，与 /logs（查 sync_tasks，有完整历史）信息重叠且更弱。
+// 数据新鲜度改由 /datasources 的「最后写入」列承担（db.TableLastSync）。
 func (s *Server) pageIndex(w http.ResponseWriter, r *http.Request) {
-	s.renderPage(w, "sync_center", s.newPageData("sync_center"))
+	http.Redirect(w, r, "/sync", http.StatusFound)
 }
 
 func (s *Server) pageSyncManage(w http.ResponseWriter, r *http.Request) {

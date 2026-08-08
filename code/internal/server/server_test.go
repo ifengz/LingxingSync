@@ -27,7 +27,7 @@ func TestRenderPageWritesLayout(t *testing.T) {
 	}
 
 	recorder := httptest.NewRecorder()
-	s.renderPage(recorder, "sync_center", pageData{Active: "sync_center"})
+	s.renderPage(recorder, "sync_manage", pageData{Active: "sync_manage"})
 	if !strings.Contains(recorder.Body.String(), "<html>") {
 		t.Fatalf("rendered page missing layout: %q", recorder.Body.String())
 	}
