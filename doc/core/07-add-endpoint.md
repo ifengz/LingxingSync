@@ -106,7 +106,12 @@ endpoints:
   - name: sc_settlements         # 唯一标识，字母+下划线
     display: "SC 结算报告"
     account: "sc_us"             # 必须是 accounts[].id 中存在的值
-    path: "/openapi/erp/sc/settlements/list"   # 从领星文档"API Path"原样抄
+    # ⚠️ path 不要带 /openapi 前缀：baseURL 本身已是 https://openapi.lingxing.com，
+    # 写成 "/openapi/erp/..." 会拼成 /openapi/openapi/... → 领星回
+    # HTTP 200 + code=500 + msg="404 NOT_FOUND"（历史上 sc_sales_orders /
+    # sc_inventory 都栽在这里）。领星文档的 "API Path" 一般形如 /erp/sc/...，原样抄即可。
+    # 另：本段 sc_settlements 只是格式示例，path/唯一键均未经实证，勿直接照抄使用。
+    path: "/erp/sc/data/settlements/list"       # 从领星文档"API Path"原样抄（不加 /openapi）
     method: "POST"                              # 从领星文档"请求方式"原样抄
     table: "ls_settlements"      # 上一步建的表名
     record_id_fields: ["settlement_id"]  # 唯一键字段数组（来自官方文档"唯一键说明"）

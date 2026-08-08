@@ -19,6 +19,8 @@ BRANCH="${BRANCH:-main}"
 APP="${APP:-lingxing-sync}"
 PROG="${PROG:-lingxingsync}"
 PORT="${PORT:-7799}"
+# 健康检查探测路径。必须是一个真实存在的 GET 路由（见第 5 步注释）。
+HEALTH_PATH="${HEALTH_PATH:-/api/settings}"
 
 # Go 与 supervisorctl 可能不在 WebHook/脚本的 PATH 里，显式补上常见安装路径。
 # 宝塔把 supervisor 装在面板 pyenv 里（/www/server/panel/pyenv/bin），非标准 PATH，
@@ -60,19 +62,24 @@ else
   fail "找不到 supervisorctl，请手动重启 ${PROG}"
 fi
 
-log "5/5 健康检查（:${PORT}/api/status）"
+log "5/5 健康检查（:${PORT}${HEALTH_PATH}）"
+# 探测点用 /api/settings：一个真实存在的 GET 路由。
+# ⚠️ 勿改回 /api/status —— 该路由已随「概览页」一并删除，打它恒 404，
+#    会让健康检查在服务完全正常的情况下误判部署失败。
+#    换探测点时先用 `grep -n 'GET /api' internal/server/server.go` 确认路由还在。
+#
 # 认 200 或 401 都算「服务活着」：
-#   - 未配 server.secret 时 /api/status 返回 200；
+#   - 未配 server.secret 时返回 200；
 #   - 配了 secret 时，不带 X-Sync-Secret 头会被中间件挡成 401——
 #     但 401 恰恰证明 HTTP server 已起、鉴权中间件在工作，是有效存活信号。
 # 真正的宕机表现为连接拒绝（curl 返回 000），不会是 200/401。
 sleep 2
 for i in 1 2 3 4 5; do
-  code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://127.0.0.1:${PORT}/api/status" || echo 000)"
+  code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://127.0.0.1:${PORT}${HEALTH_PATH}" || echo 000)"
   if [ "${code}" = "200" ] || [ "${code}" = "401" ]; then
     log "部署完成 ✅  服务已就绪（HTTP ${code}），当前版本 ${AFTER}"
     exit 0
   fi
   sleep 2
 done
-fail "服务重启后 /api/status 未就绪（当前 ${code}，期望 200/401），请查 supervisor 日志"
+fail "服务重启后 ${HEALTH_PATH} 未就绪（当前 ${code}，期望 200/401），请查 supervisor 日志"

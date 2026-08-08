@@ -61,10 +61,14 @@ endpoints:
   - name: sc_sales_orders
     display: "SC 销售订单"
     account: "sc_us"
-    path: "/openapi/erp/sc/orders/list"
+    # ⚠️ path 不带 /openapi 前缀：baseURL 本身已是 https://openapi.lingxing.com，
+    # 早期误写 "/openapi/erp/sc/orders/list" 会拼成 /openapi/openapi/... → 领星回
+    # HTTP 200 + code=500 + msg="404 NOT_FOUND"。本路径已用真实账号 probe 跑通。
+    path: "/erp/sc/data/mws/orders"
     method: "POST"
     table: "ls_sales_orders"
-    record_id_fields: ["order_id"]
+    # 领星返回 amazon_order_id，没有 order_id；写错会 NOT NULL 主键取空值落不了库。
+    record_id_fields: ["amazon_order_id"]
     rate:
       bucket: 5
       interval_ms: 200
@@ -72,17 +76,20 @@ endpoints:
       dimension: "account+path"
     cron: "*/10 * * * *"
     enabled: true
-    window_days: 7
+    window_days: 7                      # 本接口必填 start_date/end_date
     extra_params:
-      type: 1                           # FBA=1, FBM=2
+      date_type: 1                      # 1=按订购时间【站点时间】筛选（该接口无 type 参数）
 
   - name: sc_inventory
     display: "SC FBA 库存"
     account: "sc_us"
-    path: "/openapi/erp/sc/inventory/list"
-    method: "POST"
+    # 同 sc_sales_orders 的坑：早期误写 "/openapi/erp/sc/inventory/list"（不存在）。
+    # 本路径与 006 迁移建的 ls_inventory 同源，生产已跑通（单次 5079 行）。
+    path: "/erp/sc/routing/fba/fbaStock/fbaList"
+    method: "GET"
     table: "ls_inventory"
-    record_id_fields: ["fnsku"]
+    # 同一 fnsku 在多店铺各一行，唯一键必须带 sid。
+    record_id_fields: ["sid", "fnsku"]
     rate:
       bucket: 1                         # bucket=1 → 强制串行翻页
       interval_ms: 1000
@@ -98,21 +105,17 @@ endpoints:
     # SC 接口喂 VC 店铺 sid（或反之）会拉到错数据，故 SC 迭代接口必须填 "SC"。
     store_type: "SC"
 
-  - name: sc_ads_daily
-    display: "SC 广告日报"
-    account: "sc_us"
-    path: "/openapi/erp/sc/ads/daily"
-    method: "POST"
-    table: "ls_ads_daily"
-    record_id_fields: ["report_id"]
-    rate:
-      bucket: 3
-      interval_ms: 333
-      multi_interval_ms: 2000
-      dimension: "account+path"
-    cron: "30 1 * * *"
-    enabled: true
-    window_days: 14
+  # 「SC 广告日报」示例已删除，不是遗漏。原来那段的
+  #   path: "/openapi/erp/sc/ads/daily"   record_id_fields: ["report_id"]
+  # 两者都不存在于领星 OpenAPI（凭空写的），照抄就是 404。同 internal/config/catalog.go
+  # 已移除该模板的理由：本文件的示例必须是「路径和唯一键都验证过」的。
+  #
+  # 领星真实的广告报表不是一个「日报」接口，而是一族（doc/core/08-api-reference.md §6.5）：
+  #   POST /pb/openapi/newad/spProductAdReports      SP 商品报表
+  #   POST /pb/openapi/newad/listHsaProductAdReport  SB 商品报表
+  #   POST /pb/openapi/newad/sdProductAdReports      SD 商品报表
+  # 还要先用 POST /basicOpen/baseData/account/list 取 profile_id 作参数。
+  # 要接按 doc/core/07-add-endpoint.md 走：probe 摸字段 → 各建一张表 → 各加一段配置。
 
 # ===== 日志留存 =====
 retention:
