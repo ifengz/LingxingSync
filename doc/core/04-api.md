@@ -27,8 +27,8 @@ HTTP 状态码：`200` = ok；`400` = 参数错误；`500` = 内部错误。
   "data": {
     "workers": [
       {
-        "name": "sc_sales_orders",
-        "display": "SC 销售订单",
+        "name": "sc_inventory",
+        "display": "SC FBA 库存",
         "account_id": "sc_us",
         "status": "idle",           // idle | running | error | disabled
         "last_run_at": "2026-08-06T10:30:00Z",
@@ -54,7 +54,7 @@ HTTP 状态码：`200` = ok；`400` = 参数错误；`500` = 内部错误。
 ### POST /api/sync/:name
 手动触发指定接口立即同步一次。
 
-**路径参数**：`name` = endpoint 标识（如 `sc_sales_orders`）
+**路径参数**：`name` = endpoint 标识（如 `sc_inventory`）
 
 **请求体**（可选）
 ```json
@@ -99,8 +99,8 @@ HTTP 状态码：`200` = ok；`400` = 参数错误；`500` = 内部错误。
     "items": [
       {
         "id": 456,
-        "endpoint": "sc_sales_orders",
-        "display": "SC 销售订单",
+        "endpoint": "sc_inventory",
+        "display": "SC FBA 库存",
         "account_id": "sc_us",
         "status": "success",
         "trigger_type": "cron",
@@ -154,7 +154,7 @@ HTTP 状态码：`200` = ok；`400` = 参数错误；`500` = 内部错误。
 {
   "ok": true,
   "data": [
-    { "name": "sc_sales_orders", "display": "SC 销售订单", "account_id": "sc_us", "enabled": true }
+    { "name": "sc_inventory", "display": "SC FBA 库存", "account_id": "sc_us", "enabled": true }
   ]
 }
 ```
@@ -304,7 +304,7 @@ HTTP 状态码：`200` = ok；`400` = 参数错误；`500` = 内部错误。
 删除账号。**若仍有 endpoint 引用该账号 → 409 拦截**，返回引用列表，不级联删除。
 
 ```json
-{ "ok": false, "error": "账号 sc_us 仍被 3 个接口引用，请先删除接口: [sc_stores, sc_inventory, sc_sales_orders]" }
+{ "ok": false, "error": "账号 sc_us 仍被 2 个接口引用，请先删除接口: [sc_stores, sc_inventory]" }
 ```
 
 ### POST /api/endpoints

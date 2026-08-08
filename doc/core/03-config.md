@@ -68,25 +68,6 @@ endpoints:
     enabled: true
     window_days: 0
 
-  - name: sc_sales_orders        # 任务标识，全局唯一，字母下划线
-    display: "SC 销售订单"        # UI 展示名
-    account: "sc_us"             # 对应 accounts[].id
-    # ⚠️ path 不带 /openapi 前缀：baseURL 已是 https://openapi.lingxing.com
-    path: "/erp/sc/data/mws/orders"
-    method: "POST"
-    table: "ls_sales_orders"     # 写入的目标表
-    record_id_fields: ["amazon_order_id"]  # 唯一键字段（复合主键用数组）
-    rate:                        # 从领星官方文档 Rate Limit 区块原样抄写
-      bucket: 5                  # 令牌桶容量（=1 时强制串行）
-      interval_ms: 200           # 单店铺调用最小间隔
-      multi_interval_ms: 1000    # 多店铺调用最小间隔
-      dimension: "account+path"  # 限流维度（领星按此维度共享配额）
-    cron: "*/10 * * * *"         # 标准 5 段 cron（服务器本地时间）
-    enabled: true
-    window_days: 7               # 每次拉取过去 N 天数据（滚动窗口）
-    extra_params:                # 接口特有参数（透传给 API）
-      type: 1                    # FBA=1, FBM=2
-
   - name: sc_inventory
     display: "SC FBA 库存"
     account: "sc_us"

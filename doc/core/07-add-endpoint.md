@@ -109,8 +109,8 @@ endpoints:
     account: "sc_us"             # 必须是 accounts[].id 中存在的值
     # ⚠️ path 不要带 /openapi 前缀：baseURL 本身已是 https://openapi.lingxing.com，
     # 写成 "/openapi/erp/..." 会拼成 /openapi/openapi/... → 领星回
-    # HTTP 200 + code=500 + msg="404 NOT_FOUND"（历史上 sc_sales_orders /
-    # sc_inventory 都栽在这里）。领星文档的 "API Path" 一般形如 /erp/sc/...，原样抄即可。
+    # HTTP 200 + code=500 + msg="404 NOT_FOUND"（历史上 sc_inventory 栽在这里）。
+    # 领星文档的 "API Path" 一般形如 /erp/sc/...，原样抄即可。
     # 另：本段 sc_settlements 只是格式示例，path/唯一键均未经实证，勿直接照抄使用。
     path: "/erp/sc/data/settlements/list"       # 从领星文档"API Path"原样抄（不加 /openapi）
     method: "POST"                              # 从领星文档"请求方式"原样抄
@@ -176,4 +176,4 @@ A：表中该列 NOT NULL 改为允许 NULL。fail-loud 只针对「必须存在
 A：领星接口通常是 `data.list[]`，每个 item 里有唯一键。`record_id_field` 填这个 item 内的字段名，如 `"order_id"`。
 
 **Q：两个账号要同步同一接口怎么配？**
-A：配两个 endpoint 段，name 不同（`sc_sales_orders_us` 和 `vc_sales_orders_de`），table 可以相同（靠 `account_id` 列区分），也可以不同。
+A：配两个 endpoint 段，name 不同（例如 `sc_inventory_us` 和 `sc_inventory_de`），table 可以相同（靠 `account_id` 列区分），也可以不同。
