@@ -17,7 +17,12 @@ REPO_DIR="${REPO_DIR:-/www/wwwroot/lingxing-sync}"
 CODE_DIR="${REPO_DIR}/code"
 BRANCH="${BRANCH:-main}"
 APP="${APP:-lingxing-sync}"
-PROG="${PROG:-lingxingsync}"
+# Supervisor 目标名。必须是「组名:*」而不是裸程序名：
+# 宝塔的 lingxingsync.ini 里 [program:lingxingsync] 带 numprocs，实际进程叫
+# lingxingsync_00 并归在 lingxingsync 组下。裸 `supervisorctl restart lingxingsync`
+# 会报「no such process」——不是名字拼错，是少了组语法。实测踩过这个坑。
+# 用 `supervisorctl status`（不带参数）可看到真实名字形如 lingxingsync:lingxingsync_00。
+PROG="${PROG:-lingxingsync:*}"
 PORT="${PORT:-7799}"
 # 健康检查探测路径。必须是一个真实存在的 GET 路由（见第 5 步注释）。
 HEALTH_PATH="${HEALTH_PATH:-/api/settings}"
@@ -67,7 +72,7 @@ log "4/5 重启服务（supervisor）"
 command -v supervisorctl >/dev/null 2>&1 || fail "找不到 supervisorctl，请手动重启 ${PROG}"
 SVC=(supervisorctl -c "${SUPERVISOR_CONF}")
 if ! "${SVC[@]}" restart "${PROG}"; then
-  # program 定义在宝塔插件目录（/www/server/panel/plugin/supervisor/profile/${PROG}.ini），
+  # program 定义在宝塔插件目录（/www/server/panel/plugin/supervisor/profile/*.ini），
   # 新增或改过之后 supervisord 内存里可能还没有它 → reread 读盘、update 加载，再重试。
   log "restart 失败，reread/update 重新加载 program 定义后重试"
   "${SVC[@]}" reread || true
