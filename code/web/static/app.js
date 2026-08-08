@@ -311,7 +311,7 @@ window.syncManage = function () {
         // 保留 path（矩阵去重键）/iterate_by_store/window_days：T1 类型合并与 T2 网格判定都需要
         this.endpoints = this.schedule.map(e => ({
           name: e.name, display: e.display, account_id: e.account, path: e.path,
-          iterate_by_store: !!e.iterate_by_store, window_days: e.window_days || 0
+          iterate_by_store: !!e.iterate_by_store, store_type: e.store_type || '', window_days: e.window_days || 0
         }));
         // 账号 ID→名称映射：勾选项与店铺网格显示账号名（自营领星）而非机器 ID（sc_us_1）。
         this.accountNames = {};
@@ -427,13 +427,28 @@ window.syncManage = function () {
       const slot = this.storesByAccount[acc];
       return slot ? Object.keys(slot.selected || {}).filter(k => slot.selected[k]).length : 0;
     },
-    // 计算某账号的可见（过滤后）店铺列表：按 store_name / sid 即时过滤
+    // 某账号当前选中的迭代接口需要哪些店铺类型（SC/VC）。返回 Set；含 '' 表示某接口不限类型 → 全放行。
+    neededStoreTypes(acc) {
+      const types = new Set();
+      for (const e of this.resolvedEndpoints) {
+        if (e.account_id === acc && e.iterate_by_store) types.add(e.store_type || '');
+      }
+      return types;
+    },
+    // 计算某账号的可见（过滤后）店铺列表：先按迭代接口的 store_type 过滤（SC 接口不显示 VC 店铺），
+    // 再按 store_name / sid 搜索过滤。
     visibleStores(acc) {
       const slot = this.storesByAccount[acc];
       if (!slot || !slot.loaded) return [];
+      const types = this.neededStoreTypes(acc);
+      // 含 '' = 有接口不限类型 → 不按类型过滤；否则只留 store_type 命中的店铺
+      let items = slot.items;
+      if (types.size && !types.has('')) {
+        items = items.filter(s => types.has(s.store_type));
+      }
       const q = (slot.query || '').trim().toLowerCase();
-      if (!q) return slot.items;
-      return slot.items.filter(s =>
+      if (!q) return items;
+      return items.filter(s =>
         (s.store_name && s.store_name.toLowerCase().includes(q)) ||
         (s.sid && s.sid.toLowerCase().includes(q)));
     },
@@ -886,6 +901,14 @@ window.settingsApi = function () {
     statusClass(a) {
       if (!a || !a.token_known) return 'bg-slate-100 text-slate-600';
       return a.token_valid ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700';
+    },
+    // 店铺状态展示：领星 status 是 int，落库不翻译；仅在页面按语义映射中文。
+    // 0 停止同步 / 1 正常 / 2 授权异常 / 3 欠费停服；未知值原样显示。
+    storeStatusText(s) {
+      const map = { '0': '停止同步', '1': '正常', '2': '授权异常', '3': '欠费停服' };
+      const key = (s === null || s === undefined) ? '' : String(s);
+      if (key === '') return '-';
+      return map[key] || key;
     },
     async loadEgress() {
       const egress = await window.apiGet('/api/egress-ip').catch(window.toastError);

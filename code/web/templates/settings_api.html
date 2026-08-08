@@ -220,7 +220,7 @@
                     <span x-show="store.store_type !== 'VC'" class="text-slate-400">-</span>
                   </td>
                   <td class="px-4 py-3 text-slate-600" x-text="store.country || '-'"></td>
-                  <td class="px-4 py-3 text-slate-600" x-text="store.status || '-'"></td>
+                  <td class="px-4 py-3 text-slate-600" x-text="storeStatusText(store.status)"></td>
                   <td class="px-4 py-3 text-slate-500" x-text="fmtTime(store.synced_at)"></td>
                   <td class="px-4 py-3 text-right">
                     <input type="checkbox" x-model="storeSel[store.sid]"

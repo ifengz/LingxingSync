@@ -53,6 +53,26 @@ assert.equal(entryManage.advancedAdd, false);
   assert.equal(JSON.stringify(m.storeAccounts), JSON.stringify(['sc_us_2']), 'storeAccounts 只含选中且按店铺接口的账号');
 }
 
+// 店铺网格按 store_type 过滤：SC 迭代接口不显示 VC 店铺（修 VC 店铺混入 SC 接口的 bug）。
+{
+  const m = sandbox.window.syncManage();
+  m.accounts = ['sc_us_2'];
+  m.endpoints = [
+    { name: 'sc_inventory_aff', display: 'SC FBA 库存（联营）', account_id: 'sc_us_2', path: '/inv', iterate_by_store: true, store_type: 'SC' },
+  ];
+  m.storesByAccount = { sc_us_2: { loaded: true, query: '', selected: {}, items: [
+    { sid: '7860', store_name: '结福-CA', store_type: 'SC' },
+    { sid: '134710', store_name: '日本-VC-New-JP', store_type: 'VC' },
+  ] } };
+  m.form.accounts = ['sc_us_2'];
+  m.form.types = ['/inv'];
+  // neededStoreTypes 只含 SC → VC 店铺被过滤掉
+  assert.equal(JSON.stringify([...m.neededStoreTypes('sc_us_2')]), JSON.stringify(['SC']));
+  const vis = m.visibleStores('sc_us_2');
+  assert.equal(vis.length, 1, 'SC 迭代接口只应显示 SC 店铺');
+  assert.equal(vis[0].sid, '7860');
+}
+
 const confirmation = sandbox.window.syncConfirm('删除账号？', '确认');
 root.confirmResolve(true);
 confirmation.then((accepted) => assert.equal(accepted, true));
@@ -131,6 +151,16 @@ void (async () => {
   assert.equal('schedules' in settings, false);
   assert.equal(typeof settings.saveSchedule, 'undefined');
   assert.equal(settings.connectionCheck.cron, '*/20 * * * *');
+
+  // 店铺状态映射：领星 int 状态在页面显示为中文；未知值原样、空值显示 '-'。
+  assert.equal(settings.storeStatusText('1'), '正常');
+  assert.equal(settings.storeStatusText('2'), '授权异常');
+  assert.equal(settings.storeStatusText('0'), '停止同步');
+  assert.equal(settings.storeStatusText('3'), '欠费停服');
+  assert.equal(settings.storeStatusText(1), '正常', '数字入参也应映射');
+  assert.equal(settings.storeStatusText(''), '-');
+  assert.equal(settings.storeStatusText(null), '-');
+  assert.equal(settings.storeStatusText('9'), '9', '未知状态原样显示');
 
   settings.accountForm.name = '美国主账号';
   await settings.saveAccount();
