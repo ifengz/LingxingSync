@@ -149,78 +149,34 @@ func (s *Server) pageSettingsAPI(w http.ResponseWriter, r *http.Request) {
 }
 
 // ---------------------------------------------------------------------------
-// API: GET /api/status
-// ---------------------------------------------------------------------------
-
-// statusWorkerOut 是 /api/status 中每个 worker 的输出结构。
-// 时间字段用指针，nil 序列化为 null；序列化为 RFC3339 由 marshalRFC3339 保证。
-type statusWorkerOut struct {
-	Name         string   `json:"name"`
-	Display      string   `json:"display"`
-	AccountID    string   `json:"account_id"`
-	Status       string   `json:"status"`
-	LastRunAt    *rfc3339 `json:"last_run_at"`
-	LastStatus   string   `json:"last_status"`
-	LastRecords  int      `json:"last_records"`
-	NextRunAt    *rfc3339 `json:"next_run_at"`
-	TodayRecords int      `json:"today_records"`
-	TodayErrors  int      `json:"today_errors"`
-}
-
-type statusSummaryOut struct {
-	Total    int `json:"total"`
-	Running  int `json:"running"`
-	Error    int `json:"error"`
-	Disabled int `json:"disabled"`
-}
-
-type statusOut struct {
-	Workers []statusWorkerOut `json:"workers"`
-	Summary statusSummaryOut  `json:"summary"`
-}
-
-func (s *Server) apiStatus(w http.ResponseWriter, r *http.Request) {
-	ws := s.reg.Statuses()
-	out := statusOut{Workers: make([]statusWorkerOut, 0, len(ws))}
-	for _, w0 := range ws {
-		out.Workers = append(out.Workers, statusWorkerOut{
-			Name:         w0.Name,
-			Display:      w0.Display,
-			AccountID:    w0.AccountID,
-			Status:       w0.Status,
-			LastRunAt:    toRFC3339(w0.LastRunAt),
-			LastStatus:   w0.LastStatus,
-			LastRecords:  w0.LastRecords,
-			NextRunAt:    toRFC3339(w0.NextRunAt),
-			TodayRecords: w0.TodayRecords,
-			TodayErrors:  w0.TodayErrors,
-		})
-	}
-	total, running, errCnt, disabled := s.reg.Summary()
-	out.Summary = statusSummaryOut{
-		Total: total, Running: running, Error: errCnt, Disabled: disabled,
-	}
-	okJSON(w, out)
-}
-
-// ---------------------------------------------------------------------------
 // API: GET /api/endpoints
 // ---------------------------------------------------------------------------
 
 type endpointOut struct {
-	Name      string `json:"name"`
-	Display   string `json:"display"`
-	AccountID string `json:"account_id"`
-	Table     string `json:"table"`
-	Enabled   bool   `json:"enabled"`
+	Name      string   `json:"name"`
+	Display   string   `json:"display"`
+	AccountID string   `json:"account_id"`
+	Table     string   `json:"table"`
+	Enabled   bool     `json:"enabled"`
+	LastSync  *rfc3339 `json:"last_sync"` // 该表 MAX(synced_at)，来自 DB（重启不失忆）；无数据/查询失败为 null
 }
 
 func (s *Server) apiEndpoints(w http.ResponseWriter, r *http.Request) {
 	items := make([]endpointOut, 0, len(s.cfg.Endpoints))
 	for _, e := range s.cfg.Endpoints {
+		// 数据新鲜度：读该表最后一次写入时间。这是「数据源」页展示用的只读信息，
+		// 某张表尚未建好或缺 synced_at 列时不能让整表接口失败——降级为 null，前端显示「从未」。
+		// N 个 endpoint = N 次 MAX(synced_at)，本页无轮询、仅加载/手动刷新触发，成本可接受。
+		var lastSync *rfc3339
+		if e.Table != "" {
+			if ts, err := db.TableLastSync(s.dbx, e.Table); err == nil {
+				lastSync = toRFC3339(ts)
+			}
+		}
 		items = append(items, endpointOut{
 			Name: e.Name, Display: e.Display,
 			AccountID: e.Account, Table: e.Table, Enabled: e.Enabled,
+			LastSync: lastSync,
 		})
 	}
 	okJSON(w, items)
@@ -375,7 +331,7 @@ type syncTriggerIn struct {
 }
 
 // apiSyncTrigger 立即触发某 endpoint 的同步。
-// task id 是 worker 异步产生，这里返回 ok+message 即可；前端通过 /api/status 轮询观察。
+// task id 是 worker 异步产生，这里返回 ok+message 即可；前端在 /logs 页通过 /api/tasks 观察结果。
 // body 可选携带 store_sids[]：仅对 iterate_by_store 的接口生效，按次覆盖店铺范围，
 // 不写回 config.yaml（10-frontend-rework-flow.md §3.2）。
 func (s *Server) apiSyncTrigger(w http.ResponseWriter, r *http.Request) {

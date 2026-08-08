@@ -84,41 +84,50 @@ var catalogEntries = []CatalogEntry{
 		IsStoreSource: true,
 	},
 	{
-		Key:         "sc_sales_orders",
-		Display:     "SC 销售订单",
-		Summary:     "亚马逊 FBA/FBM 销售订单，滚动近 7 天。",
-		Path:        "/openapi/erp/sc/orders/list",
-		Method:      "POST",
-		Table:       "ls_sales_orders",
-		RecordIDs:   []string{"order_id"},
-		Rate:        Rate{Bucket: 5, IntervalMs: 200, MultiIntervalMs: 1000, Dimension: "account+path"},
+		Key:     "sc_sales_orders",
+		Display: "SC 销售订单",
+		Summary: "亚马逊 FBA/FBM 销售订单，滚动近 7 天。",
+		// path 已用真实账号跑通（probe 200 行）。注意不带 /openapi 前缀：
+		// baseURL 本身就是 https://openapi.lingxing.com，早期误写成
+		// "/openapi/erp/sc/orders/list" 会拼成 /openapi/openapi/... → 领星回 404。
+		Path:      "/erp/sc/data/mws/orders",
+		Method:    "POST",
+		Table:     "ls_sales_orders",
+		RecordIDs: []string{"amazon_order_id"}, // 领星返回的是 amazon_order_id，没有 order_id
+		Rate:      Rate{Bucket: 5, IntervalMs: 200, MultiIntervalMs: 1000, Dimension: "account+path"},
+
 		DefaultCron: "*/10 * * * *",
-		WindowDays:  7,
-		ExtraParams: map[string]any{"type": 1},
+		WindowDays:  7, // → start_date/end_date，本接口必填
+		// date_type=1 按订购时间【站点时间】筛选。早期误写 type=1，该接口无此参数。
+		ExtraParams: map[string]any{"date_type": 1},
 	},
 	{
-		Key:         "sc_inventory",
-		Display:     "SC FBA 库存",
-		Summary:     "亚马逊 FBA 在库/在途库存快照，全量。",
-		Path:        "/openapi/erp/sc/inventory/list",
-		Method:      "POST",
-		Table:       "ls_inventory",
-		RecordIDs:   []string{"fnsku"},
-		Rate:        Rate{Bucket: 1, IntervalMs: 1000, MultiIntervalMs: 10000, Dimension: "account+path"},
-		DefaultCron: "0 */2 * * *",
+		Key:     "sc_inventory",
+		Display: "SC FBA 库存",
+		Summary: "亚马逊 FBA 在库/在途库存快照，全量。",
+		// 与 006 迁移建的 ls_inventory 同源的真实路径（生产已跑通，单次 5079 行）。
+		// 早期误写 "/openapi/erp/sc/inventory/list"（不存在），同 sc_sales_orders 的坑。
+		Path:      "/erp/sc/routing/fba/fbaStock/fbaList",
+		Method:    "GET",
+		Table:     "ls_inventory",
+		RecordIDs: []string{"sid", "fnsku"}, // 同一 fnsku 在多店铺各一行，必须带 sid
+		Rate:      Rate{Bucket: 1, IntervalMs: 1000, MultiIntervalMs: 10000, Dimension: "account+path"},
+
+		DefaultCron:    "0 */2 * * *",
+		IterateByStore: true,
+		StoreParamName: "sid",
 	},
-	{
-		Key:         "sc_ads_daily",
-		Display:     "SC 广告日报",
-		Summary:     "亚马逊广告按天汇总，滚动近 14 天。",
-		Path:        "/openapi/erp/sc/ads/daily",
-		Method:      "POST",
-		Table:       "ls_ads_daily",
-		RecordIDs:   []string{"report_id"},
-		Rate:        Rate{Bucket: 3, IntervalMs: 333, MultiIntervalMs: 2000, Dimension: "account+path"},
-		DefaultCron: "30 1 * * *",
-		WindowDays:  14,
-	},
+	// 「SC 广告日报」模板已移除，不是遗漏。原模板 path="/openapi/erp/sc/ads/daily"、
+	// RecordIDs=["report_id"] 两者都不存在于领星 OpenAPI（凭空写的），谁点启用谁吃 404。
+	// 本清单的契约是「路径和唯一键都已用真实账号验证过」，不能放没验证的条目。
+	//
+	// 领星真实的广告报表不是一个「日报」接口，而是一族（doc/core/08-api-reference.md §6.5）：
+	//   POST /pb/openapi/newad/spProductAdReports      SP 商品报表（归因 7 天）
+	//   POST /pb/openapi/newad/listHsaProductAdReport  SB 商品报表（归因 14 天）
+	//   POST /pb/openapi/newad/sdProductAdReports      SD 商品报表（归因 14 天）
+	// 还要先用 POST /basicOpen/baseData/account/list 取 profile_id 作参数。
+	// 要接的话按 doc/core/07-add-endpoint.md 走：probe 摸字段 → 各建一张表 → 各加一条模板；
+	// 现有 ls_ads_daily 表的列名（report_id/spend/sales/orders…）同样是臆造的，需一并重建。
 }
 
 // Catalog 返回内置清单的拷贝（防止调用方改动内部种子）。

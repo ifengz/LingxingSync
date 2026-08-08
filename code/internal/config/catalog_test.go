@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // TestCatalogToEndpoint 验证模板 → Endpoint 的字段映射：Name 拼进账号、Account 落位、
 // 合同字段（path/method/table/唯一键/rate/cron/参数形态）如实复制。
@@ -23,8 +26,10 @@ func TestCatalogToEndpoint(t *testing.T) {
 	if ep.Path != e.Path || ep.Method != e.Method || ep.Table != e.Table {
 		t.Fatalf("path/method/table 未如实复制: %+v", ep)
 	}
-	if len(ep.RecordIDFields) != 1 || ep.RecordIDFields[0] != "order_id" {
-		t.Fatalf("record_id_fields = %v, want [order_id]", ep.RecordIDFields)
+	// amazon_order_id 是 /erp/sc/data/mws/orders 真实返回的订单号字段（probe 验证）。
+	// 曾写成 order_id —— 领星不返回该字段，NOT NULL 主键写 NULL，接口永远落不了库。
+	if len(ep.RecordIDFields) != 1 || ep.RecordIDFields[0] != "amazon_order_id" {
+		t.Fatalf("record_id_fields = %v, want [amazon_order_id]", ep.RecordIDFields)
 	}
 	if ep.WindowDays != 7 {
 		t.Fatalf("window_days = %d, want 7", ep.WindowDays)
@@ -33,8 +38,42 @@ func TestCatalogToEndpoint(t *testing.T) {
 	// 改动生成结果的切片不应影响清单里的种子（ToEndpoint 必须深拷贝 RecordIDs）。
 	ep.RecordIDFields[0] = "mutated"
 	again, _ := FindCatalogEntry("sc_sales_orders")
-	if again.RecordIDs[0] != "order_id" {
+	if again.RecordIDs[0] != "amazon_order_id" {
 		t.Fatal("ToEndpoint 泄漏了种子切片，被调用方改动污染")
+	}
+}
+
+// TestCatalogPathsHaveNoOpenapiPrefix 守卫清单里的 path 不带 /openapi 前缀。
+//
+// 历史 bug：baseURL 本身就是 https://openapi.lingxing.com，模板里又写
+// "/openapi/erp/sc/orders/list"，拼出 /openapi/openapi/erp/... → 领星回
+// {"code":500,"msg":"404 NOT_FOUND"}，sc_sales_orders 长期 0 记录。
+// 这类错静默得很（HTTP 200 + 业务码 500），必须在测试层拦住。
+func TestCatalogPathsHaveNoOpenapiPrefix(t *testing.T) {
+	for _, e := range Catalog() {
+		if strings.HasPrefix(e.Path, "/openapi/") {
+			t.Errorf("模板 %q 的 path=%q 带了 /openapi 前缀：baseURL 已含该前缀，"+
+				"会拼成 /openapi/openapi/... 导致 404", e.Key, e.Path)
+		}
+		if !strings.HasPrefix(e.Path, "/") {
+			t.Errorf("模板 %q 的 path=%q 必须以 / 开头", e.Key, e.Path)
+		}
+	}
+}
+
+// TestCatalogEntriesHaveTargetTable 守卫每条模板都指定了目标表和唯一键。
+// 清单的契约是「已验证过」，缺表名或缺唯一键的模板启用后启动即 FATAL。
+func TestCatalogEntriesHaveTargetTable(t *testing.T) {
+	for _, e := range Catalog() {
+		if e.Table == "" {
+			t.Errorf("模板 %q 缺 Table", e.Key)
+		}
+		if len(e.RecordIDs) == 0 {
+			t.Errorf("模板 %q 缺 RecordIDs（唯一键）", e.Key)
+		}
+		if e.Method != "GET" && e.Method != "POST" {
+			t.Errorf("模板 %q 的 Method=%q 非法", e.Key, e.Method)
+		}
 	}
 }
 

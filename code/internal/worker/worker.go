@@ -25,6 +25,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jmoiron/sqlx"
 
@@ -33,8 +34,9 @@ import (
 	"lingxing-sync/internal/db"
 )
 
-// WorkerStatus 是 worker 的状态快照，给 /api/status 序列化用。
-// 所有字段都是值拷贝，调用方修改不影响 worker 内部状态。
+// WorkerStatus 是 worker 的状态快照，由 Status() 返回。
+// 现唯一消费者是 server 层的禁用闸门（手动触发时挡 status=="disabled" 的接口）；
+// 原 /api/status 概览接口已随概览页一并删除。所有字段都是值拷贝，调用方修改不影响 worker 内部状态。
 type WorkerStatus struct {
 	Name         string     `json:"name"`
 	Display      string     `json:"display"`
@@ -70,7 +72,7 @@ type EndpointWorker struct {
 	running       atomic.Bool  // 是否正在同步，避免同 worker 重入
 	currentTaskID atomic.Int64 // 当前任务 id（panic 兜底时用来标 error）
 
-	// 状态快照（给 /api/status），mu 保护
+	// 状态快照（由 Status() 读出，供禁用闸门判定），mu 保护
 	mu           sync.RWMutex
 	lastStatus   string    // 上次同步结果：success|error|cancelled
 	lastRunAt    time.Time // 上次同步开始时刻
@@ -495,6 +497,8 @@ func shouldContinuePaging(r *api.FetchResult, pageLen, fetched int) bool {
 
 // probeSample 把探测模式抓到的结果拼成一段可读字符串存进 task_logs.error_raw，
 // 便于离线读出领星返回的真实字段名。包含：首行样本 + 全量字段名清单 + 原始 JSON。
+// 整体截断到 probeSampleMaxBytes：探测的用途是读字段名，fields 和 first_row
+// 已经足够，原始 JSON 被截断不影响该用途；不截断则整行写不进库（见常量注释）。
 func probeSample(result *api.FetchResult) string {
 	var sb strings.Builder
 	sb.WriteString("PROBE sample\n")
@@ -510,12 +514,39 @@ func probeSample(result *api.FetchResult) string {
 		}
 	}
 	sb.WriteString("raw=" + string(result.Raw))
-	return sb.String()
+	return truncateUTF8(sb.String(), probeSampleMaxBytes)
+}
+
+// probeSampleMaxBytes 是探测样本写入 sync_task_logs.error_raw 的字节上限。
+// error_raw 是 MySQL TEXT（硬上限 65535 字节），超限 INSERT 直接报
+// "Data too long"，而 worker 对写日志的错误是 `_ =` 忽略的 —— 结果是
+// 「日志说已存 task_logs，库里却没有这一行」的静默丢样本。
+// 宽响应接口（如 /erp/sc/data/mws/orders，200 行 × 40 字段带 item_list）
+// 原始 JSON 轻易几百 KB，必须先截断。
+// 留 5535 字节余量给 fields/first_row 前缀和多字节字符边界。
+const probeSampleMaxBytes = 60000
+
+// truncateUTF8 把 s 截断到不超过 max 字节，且不切断多字节字符
+// （切断会产生非法 UTF-8，utf8mb4 列会拒收整行）。
+func truncateUTF8(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	const mark = "\n...[truncated]"
+	cut := max - len(mark)
+	if cut < 0 {
+		cut = 0
+	}
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut-- // 退到 rune 边界
+	}
+	return s[:cut] + mark
 }
 
 // baseParams 构造一个店铺无关的基础参数集合：
 //   - 复制 endpoint.ExtraParams（string 化值）
-//   - 若 WindowDays>0：注入 start_date/end_date（近 N 天，YYYY-MM-DD）
+//   - 若 WindowDays>0：注入窗口起止日期（近 N 天，YYYY-MM-DD），参数名取
+//     WindowStartField/WindowEndField（默认 start_date/end_date）
 func (w *EndpointWorker) baseParams() map[string]any {
 	params := make(map[string]any, len(w.Endpoint.ExtraParams)+2)
 	for k, v := range w.Endpoint.ExtraParams {
@@ -524,8 +555,11 @@ func (w *EndpointWorker) baseParams() map[string]any {
 	if w.Endpoint.WindowDays > 0 {
 		now := time.Now()
 		start := now.AddDate(0, 0, -w.Endpoint.WindowDays)
-		params["start_date"] = start.Format("2006-01-02")
-		params["end_date"] = now.Format("2006-01-02")
+		// 参数名可配：领星各接口命名不统一——SC/VC 订单用蛇形 start_date/end_date，
+		// VC 报表族（sales/realtimeSales/traffic/inventory）用驼峰 startDate/endDate。
+		// 曾经这里硬编码蛇形，导致 4 个 VC 报表始终 400「参数有误」。
+		params[w.Endpoint.WindowStartFieldOrDefault()] = start.Format("2006-01-02")
+		params[w.Endpoint.WindowEndFieldOrDefault()] = now.Format("2006-01-02")
 	}
 	// 单日期注入（报表类接口，如销量统计 event_date）：今天往前 DateOffsetDays 天。
 	// 与上面的 window 范围互补；DateField 空则不生效。通用机制，不给单接口写死代码。

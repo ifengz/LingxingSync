@@ -205,7 +205,6 @@ func (s *Server) Routes() *http.ServeMux {
 	mux.HandleFunc("GET /settings/api", s.pageSettingsAPI)
 
 	// ---- API 路由：状态/端点/任务 ----
-	mux.HandleFunc("GET /api/status", s.apiStatus)
 	mux.HandleFunc("GET /api/endpoints", s.apiEndpoints)
 	mux.HandleFunc("GET /api/egress-ip", s.apiEgressIP)
 	mux.HandleFunc("GET /api/tasks", s.apiTasks)

@@ -19,9 +19,11 @@ package main
 import (
 	"context"
 	"embed"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -137,10 +139,12 @@ func main() {
 	store := config.NewStore(*configPath, cfg)
 	srv := server.New(cfg, dbx, registry, clients, *baseURL, assets, store, sched, limiterReg, *configPath)
 
-	// HTTP 在后台跑；主 goroutine 等信号优雅退出
+	// HTTP 在后台跑；主 goroutine 等信号优雅退出。
+	// 监听失败（如端口被占）必须 FATAL：否则进程留在「Worker 照跑、UI 打不开」的
+	// 僵尸态，还在继续写库，排障时极易误判。ErrServerClosed 是正常关停，不算失败。
 	go func() {
-		if err := srv.Start(); err != nil {
-			log.Printf("[main] HTTP 服务退出: %v", err)
+		if err := srv.Start(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Fatalf("[main] HTTP 服务启动失败: %v", err)
 		}
 	}()
 

@@ -1,11 +1,11 @@
 // Package worker 的 registry.go 实现全局 worker 注册表。
 //
 // 职责：维护「任务名 → EndpointWorker」的全局索引，供：
-//   - server 层 /api/status 聚合所有 worker 状态（§7）；
 //   - server 层 /api/sync/<name> 手动触发时按 name 找到 worker（§8）；
+//   - server 层禁用闸门按 name 取 worker 读 Status()（手动触发挡禁用接口）；
 //   - scheduler 按 endpoint.Name 取 worker 发触发信号（§3）。
 //
-// 宪法对应：§2（每「账号+接口」一个 worker）、§7（状态聚合）。
+// 宪法对应：§2（每「账号+接口」一个 worker）。
 package worker
 
 import (
@@ -51,17 +51,6 @@ func (r *Registry) All() []*EndpointWorker {
 	return out
 }
 
-// Statuses 聚合所有 worker 的状态快照，给 /api/status 序列化用。
-// 不持锁跨网络/序列化：先在锁内把 worker 列表拷出来，再逐个调 w.Status()。
-func (r *Registry) Statuses() []WorkerStatus {
-	workers := r.All()
-	out := make([]WorkerStatus, 0, len(workers))
-	for _, w := range workers {
-		out = append(out, w.Status())
-	}
-	return out
-}
-
 // ApplyHotReload 用新配置热更新已存在的 worker（配置热加载入口之一）。
 // 只处理「按 name 能在注册表里找到对应 worker」的 endpoint：新增的 endpoint 没有
 // worker 可更新（结构性变更，需要完整重启），这里直接忽略。
@@ -71,26 +60,4 @@ func (r *Registry) ApplyHotReload(cfg *config.Config) {
 			w.UpdateEndpoint(ep)
 		}
 	}
-}
-
-// Summary 返回汇总计数，给 /api/status 顶部 dashboard 用。
-//   - total：worker 总数
-//   - running：当前正在同步的数量
-//   - err：最近一次同步状态为 error 的数量
-//   - disabled：endpoint.Enabled=false 的数量
-func (r *Registry) Summary() (total, running, errCount, disabled int) {
-	workers := r.All()
-	total = len(workers)
-	for _, w := range workers {
-		st := w.Status()
-		switch st.Status {
-		case "running":
-			running++
-		case "error":
-			errCount++
-		case "disabled":
-			disabled++
-		}
-	}
-	return total, running, errCount, disabled
 }

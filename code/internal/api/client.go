@@ -32,11 +32,12 @@ var MockMode bool
 
 // FetchResult 是一次分页拉取的结果。
 type FetchResult struct {
-	List           []map[string]any // data.list 展开成 []map（兼容 data 本身是数组的情况）
-	Total          int              // data.total
-	HasMore        bool             // data.has_more 的值；缺失则为 false（parse 层不推断）
-	HasMorePresent bool             // data 里是否"出现"了 has_more 字段（用于 worker 选择终止策略）
-	Raw            json.RawMessage  // 原始响应体（落 sync_task_logs 证据，可选）
+	List []map[string]any // data.list 展开成 []map（兼容 data 本身是数组的情况）
+	// Total 优先取 data.total；data 是裸数组时取响应顶层的 total（见 §顶层 total）。
+	Total          int
+	HasMore        bool            // data.has_more 的值；缺失则为 false（parse 层不推断）
+	HasMorePresent bool            // data 里是否"出现"了 has_more 字段（用于 worker 选择终止策略）
+	Raw            json.RawMessage // 原始响应体（落 sync_task_logs 证据，可选）
 }
 
 // Client 是领星 OpenAPI 业务请求客户端。一个账号一个实例。
@@ -73,6 +74,13 @@ type apiResponse struct {
 	Message string          `json:"message"`
 	Msg     string          `json:"msg"` // 兼容部分接口用 msg
 	Data    json.RawMessage `json:"data"`
+	// Total 是「顶层 total」。部分接口（如 /erp/sc/data/mws/orders）把 data 直接返回成
+	// 裸数组，总数放在响应顶层而不是 data 里：
+	//   {"code":0,"message":"操作成功","data":[...],"total":905,"request_id":"..."}
+	// 历史 bug：这里不收 total，parseFetchResult 又只拿得到 data，于是 Total 恒为 0，
+	// worker 的翻页判定（has_more 缺失 → 看 offset+len>=total）直接在第 1 页终止，
+	// 905 条订单静默落库成 200 条 —— 任务还显示 success，是最难发现的一类错。
+	Total int `json:"total"`
 }
 
 // apiCode 兼容 JSON 里的数字与字符串 code（领星不同接口不统一）。
@@ -281,11 +289,35 @@ func (c *Client) fetchOnce(ctx context.Context, method, path string, params map[
 	if err != nil {
 		return nil, resp.StatusCode, ar.Code.asInt(), fmt.Errorf("lingxing fetch: parse data: %w, body=%s", err, truncateForLog(raw))
 	}
+	// 10b. 顶层 total 兜底（见 applyTopLevelTotal）。
+	applyTopLevelTotal(result, ar.Total)
 	if err := normalizeStoreRows(path, result.List); err != nil {
 		return nil, resp.StatusCode, ar.Code.asInt(), fmt.Errorf("lingxing fetch: map store fields: %w, body=%s", err, truncateForLog(raw))
 	}
 	result.Raw = raw
 	return result, resp.StatusCode, ar.Code.asInt(), nil
+}
+
+// applyTopLevelTotal 在 data 内没给 total 时，用响应顶层的 total 兜底。
+//
+// 为什么需要：领星有两种分页信号摆放方式 ——
+//
+//	A) data 是对象：{"data":{"list":[...],"total":905,"has_more":false}}
+//	B) data 是裸数组，总数在顶层：{"data":[...],"total":905}   ← /erp/sc/data/mws/orders
+//
+// 形态 B 下 parseFetchResult 只拿得到 data，Total 恒为 0，worker 的翻页判定
+// （has_more 缺失 → 看 offset+len>=total）在第 1 页就终止，905 条静默落成 200 条，
+// 任务却是 success —— 最难发现的一类错。
+//
+// 优先级：data.total 高于顶层 total（data 内的更贴近该次分页语义）；
+// 顶层 total 只在 data 未提供时生效。通用机制，不给单接口写死（宪法：加接口零代码）。
+func applyTopLevelTotal(result *FetchResult, topLevelTotal int) {
+	if result == nil {
+		return
+	}
+	if result.Total == 0 && topLevelTotal > 0 {
+		result.Total = topLevelTotal
+	}
 }
 
 // parseFetchResult 把 data（json.RawMessage）解析成 FetchResult。

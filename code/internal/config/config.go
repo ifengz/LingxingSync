@@ -94,6 +94,23 @@ func (a Account) QuotaGroupOrID() string {
 	return a.ID
 }
 
+// WindowStartFieldOrDefault 返回窗口起始参数名，未填则 "start_date"。
+// 见 Endpoint.WindowStartField 的注释：领星驼峰/蛇形两派并存，名字错就 400。
+func (e Endpoint) WindowStartFieldOrDefault() string {
+	if e.WindowStartField != "" {
+		return e.WindowStartField
+	}
+	return "start_date"
+}
+
+// WindowEndFieldOrDefault 返回窗口结束参数名，未填则 "end_date"。
+func (e Endpoint) WindowEndFieldOrDefault() string {
+	if e.WindowEndField != "" {
+		return e.WindowEndField
+	}
+	return "end_date"
+}
+
 // Rate 是单个接口的限流档案，从领星文档 Rate Limit 区块原样抄写。
 type Rate struct {
 	Bucket          int    `yaml:"bucket"`            // 令牌桶容量；=1 时强制串行
@@ -114,8 +131,18 @@ type Endpoint struct {
 	Rate           Rate           `yaml:"rate"`
 	Cron           string         `yaml:"cron"`
 	Enabled        bool           `yaml:"enabled"`
-	WindowDays     int            `yaml:"window_days"` // 0=全量；>0=滚动 N 天（注入 start_date/end_date 范围）
+	WindowDays     int            `yaml:"window_days"` // 0=全量；>0=滚动 N 天（注入窗口起止日期）
 	ExtraParams    map[string]any `yaml:"extra_params"`
+
+	// 窗口参数名（WindowDays>0 时注入的那两个参数叫什么）。
+	// 领星各接口对日期参数的命名不统一，实测两派并存：
+	//   - 蛇形 start_date/end_date：/erp/sc/data/mws/orders、/basicOpen/platformOrder/vcOrder/pageList
+	//   - 驼峰 startDate/endDate：  /basicOpen/vc/report/{sales,realtimeSales,traffic,inventory}/list
+	// 名字对不上，领星一律回 code=400 "参数有误"。因此做成可配置，而不是在 worker 里
+	// 按 path 写 if——那会违反 CLAUDE.md §1.3「加接口零代码改动」。
+	// 空则默认 start_date/end_date（向后兼容既有配置，不必逐条回填）。
+	WindowStartField string `yaml:"window_start_field"` // 窗口起始参数名，空=start_date
+	WindowEndField   string `yaml:"window_end_field"`   // 窗口结束参数名，空=end_date
 
 	// 单日期参数（报表类接口常见，如销量统计的 event_date）：与 WindowDays 的「范围」互补。
 	// DateField 非空时，baseParams 注入 DateField = 今天往前 DateOffsetDays 天的单个 YYYY-MM-DD。

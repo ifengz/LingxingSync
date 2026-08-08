@@ -91,6 +91,12 @@ endpoints:
     cron: "0 */2 * * *"
     enabled: true
     window_days: 0                      # 0 = 全量
+    # 按店铺迭代：Worker 从 ls_stores 取该账号店铺，逐个注入 store_param_name 各拉一次。
+    iterate_by_store: true
+    store_param_name: "sid"
+    # store_type 限定只迭代该类型店铺（SC/VC，对齐 ls_stores.store_type）；空=不过滤。
+    # SC 接口喂 VC 店铺 sid（或反之）会拉到错数据，故 SC 迭代接口必须填 "SC"。
+    store_type: "SC"
 
   - name: sc_ads_daily
     display: "SC 广告日报"
