@@ -1,4 +1,4 @@
 -- 009_rename_account.sql
 --
 -- 账号改名迁移已移到 015_rename_account_non_destructive.sql。
--- 本文件保留为空迁移，避免历史版本中的 DELETE 冲突清理逻辑在启动时再次执行。
+-- 本文件保留为空迁移，避免历史版本中的冲突清理逻辑在启动时再次执行。

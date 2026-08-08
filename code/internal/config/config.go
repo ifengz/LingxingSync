@@ -111,6 +111,12 @@ func (e Endpoint) WindowEndFieldOrDefault() string {
 	return "end_date"
 }
 
+// DateRangeCapable reports whether this endpoint has a verified range contract.
+// Snapshot endpoints and single-date endpoints must not receive start/end parameters.
+func (e Endpoint) DateRangeCapable() bool {
+	return e.DateField == "" && (e.WindowDays > 0 || e.WindowStartField != "" || e.WindowEndField != "")
+}
+
 // Rate 是单个接口的限流档案，从领星文档 Rate Limit 区块原样抄写。
 type Rate struct {
 	Bucket          int    `yaml:"bucket"`            // 令牌桶容量；=1 时强制串行
@@ -137,7 +143,7 @@ type Endpoint struct {
 
 	// 窗口参数名（WindowDays>0 时注入的那两个参数叫什么）。
 	// 领星各接口对日期参数的命名不统一，实测两派并存：
-	//   - 蛇形 start_date/end_date：/erp/sc/data/mws/orders、/basicOpen/platformOrder/vcOrder/pageList
+	//   - 蛇形 start_date/end_date：/basicOpen/platformOrder/vcOrder/pageList
 	//   - 驼峰 startDate/endDate：  /basicOpen/vc/report/{sales,realtimeSales,traffic,inventory}/list
 	// 名字对不上，领星一律回 code=400 "参数有误"。因此做成可配置，而不是在 worker 里
 	// 按 path 写 if——那会违反 CLAUDE.md §1.3「加接口零代码改动」。

@@ -250,7 +250,9 @@ window.syncManage = function () {
         // 保留 path（矩阵去重键）/iterate_by_store/window_days：T1 类型合并与 T2 网格判定都需要
         this.endpoints = this.schedule.map(e => ({
           name: e.name, display: e.display, account_id: e.account, path: e.path,
-          iterate_by_store: !!e.iterate_by_store, store_type: e.store_type || '', window_days: e.window_days || 0
+          iterate_by_store: !!e.iterate_by_store, store_type: e.store_type || '', window_days: e.window_days || 0,
+          date_field: e.date_field || '', date_offset_days: e.date_offset_days || 0,
+          date_range_capable: !!e.date_range_capable
         }));
         // 账号 ID→名称映射：勾选项与店铺网格显示账号名（自营领星）而非机器 ID（sc_us_1）。
         this.accountNames = {};
@@ -347,6 +349,28 @@ window.syncManage = function () {
     },
     // 已选组合数（真实要触发的接口数），顶部计数用。
     get selectedCount() { return this.resolvedEndpoints.length; },
+
+    get dateRangeIssue() {
+      const from = this.form.date_from;
+      const to = this.form.date_to;
+      if (!from && !to) return '';
+      if (!from || !to) return '同步日期必须同时填写开始和结束日期';
+      if (from > to) return '结束日期不能早于开始日期';
+      const unsupported = this.resolvedEndpoints.filter(e =>
+        !e.date_range_capable && !(e.date_field && from === to));
+      if (unsupported.length) return '所选接口不支持此日期范围：' + unsupported.map(e => e.display || e.name).join('、');
+      return '';
+    },
+    get dateRangeHint() {
+      const selected = this.resolvedEndpoints;
+      if (!selected.length) return '选择接口后可设置本次同步日期；不填则沿用接口默认策略。';
+      const ranges = selected.filter(e => e.date_range_capable).length;
+      const singles = selected.filter(e => e.date_field).length;
+      if (!ranges && !singles) return '所选接口是快照/全量接口，日期范围不适用。';
+      if (singles && !ranges) return '所选接口按单日同步，只能选择同一天。';
+      if (singles) return '范围接口可选起止日期；单日接口只能选择同一天。';
+      return '仅本次生效，不修改定时同步的默认窗口。';
+    },
 
     // ---- T2：店铺勾选网格辅助 ----
     // 解析出的接口里存在 iterate_by_store:true → 才显示网格
@@ -448,15 +472,21 @@ window.syncManage = function () {
         window.toast('warn', '所选账号与数据类型没有可触发的接口组合'); return;
       }
       const sel = resolved.map(e => e.name);
+      if (this.dateRangeIssue) { window.toast('warn', this.dateRangeIssue); return; }
       // 为每个接口构造请求体：只有 iterate_by_store 且该账号有勾选时才带 store_sids；
       // 不勾 = 不传 = 后端按配置白名单（决策③：每次进页面空选）
       const buildReq = (name) => {
         const e = this.endpoints.find(x => x.name === name);
+        const body = {};
+        if (this.form.date_from && this.form.date_to) {
+          body.date_from = this.form.date_from;
+          body.date_to = this.form.date_to;
+        }
         if (e && e.iterate_by_store) {
           const sids = this.selectedSidsOf(e.account_id);
-          if (sids.length) return { store_sids: sids };
+          if (sids.length) body.store_sids = sids;
         }
-        return {};
+        return body;
       };
       // Promise.allSettled：一个接口 409（已在跑）不阻断其它（决策①）
       const results = await Promise.allSettled(sel.map(name =>
@@ -491,6 +521,8 @@ window.syncManage = function () {
         cron: e.cron || '',
         bucket: e.rate ? Number(e.rate.bucket) : 1,
         interval_ms: e.rate ? Number(e.rate.interval_ms) : 0,
+        window_days: Number(e.window_days) || 0,
+        date_offset_days: Number(e.date_offset_days) || 0,
         store_sids_text: (e.store_sids_text || '').split(',').map(s => s.trim()).filter(Boolean).join(','),
         enabled: !!e.enabled
       });
@@ -518,6 +550,8 @@ window.syncManage = function () {
       e.cron = b.cron;
       e.rate.bucket = b.bucket;
       e.rate.interval_ms = b.interval_ms;
+      e.window_days = b.window_days;
+      e.date_offset_days = b.date_offset_days;
       e.store_sids_text = b.store_sids_text;
       e.enabled = b.enabled;
     },

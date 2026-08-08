@@ -16,6 +16,7 @@ code/logs/
 # 编译缓存 / 工具环境垃圾（绝不进仓库）
 code/.gocache/
 code/.playwright-cli/
+.playwright-cli/
 .playwright-mcp/
 .zcode/
 

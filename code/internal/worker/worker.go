@@ -133,7 +133,8 @@ func New(ep config.Endpoint, acc config.Account, client *api.Client, dbx *sqlx.D
 	if fatalErr == nil && !ep.Probe {
 		conflict, err := db.AccountMigrationConflict(dbx, ep.Table, ep.Account)
 		if err != nil {
-			fatalErr = fmt.Errorf("读取账号迁移冲突告警失败: %w", err)
+			// 冲突记录表只由 015 创建；旧库尚未完成该迁移时不把查询失败扩大成全站故障。
+			log.Printf("[worker:%s] 读取账号迁移冲突告警失败，同步继续: %v", ep.Name, err)
 		} else if conflict != "" {
 			fatalErr = fmt.Errorf("%s", conflict)
 		}
@@ -228,6 +229,8 @@ func missingDeclaredColumns(ep config.Endpoint, cols []string) []string {
 type triggerReq struct {
 	kind      string   // "cron" | "manual"
 	storeSids []string // 仅 manual 且用户按次指定时非空；nil/空 = 沿用配置白名单
+	dateFrom  string   // 仅支持日期范围的 manual endpoint 使用；空=沿用默认窗口
+	dateTo    string
 }
 
 // Trigger 非阻塞发送定时调度信号。返回 false 表示已有任务在队列中。
@@ -239,6 +242,12 @@ func (w *EndpointWorker) Trigger() bool {
 // 空则沿用 endpoint 配置的 StoreSids 白名单。返回 false 表示已有任务在队列中。
 func (w *EndpointWorker) TriggerManual(storeSids []string) bool {
 	return w.send(triggerReq{kind: "manual", storeSids: storeSids})
+}
+
+// TriggerManualWithRange queues one manual run with a transient date range.
+// The range is carried only by this request and never writes endpoint defaults.
+func (w *EndpointWorker) TriggerManualWithRange(storeSids []string, dateFrom, dateTo string) bool {
+	return w.send(triggerReq{kind: "manual", storeSids: storeSids, dateFrom: dateFrom, dateTo: dateTo})
 }
 
 func (w *EndpointWorker) send(req triggerReq) bool {
@@ -438,7 +447,7 @@ func (w *EndpointWorker) doSync(ctx context.Context, req triggerReq) {
 				status = "cancelled"
 				return
 			}
-			params := w.baseParams()
+			params := w.baseParamsFor(req)
 			params[paramName] = sid
 			rec, pages, ok := w.fetchAllPages(syncCtx, taskID, params)
 			totalRecords += rec
@@ -461,7 +470,7 @@ func (w *EndpointWorker) doSync(ctx context.Context, req triggerReq) {
 	}
 
 	// 单店铺：直接一次 fetchAllPages
-	rec, pages, ok := w.fetchAllPages(syncCtx, taskID, w.baseParams())
+	rec, pages, ok := w.fetchAllPages(syncCtx, taskID, w.baseParamsFor(req))
 	totalRecords = rec
 	totalPages = pages
 	if !ok {
@@ -685,6 +694,19 @@ func (w *EndpointWorker) baseParams() map[string]any {
 	if w.Endpoint.DateField != "" {
 		d := time.Now().AddDate(0, 0, -w.Endpoint.DateOffsetDays)
 		params[w.Endpoint.DateField] = d.Format("2006-01-02")
+	}
+	return params
+}
+
+func (w *EndpointWorker) baseParamsFor(req triggerReq) map[string]any {
+	params := w.baseParams()
+	if req.kind == "manual" && req.dateFrom != "" && req.dateTo != "" {
+		if w.Endpoint.DateField != "" {
+			params[w.Endpoint.DateField] = req.dateFrom
+		} else {
+			params[w.Endpoint.WindowStartFieldOrDefault()] = req.dateFrom
+			params[w.Endpoint.WindowEndFieldOrDefault()] = req.dateTo
+		}
 	}
 	return params
 }

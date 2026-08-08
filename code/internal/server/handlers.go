@@ -15,6 +15,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -330,6 +331,26 @@ func (s *Server) apiTaskLogs(w http.ResponseWriter, r *http.Request) {
 type syncTriggerIn struct {
 	Force     bool     `json:"force"`
 	StoreSids []string `json:"store_sids"` // 可选：本次只同步这些店铺；空=按配置白名单
+	DateFrom  string   `json:"date_from"`
+	DateTo    string   `json:"date_to"`
+}
+
+func validateSyncDateRange(dateFrom, dateTo string) error {
+	if dateFrom == "" || dateTo == "" {
+		return fmt.Errorf("日期范围必须同时填写开始和结束日期")
+	}
+	from, err := time.Parse("2006-01-02", dateFrom)
+	if err != nil {
+		return fmt.Errorf("开始日期必须是 YYYY-MM-DD")
+	}
+	to, err := time.Parse("2006-01-02", dateTo)
+	if err != nil {
+		return fmt.Errorf("结束日期必须是 YYYY-MM-DD")
+	}
+	if from.After(to) {
+		return fmt.Errorf("结束日期不能早于开始日期")
+	}
+	return nil
 }
 
 // apiSyncTrigger 立即触发某 endpoint 的同步。
@@ -353,9 +374,26 @@ func (s *Server) apiSyncTrigger(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in syncTriggerIn
-	_ = decodeJSON(r, &in) // body 可选
+	if err := decodeJSON(r, &in); err != nil {
+		errJSON(w, http.StatusBadRequest, "请求体格式错误: "+err.Error())
+		return
+	}
+	in.DateFrom = strings.TrimSpace(in.DateFrom)
+	in.DateTo = strings.TrimSpace(in.DateTo)
+	if in.DateFrom != "" || in.DateTo != "" {
+		if err := validateSyncDateRange(in.DateFrom, in.DateTo); err != nil {
+			errJSON(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if w0.Endpoint.DateField != "" && in.DateFrom == in.DateTo {
+			// Single-date endpoints use the same day for their verified DateField.
+		} else if !w0.Endpoint.DateRangeCapable() {
+			errJSON(w, http.StatusBadRequest, "该接口不支持日期范围：快照接口同步当前全量，单日接口按自身日期配置执行")
+			return
+		}
+	}
 
-	if !w0.TriggerManual(in.StoreSids) {
+	if !w0.TriggerManualWithRange(in.StoreSids, in.DateFrom, in.DateTo) {
 		errJSON(w, http.StatusConflict, "同步任务已在运行或队列中，请在同步日志查看结果: "+name)
 		return
 	}

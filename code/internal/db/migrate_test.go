@@ -27,6 +27,7 @@ func TestRenameAccountMigrationPreservesConflicts(t *testing.T) {
 		t.Fatal("账号迁移必须只更新不冲突的行")
 	}
 }
+
 func TestFBAInventoryTableRenameMigrationIsPresent(t *testing.T) {
 	raw, err := os.ReadFile("../../migrations/001_rename_ls_inventory_to_ls_fba_inventory.sql")
 	if err != nil {

@@ -1,7 +1,7 @@
 -- 015_rename_account_non_destructive.sql
 --
 -- Sc_us -> sc_us_2（联营），sc_us -> sc_us_1（自营）。
--- 账号改名只能更新不会撞主键的行；冲突行原地保留，绝不 DELETE。
+-- 账号改名只能更新不会撞主键的行；冲突行原地保留，不做删除。
 -- 冲突按表记录，worker 启动时只禁用引用该表的 endpoint，HTTP 和其他接口继续运行。
 
 CREATE TABLE IF NOT EXISTS migration_account_conflicts (

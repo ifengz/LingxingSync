@@ -47,3 +47,15 @@ func TestBaseParamsNoDateFieldMeansNoInjection(t *testing.T) {
 		t.Fatalf("DateField 为空时不应注入任何参数，got %v", params)
 	}
 }
+
+func TestBaseParamsForManualRangeOverridesConfiguredWindow(t *testing.T) {
+	w := &EndpointWorker{Endpoint: config.Endpoint{
+		WindowDays:       7,
+		WindowStartField: "startDate",
+		WindowEndField:   "endDate",
+	}}
+	params := w.baseParamsFor(triggerReq{kind: "manual", dateFrom: "2026-08-01", dateTo: "2026-08-03"})
+	if params["startDate"] != "2026-08-01" || params["endDate"] != "2026-08-03" {
+		t.Fatalf("manual date range = %#v, want exact override", params)
+	}
+}

@@ -8,14 +8,14 @@ import (
 // TestCatalogToEndpoint 验证模板 → Endpoint 的字段映射：Name 拼进账号、Account 落位、
 // 合同字段（path/method/table/唯一键/rate/cron/参数形态）如实复制。
 func TestCatalogToEndpoint(t *testing.T) {
-	e, err := FindCatalogEntry("sc_sales_orders")
+	e, err := FindCatalogEntry("sc_inventory")
 	if err != nil {
 		t.Fatalf("FindCatalogEntry: %v", err)
 	}
 	ep := e.ToEndpoint("sc_us")
 
-	if ep.Name != "sc_sales_orders_sc_us" {
-		t.Fatalf("Name = %q, want sc_sales_orders_sc_us", ep.Name)
+	if ep.Name != "sc_inventory_sc_us" {
+		t.Fatalf("Name = %q, want sc_inventory_sc_us", ep.Name)
 	}
 	if ep.Account != "sc_us" {
 		t.Fatalf("Account = %q, want sc_us", ep.Account)
@@ -26,20 +26,76 @@ func TestCatalogToEndpoint(t *testing.T) {
 	if ep.Path != e.Path || ep.Method != e.Method || ep.Table != e.Table {
 		t.Fatalf("path/method/table 未如实复制: %+v", ep)
 	}
-	// amazon_order_id 是 /erp/sc/data/mws/orders 真实返回的订单号字段（probe 验证）。
-	// 曾写成 order_id —— 领星不返回该字段，NOT NULL 主键写 NULL，接口永远落不了库。
-	if len(ep.RecordIDFields) != 1 || ep.RecordIDFields[0] != "amazon_order_id" {
-		t.Fatalf("record_id_fields = %v, want [amazon_order_id]", ep.RecordIDFields)
+	if len(ep.RecordIDFields) != 2 || ep.RecordIDFields[0] != "sid" || ep.RecordIDFields[1] != "fnsku" {
+		t.Fatalf("record_id_fields = %v, want [sid fnsku]", ep.RecordIDFields)
 	}
-	if ep.WindowDays != 7 {
-		t.Fatalf("window_days = %d, want 7", ep.WindowDays)
+	if !ep.IterateByStore || ep.StoreParamName != "sid" {
+		t.Fatalf("SC 库存模板未保留按店铺同步合同: %+v", ep)
+	}
+	if ep.StoreType != "SC" {
+		t.Fatalf("store_type = %q, want SC", ep.StoreType)
 	}
 
 	// 改动生成结果的切片不应影响清单里的种子（ToEndpoint 必须深拷贝 RecordIDs）。
 	ep.RecordIDFields[0] = "mutated"
-	again, _ := FindCatalogEntry("sc_sales_orders")
-	if again.RecordIDs[0] != "amazon_order_id" {
+	again, _ := FindCatalogEntry("sc_inventory")
+	if again.RecordIDs[0] != "sid" {
 		t.Fatal("ToEndpoint 泄漏了种子切片，被调用方改动污染")
+	}
+}
+
+func TestSCFBAInventoryCatalogTable(t *testing.T) {
+	e, err := FindCatalogEntry("sc_inventory")
+	if err != nil {
+		t.Fatalf("FindCatalogEntry: %v", err)
+	}
+	if e.Table != "ls_fba_inventory" {
+		t.Fatalf("SC FBA 库存目标表 = %q, want ls_fba_inventory", e.Table)
+	}
+}
+
+// TestCatalogSCListingContract 固化真实 probe 已验证的 SC Listing 接入合同。
+// seller_sku 在两账号样本中均非空；listing_id 存在空值，不能替代唯一键。
+func TestCatalogSCListingContract(t *testing.T) {
+	e, err := FindCatalogEntry("sc_listing")
+	if err != nil {
+		t.Fatalf("FindCatalogEntry: %v", err)
+	}
+	ep := e.ToEndpoint("sc_us")
+
+	if ep.Path != "/erp/sc/data/mws/listing" || ep.Method != "POST" || ep.Table != "ls_sc_listing" {
+		t.Fatalf("SC Listing path/method/table 合同错误: %+v", ep)
+	}
+	if len(ep.RecordIDFields) != 2 || ep.RecordIDFields[0] != "sid" || ep.RecordIDFields[1] != "seller_sku" {
+		t.Fatalf("record_id_fields = %v, want [sid seller_sku]", ep.RecordIDFields)
+	}
+	if !ep.IterateByStore || ep.StoreParamName != "sid" || ep.StoreType != "SC" {
+		t.Fatalf("SC Listing 按 SC 店铺迭代合同错误: %+v", ep)
+	}
+}
+
+// TestCatalogSCProductsContract 固化 productList 两账号全量审计后的原始表合同。
+func TestCatalogSCProductsContract(t *testing.T) {
+	e, err := FindCatalogEntry("sc_products")
+	if err != nil {
+		t.Fatalf("FindCatalogEntry: %v", err)
+	}
+	ep := e.ToEndpoint("sc_us")
+
+	if ep.Path != "/erp/sc/routing/data/local_inventory/productList" || ep.Method != "POST" || ep.Table != "ls_sc_products" {
+		t.Fatalf("SC 产品列表 path/method/table 合同错误: %+v", ep)
+	}
+	if len(ep.RecordIDFields) != 1 || ep.RecordIDFields[0] != "sku" {
+		t.Fatalf("record_id_fields = %v, want [sku]", ep.RecordIDFields)
+	}
+	if ep.IterateByStore {
+		t.Fatal("SC 产品列表不按店铺迭代，应按账号全量分页")
+	}
+}
+
+func TestDeletedSalesOrdersCatalogEntry(t *testing.T) {
+	if _, err := FindCatalogEntry("sc_sales_orders"); err == nil {
+		t.Fatal("sc_sales_orders 已确认删除，不应重新出现在接口清单")
 	}
 }
 
@@ -47,7 +103,7 @@ func TestCatalogToEndpoint(t *testing.T) {
 //
 // 历史 bug：baseURL 本身就是 https://openapi.lingxing.com，模板里又写
 // "/openapi/erp/sc/orders/list"，拼出 /openapi/openapi/erp/... → 领星回
-// {"code":500,"msg":"404 NOT_FOUND"}，sc_sales_orders 长期 0 记录。
+// {"code":500,"msg":"404 NOT_FOUND"}，历史订单接口长期 0 记录。
 // 这类错静默得很（HTTP 200 + 业务码 500），必须在测试层拦住。
 func TestCatalogPathsHaveNoOpenapiPrefix(t *testing.T) {
 	for _, e := range Catalog() {
@@ -97,29 +153,5 @@ func TestCatalogEntriesAllValid(t *testing.T) {
 func TestFindCatalogEntryUnknownFailsLoud(t *testing.T) {
 	if _, err := FindCatalogEntry("does_not_exist"); err == nil {
 		t.Fatal("未知模板 key 应返回 error")
-	}
-}
-
-// TestInventoryCatalogCarriesStoreType 固化 /sync 清单生成 SC 库存 Endpoint 时的店铺类型隔离。
-func TestInventoryCatalogCarriesStoreType(t *testing.T) {
-	e, err := FindCatalogEntry("sc_inventory")
-	if err != nil {
-		t.Fatalf("FindCatalogEntry: %v", err)
-	}
-	ep := e.ToEndpoint("sc_us")
-	if !ep.IterateByStore || ep.StoreParamName != "sid" {
-		t.Fatalf("库存模板未保留按店铺迭代合同: %+v", ep)
-	}
-	if ep.StoreType != "SC" {
-		t.Fatalf("store_type = %q, want SC", ep.StoreType)
-	}
-}
-func TestSCFBAInventoryCatalogTable(t *testing.T) {
-	e, err := FindCatalogEntry("sc_inventory")
-	if err != nil {
-		t.Fatalf("FindCatalogEntry: %v", err)
-	}
-	if e.Table != "ls_fba_inventory" {
-		t.Fatalf("SC FBA 库存目标表 = %q, want ls_fba_inventory", e.Table)
 	}
 }

@@ -21,6 +21,26 @@ const entryManage = sandbox.window.syncManage();
 assert.equal(entryManage.tab, 'manual');
 assert.equal(entryManage.advancedAdd, false);
 
+// 手动日期只允许已声明日期合同的接口，并且单日接口只能选同一天。
+{
+  const m = sandbox.window.syncManage();
+  m.accounts = ['sc_us'];
+  m.endpoints = [
+    { name: 'range', display: '范围报表', account_id: 'sc_us', path: '/range', date_range_capable: true },
+    { name: 'single', display: '单日报表', account_id: 'sc_us', path: '/single', date_field: 'event_date' },
+    { name: 'snapshot', display: '快照', account_id: 'sc_us', path: '/snapshot' },
+  ];
+  m.form.accounts = ['sc_us'];
+  m.form.types = ['/range', '/single'];
+  m.form.date_from = '2026-08-01';
+  m.form.date_to = '2026-08-03';
+  assert.match(m.dateRangeIssue, /单日报表/);
+  m.form.date_to = '2026-08-01';
+  assert.equal(m.dateRangeIssue, '');
+  m.form.types = ['/snapshot'];
+  assert.match(m.dateRangeIssue, /快照/);
+}
+
 // 触发同步矩阵模型：两账号同 path 接口在 UI 合并成一份数据类型；
 // 勾账号 × 勾类型 → resolvedEndpoints 笛卡尔积解析回真实 name。
 {
@@ -207,7 +227,8 @@ void (async () => {
   const schedule = {
     name: 'sc_stores', display: '店铺目录', account: 'sc_us', path: '/stores', method: 'POST', table: 'ls_stores',
     record_id_fields: ['sid'], rate: { bucket: 2, interval_ms: 1000, multi_interval_ms: 0, dimension: 'account+path' },
-    cron: '*/30 * * * *', enabled: true, store_sids: [], store_sids_text: ''
+    cron: '*/30 * * * *', enabled: true, store_sids: [], store_sids_text: '',
+    window_days: 7, date_offset_days: 0
   };
   manage.scheduleBaseline = { sc_stores: manage.rowSnap(schedule) };
   schedule.cron = '*/40 * * * *';
@@ -215,6 +236,8 @@ void (async () => {
   const cronSave = calls.find(c => c.method === 'PUT' && c.url === '/api/endpoints/sc_stores');
   assert.equal(cronSave.body.cron, '*/40 * * * *');
   assert.equal(cronSave.body.rate.bucket, 2);
+  assert.equal(cronSave.body.window_days, 7);
+  assert.equal(cronSave.body.date_offset_days, 0);
 })().catch((error) => {
   process.nextTick(() => { throw error; });
 });

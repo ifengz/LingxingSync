@@ -51,6 +51,21 @@ func TestManualSyncRejectsDisabledEndpoint(t *testing.T) {
 	}
 }
 
+func TestValidateSyncDateRange(t *testing.T) {
+	if err := validateSyncDateRange("2026-08-01", "2026-08-03"); err != nil {
+		t.Fatalf("valid date range rejected: %v", err)
+	}
+	for _, tc := range []struct{ from, to string }{
+		{"2026-08-03", "2026-08-01"},
+		{"2026/08/01", "2026-08-03"},
+		{"", "2026-08-03"},
+	} {
+		if err := validateSyncDateRange(tc.from, tc.to); err == nil {
+			t.Fatalf("invalid date range accepted: %#v", tc)
+		}
+	}
+}
+
 func TestParseEgressIPRejectsNonIPResponse(t *testing.T) {
 	if _, err := parseEgressIP("not an ip"); err == nil {
 		t.Fatal("non-IP egress response was accepted")
