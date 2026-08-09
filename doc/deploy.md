@@ -20,6 +20,8 @@ GitHub 原生 WebHook 不直接访问宝塔面板：面板使用自签名证书�
 
 Actions 不能只看公网 HTTP `200`：宝塔 WebHook 会异步返回，旧进程仍可能存活。生产构建会把完整 Git SHA 写入 `/api/settings` 的 `deploy_commit`，Actions 只有在该值等于本次 `GITHUB_SHA` 且 `db_connected=true` 时才通过。
 
+宝塔仓库由面板账号持有，Go 的 VCS 探测不会继承脚本给 Git 设置的 `safe.directory`。构建固定使用 `-buildvcs=false`，提交 SHA 只由部署脚本显式注入，不依赖 Go 的隐式 VCS 元数据。
+
 ## 宝塔 WebHook
 
 WebHook 应只执行固定脚本：
