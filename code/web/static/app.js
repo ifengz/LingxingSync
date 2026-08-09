@@ -307,12 +307,16 @@ window.syncManage = function () {
     selectAllAccounts() { this.form.accounts = this.accounts.slice(); },
     clearAccounts() { this.form.accounts = []; },
 
-    // 数据类型清单：按 path 去重（两账号同类型接口 path 相同，合并成一张卡）。
-    // key=path；label 去掉尾部「（…）」括注（如「SC 店铺列表（联营）」→「SC 店铺列表」），
-    // 使自营/联营同类型显示为同一份；iterate_by_store 只要任一账号该类型为 true 即 true。
+    // 数据类型清单：已选账号时只展示其真实配置的接口，避免“联营有、
+    // 自营没有”的类型仍可被勾选，最后解析成 0 个接口。按 path 去重后，
+    // 两个已选账号同类型仍只展示一张卡。
     get dataTypes() {
       const byPath = new Map();
-      for (const e of this.endpoints) {
+      const selectedAccounts = new Set(this.form.accounts);
+      const source = selectedAccounts.size
+        ? this.endpoints.filter(e => selectedAccounts.has(e.account_id))
+        : this.endpoints;
+      for (const e of source) {
         const label = (e.display || e.name).replace(/（[^）]*）\s*$/, '').trim();
         const cur = byPath.get(e.path);
         if (cur) {

@@ -93,6 +93,20 @@ assert.equal(entryManage.advancedAdd, false);
   assert.equal(vis[0].sid, '7860');
 }
 
+// 数据类型必须匹配已选账号：不能把仅联营有的 VC 毛利日报展示为自营可选，
+// 否则 resolvedEndpoints 为 0，按店铺网格不会显示且用户无法知道原因。
+{
+  const m = sandbox.window.syncManage();
+  m.endpoints = [
+    { name: 'vc_margin_sc_us_2', display: 'VC 毛利日报', account_id: 'sc_us_2', path: '/vc-margin', iterate_by_store: true, store_type: 'VC' },
+    { name: 'vc_stores_sc_us_1', display: 'VC 店铺列表', account_id: 'sc_us_1', path: '/vc-stores', iterate_by_store: false },
+  ];
+  m.form.accounts = ['sc_us_1'];
+  assert.equal(m.dataTypes.some(t => t.key === '/vc-margin'), false, '自营未配置 VC 毛利时不应展示该类型');
+  m.form.accounts = ['sc_us_2'];
+  assert.equal(m.dataTypes.some(t => t.key === '/vc-margin'), true, '联营已配置 VC 毛利时应展示该类型');
+}
+
 const confirmation = sandbox.window.syncConfirm('删除账号？', '确认');
 root.confirmResolve(true);
 confirmation.then((accepted) => assert.equal(accepted, true));
