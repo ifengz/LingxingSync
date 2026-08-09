@@ -66,7 +66,7 @@
       <div class="ui-app-bar">
 
         <!-- 左：品牌 -->
-        <span class="ui-app-brand">领星同步机</span>
+        <span class="ui-app-brand">领星同步机{{if .BuildCommit}} <span class="ml-1 font-mono text-xs font-normal text-slate-400">{{.BuildCommit}}</span>{{end}}</span>
 
         <!-- 中：页面导航（pill 按钮，参照 React TabStrip） -->
         <nav class="ui-app-nav" aria-label="主导航">

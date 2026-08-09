@@ -37,6 +37,24 @@ func TestRenderPageWritesLayout(t *testing.T) {
 	}
 }
 
+func TestShortBuildCommit(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		in   string
+		want string
+	}{
+		{name: "full sha", in: "0123456789abcdef0123456789abcdef01234567", want: "0123456"},
+		{name: "local development", in: "dev", want: ""},
+		{name: "trimmed", in: "  abcdefg  ", want: "abcdefg"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := shortBuildCommit(tc.in); got != tc.want {
+				t.Fatalf("shortBuildCommit(%q)=%q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestSettingsExposeDeployedCommit(t *testing.T) {
 	previousCommit := BuildCommit
 	BuildCommit = "0123456789abcdef0123456789abcdef01234567"
