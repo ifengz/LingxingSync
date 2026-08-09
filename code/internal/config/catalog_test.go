@@ -55,6 +55,23 @@ func TestSCFBAInventoryCatalogTable(t *testing.T) {
 	}
 }
 
+func TestVCStoresCatalogContract(t *testing.T) {
+	e, err := FindCatalogEntry("vc_stores")
+	if err != nil {
+		t.Fatalf("FindCatalogEntry: %v", err)
+	}
+	ep := e.ToEndpoint("sc_us_2")
+	if ep.Path != "/basicOpen/platformAuth/vcSeller/pageList" || ep.Method != "POST" || ep.Table != "ls_stores" {
+		t.Fatalf("VC 店铺来源合同错误: %+v", ep)
+	}
+	if len(ep.RecordIDFields) != 1 || ep.RecordIDFields[0] != "sid" {
+		t.Fatalf("record_id_fields = %v, want [sid]", ep.RecordIDFields)
+	}
+	if !ep.IsStoreSource || ep.StoreType != "VC" {
+		t.Fatalf("VC 店铺来源标记错误: %+v", ep)
+	}
+}
+
 // TestCatalogSCListingContract 固化真实 probe 已验证的 SC Listing 接入合同。
 // seller_sku 在两账号样本中均非空；listing_id 存在空值，不能替代唯一键。
 func TestCatalogSCListingContract(t *testing.T) {
