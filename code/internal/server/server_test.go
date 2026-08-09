@@ -6,6 +6,7 @@ import (
 	"html/template"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -104,6 +105,35 @@ func TestManualSyncRejectsDisabledEndpoint(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "已禁用") {
 		t.Fatalf("disabled endpoint response=%q, want disabled explanation", rec.Body.String())
+	}
+}
+
+// 配置 API 必须完整保留同步合同；否则线上经 GET 后编辑一行定时配置时，
+// 广告账号迭代、协议头或主键回填会在无提示的情况下丢失。
+func TestEndpointDTORoundTripPreservesAdvancedSyncContract(t *testing.T) {
+	want := config.Endpoint{
+		Name:               "ad_sp_product",
+		Display:            "SP 商品广告报表",
+		Account:            "sc_us_1",
+		Path:               "/pb/openapi/newad/spProductAdReports",
+		Method:             "POST",
+		Table:              "ls_ad_sp_product",
+		RecordIDFields:     []string{"sid", "profile_id", "report_date", "ad_id"},
+		Rate:               config.Rate{Bucket: 1, IntervalMs: 1000, Dimension: "account+path"},
+		Cron:               "0 5 * * *",
+		Enabled:            true,
+		DateField:          "report_date",
+		DateOffsetDays:     2,
+		ExtraParams:        map[string]any{"show_detail": 0},
+		RequestHeaders:     map[string]string{"X-API-VERSION": "2"},
+		IterateByAdAccount: true,
+		AdAccountType:      "seller",
+		ForceInjectParams:  []string{"sid", "profile_id"},
+	}
+
+	got := dtoToEndpoint(endpointToDTO(want))
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("endpoint DTO round trip lost sync contract:\n got: %#v\nwant: %#v", got, want)
 	}
 }
 

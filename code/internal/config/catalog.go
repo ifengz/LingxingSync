@@ -12,7 +12,11 @@
 // 没基础的人凭空定义新接口本就不安全，这条躲不掉——但常用接口可一次性都放进清单。
 package config
 
-import "fmt"
+import (
+	"fmt"
+	"maps"
+	"slices"
+)
 
 // CatalogEntry 是一个「接口模板」：一条领星接口的完整接入合同，
 // 除了「账号」这一个变量外，其余字段都已定死。字段语义与 Endpoint 对应字段一致。
@@ -28,16 +32,25 @@ type CatalogEntry struct {
 	DefaultCron string
 
 	// 参数形态（三选一或组合，与 Endpoint 语义一致）
-	WindowDays     int            // >0：注入 start_date/end_date 范围
-	DateField      string         // 非空：注入单日期（如 event_date）
-	DateOffsetDays int            // 单日期往前几天（0=今天，1=昨天）
-	ExtraParams    map[string]any // 固定业务参数（如 {"type":1}）
+	WindowDays       int            // >0：注入 start_date/end_date 范围
+	WindowStartField string         // 空时默认 start_date
+	WindowEndField   string         // 空时默认 end_date
+	DateField        string         // 非空：注入单日期（如 event_date）
+	DateOffsetDays   int            // 单日期往前几天（0=今天，1=昨天）
+	ExtraParams      map[string]any // 固定业务参数（如 {"type":1}）
+	RequestHeaders   map[string]string
 
 	// 多店铺
 	IsStoreSource  bool
 	IterateByStore bool
 	StoreParamName string
 	StoreType      string
+
+	// 广告账号迭代与落库前行整形。
+	IterateByAdAccount bool
+	AdAccountType      string
+	InjectParams       []string
+	ForceInjectParams  []string
 }
 
 // ToEndpoint 用模板 + 账号 ID 生成一个可直接写入 config 的 Endpoint。
@@ -47,24 +60,31 @@ type CatalogEntry struct {
 // 重试无需在此设置：它是 worker 层的固定策略（网络/429/5xx 指数退避），不入 Endpoint 配置。
 func (e CatalogEntry) ToEndpoint(accountID string) Endpoint {
 	return Endpoint{
-		Name:           e.Key + "_" + accountID,
-		Display:        e.Display,
-		Account:        accountID,
-		Path:           e.Path,
-		Method:         e.Method,
-		Table:          e.Table,
-		RecordIDFields: append([]string(nil), e.RecordIDs...),
-		Rate:           e.Rate,
-		Cron:           e.DefaultCron,
-		Enabled:        true,
-		WindowDays:     e.WindowDays,
-		DateField:      e.DateField,
-		DateOffsetDays: e.DateOffsetDays,
-		ExtraParams:    e.ExtraParams,
-		IsStoreSource:  e.IsStoreSource,
-		IterateByStore: e.IterateByStore,
-		StoreParamName: e.StoreParamName,
-		StoreType:      e.StoreType,
+		Name:               e.Key + "_" + accountID,
+		Display:            e.Display,
+		Account:            accountID,
+		Path:               e.Path,
+		Method:             e.Method,
+		Table:              e.Table,
+		RecordIDFields:     slices.Clone(e.RecordIDs),
+		Rate:               e.Rate,
+		Cron:               e.DefaultCron,
+		Enabled:            true,
+		WindowDays:         e.WindowDays,
+		WindowStartField:   e.WindowStartField,
+		WindowEndField:     e.WindowEndField,
+		DateField:          e.DateField,
+		DateOffsetDays:     e.DateOffsetDays,
+		ExtraParams:        maps.Clone(e.ExtraParams),
+		RequestHeaders:     maps.Clone(e.RequestHeaders),
+		IsStoreSource:      e.IsStoreSource,
+		IterateByStore:     e.IterateByStore,
+		StoreParamName:     e.StoreParamName,
+		StoreType:          e.StoreType,
+		IterateByAdAccount: e.IterateByAdAccount,
+		AdAccountType:      e.AdAccountType,
+		InjectParams:       slices.Clone(e.InjectParams),
+		ForceInjectParams:  slices.Clone(e.ForceInjectParams),
 	}
 }
 
@@ -127,17 +147,113 @@ var catalogEntries = []CatalogEntry{
 		Rate:        Rate{Bucket: 1, IntervalMs: 1000, MultiIntervalMs: 0, Dimension: "account+path"},
 		DefaultCron: "0 */6 * * *",
 	},
+	{
+		Key:               "vc_margin",
+		Display:           "VC 毛利日报",
+		Summary:           "按 VC 店铺同步近 7 天 ASIN 毛利数据。",
+		Path:              "/basicOpen/vc/report/nppm/list",
+		Method:            "POST",
+		Table:             "ls_vc_margin",
+		RecordIDs:         []string{"sid", "asin", "date"},
+		Rate:              Rate{Bucket: 1, IntervalMs: 1000, MultiIntervalMs: 0, Dimension: "account+path"},
+		DefaultCron:       "0 5 * * *",
+		WindowDays:        7,
+		WindowStartField:  "startDate",
+		WindowEndField:    "endDate",
+		IterateByStore:    true,
+		StoreParamName:    "sid",
+		StoreType:         "VC",
+		ForceInjectParams: []string{"sid"},
+	},
+	{
+		Key:            "sc_refunds",
+		Display:        "SC FBA 退货订单",
+		Summary:        "按 SC 店铺同步近 7 天 FBA 退货订单。",
+		Path:           "/erp/sc/data/mws_report/refundOrders",
+		Method:         "POST",
+		Table:          "ls_sc_refunds",
+		RecordIDs:      []string{"sid", "license_plate_number"},
+		Rate:           Rate{Bucket: 1, IntervalMs: 1000, MultiIntervalMs: 0, Dimension: "account+path"},
+		DefaultCron:    "0 5 * * *",
+		WindowDays:     7,
+		ExtraParams:    map[string]any{"date_type": 1},
+		IterateByStore: true,
+		StoreParamName: "sid",
+		StoreType:      "SC",
+		InjectParams:   []string{"sid"},
+	},
+	{
+		Key:         "ad_accounts",
+		Display:     "广告账号",
+		Summary:     "广告报表的 profile_id 来源，须先同步。",
+		Path:        "/basicOpen/baseData/account/list",
+		Method:      "POST",
+		Table:       "ls_ad_accounts",
+		RecordIDs:   []string{"profile_id"},
+		Rate:        Rate{Bucket: 1, IntervalMs: 1000, MultiIntervalMs: 0, Dimension: "account+path"},
+		DefaultCron: "0 5 * * *",
+		ExtraParams: map[string]any{"type": "seller"},
+	},
+	{
+		Key:                "ad_sp_product",
+		Display:            "SP 商品广告报表",
+		Summary:            "按有效广告账号同步 SP 商品广告日报。",
+		Path:               "/pb/openapi/newad/spProductAdReports",
+		Method:             "POST",
+		Table:              "ls_ad_sp_product",
+		RecordIDs:          []string{"sid", "profile_id", "report_date", "ad_id"},
+		Rate:               Rate{Bucket: 1, IntervalMs: 1000, MultiIntervalMs: 0, Dimension: "account+path"},
+		DefaultCron:        "0 5 * * *",
+		DateField:          "report_date",
+		DateOffsetDays:     2,
+		ExtraParams:        map[string]any{"show_detail": 0},
+		RequestHeaders:     map[string]string{"X-API-VERSION": "2"},
+		IterateByAdAccount: true,
+		AdAccountType:      "seller",
+		ForceInjectParams:  []string{"sid", "profile_id"},
+	},
+	{
+		Key:                "ad_sp_campaign",
+		Display:            "SP 活动广告报表",
+		Summary:            "按有效广告账号同步 SP 活动广告日报。",
+		Path:               "/pb/openapi/newad/spCampaignReports",
+		Method:             "POST",
+		Table:              "ls_ad_sp_campaign",
+		RecordIDs:          []string{"sid", "profile_id", "report_date", "campaign_id"},
+		Rate:               Rate{Bucket: 1, IntervalMs: 1000, MultiIntervalMs: 0, Dimension: "account+path"},
+		DefaultCron:        "0 5 * * *",
+		DateField:          "report_date",
+		DateOffsetDays:     2,
+		ExtraParams:        map[string]any{"show_detail": 0},
+		IterateByAdAccount: true,
+		AdAccountType:      "seller",
+		ForceInjectParams:  []string{"sid", "profile_id"},
+	},
+	{
+		Key:                "ad_sd_product",
+		Display:            "SD 商品广告报表",
+		Summary:            "按有效广告账号同步 SD 商品广告日报。",
+		Path:               "/pb/openapi/newad/sdProductAdReports",
+		Method:             "POST",
+		Table:              "ls_ad_sd_product",
+		RecordIDs:          []string{"sid", "profile_id", "report_date", "ad_id"},
+		Rate:               Rate{Bucket: 1, IntervalMs: 1000, MultiIntervalMs: 0, Dimension: "account+path"},
+		DefaultCron:        "0 5 * * *",
+		DateField:          "report_date",
+		DateOffsetDays:     2,
+		ExtraParams:        map[string]any{"show_detail": 0},
+		RequestHeaders:     map[string]string{"X-API-VERSION": "2"},
+		IterateByAdAccount: true,
+		AdAccountType:      "seller",
+		ForceInjectParams:  []string{"sid", "profile_id"},
+	},
 	// 「SC 广告日报」模板已移除，不是遗漏。原模板 path="/openapi/erp/sc/ads/daily"、
 	// RecordIDs=["report_id"] 两者都不存在于领星 OpenAPI（凭空写的），谁点启用谁吃 404。
 	// 本清单的契约是「路径和唯一键都已用真实账号验证过」，不能放没验证的条目。
 	//
-	// 领星真实的广告报表不是一个「日报」接口，而是一族（doc/core/08-api-reference.md §6.5）：
-	//   POST /pb/openapi/newad/spProductAdReports      SP 商品报表（归因 7 天）
-	//   POST /pb/openapi/newad/listHsaProductAdReport  SB 商品报表（归因 14 天）
-	//   POST /pb/openapi/newad/sdProductAdReports      SD 商品报表（归因 14 天）
-	// 还要先用 POST /basicOpen/baseData/account/list 取 profile_id 作参数。
-	// 要接的话按 doc/core/07-add-endpoint.md 走：probe 摸字段 → 各建一张表 → 各加一条模板；
-	// 现有 ls_ads_daily 表的列名（report_id/spend/sales/orders…）同样是臆造的，需一并重建。
+	// 广告数据按「广告账号 + 各报表」拆开：上方 ad_accounts 先同步 profile_id，
+	// 其后各报表才按有效广告账号迭代。旧的单一广告日报 path/主键都是臆造的，
+	// 不得重新加入清单。
 }
 
 // Catalog 返回内置清单的拷贝（防止调用方改动内部种子）。
