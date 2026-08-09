@@ -161,4 +161,4 @@ curl --fail --silent --show-error --max-time 10 \
 
 ## 本轮线上证据
 
-目标主机 `38.246.250.228`，时间 `2026-08-09 10:34`。已人工完成一次部署脚本升级引导：线上仓库为 `69fe278`，测试、静态检查、编译、生产配置校验、Supervisor 重启及本机 `/api/settings` 健康检查全部通过。后续以合并到 `main` 后的 GitHub Actions 运行、线上 Git 提交和 Supervisor 状态共同证明自动部署，不能只凭公网旧进程返回 HTTP `200` 判定成功。
+目标主机 `38.246.250.228`，时间 `2026-08-09 10:52`。已完成部署脚本升级引导：线上仓库为 `f2f2049`，测试、静态检查、编译、生产配置校验、Supervisor 重启及本机 `/api/settings` 健康检查全部通过；公网 `/api/settings` 的 `deploy_commit` 等于 `f2f2049d5c6bd274d134f1ae781977d6f0c86949`，对应的 GitHub Actions 成功。后续仍以合并到 `main` 后的 GitHub Actions 运行、线上 Git 提交和 Supervisor 状态共同证明自动部署，不能只凭公网旧进程返回 HTTP `200` 判定成功。
