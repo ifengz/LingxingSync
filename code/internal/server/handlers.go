@@ -68,6 +68,7 @@ func errJSON(w http.ResponseWriter, code int, msg string) {
 //   - 配置计数：用于页面降级展示（如端点数为 0 时给提示）
 type pageData struct {
 	Active         string
+	BuildCommit    string
 	EndpointCount  int
 	AccountCount   int
 	SecretRequired bool
@@ -99,6 +100,7 @@ func (s *Server) newPageData(active string) pageData {
 	}
 	return pageData{
 		Active:         active,
+		BuildCommit:    shortBuildCommit(BuildCommit),
 		EndpointCount:  len(s.cfg.Endpoints),
 		AccountCount:   len(s.cfg.Accounts),
 		SecretRequired: s.cfg.Server.Secret != "",
@@ -106,6 +108,14 @@ func (s *Server) newPageData(active string) pageData {
 		AccountIDs:     ids,
 		AccountOptions: accountOptions,
 	}
+}
+
+func shortBuildCommit(commit string) string {
+	commit = strings.TrimSpace(commit)
+	if len(commit) < 7 {
+		return ""
+	}
+	return commit[:7]
 }
 
 // renderPage 渲染 layout + 指定 page 的 content block。

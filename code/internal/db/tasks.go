@@ -313,6 +313,42 @@ WHERE s.account_id = ? AND sel.enabled = 1`
 	return sids, nil
 }
 
+// AdAccountParams 是广告报表请求所需的账号输入。值按字符串保留，避免大整数 ID 精度丢失。
+type AdAccountParams struct {
+	SID       string `db:"sid"`
+	ProfileID string `db:"profile_id"`
+}
+
+// QueryEnabledAdAccountsForAccount 返回当前店铺选择范围内的有效广告账号。
+func QueryEnabledAdAccountsForAccount(db *sqlx.DB, accountID, accountType string) ([]AdAccountParams, error) {
+	sids, err := QueryEnabledSIDsForAccount(db, accountID, "SC")
+	if err != nil {
+		return nil, err
+	}
+	if len(sids) == 0 {
+		return []AdAccountParams{}, nil
+	}
+	q, args, err := sqlx.In(`
+SELECT sid, profile_id
+FROM ls_ad_accounts
+WHERE account_id = ?
+  AND type = ?
+  AND status = 1
+  AND sid <> ''
+  AND profile_id <> ''
+  AND sid IN (?)
+ORDER BY sid ASC, profile_id ASC`, accountID, accountType, sids)
+	if err != nil {
+		return nil, fmt.Errorf("db.QueryEnabledAdAccountsForAccount: 组装查询失败: %w", err)
+	}
+	q = db.Rebind(q)
+	var accounts []AdAccountParams
+	if err := db.Select(&accounts, q, args...); err != nil {
+		return nil, fmt.Errorf("db.QueryEnabledAdAccountsForAccount: 查广告账号 (account=%s, type=%s) 失败: %w", accountID, accountType, err)
+	}
+	return accounts, nil
+}
+
 // LoadStoreSelection 读某账号的店铺选择态，供配置页给复选框回填初值。
 //
 // 返回 (sid→enabled 映射, configured, error)：

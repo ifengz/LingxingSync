@@ -8,7 +8,7 @@ import (
 // TestShapeRowsNoConfig 未配任何整形项 → 行原样不动（向后兼容既有 21 个接口）。
 func TestShapeRowsNoConfig(t *testing.T) {
 	rows := []map[string]any{{"a": 1}}
-	if err := shapeRows(rows, nil, nil, map[string]any{"sid": "12534"}); err != nil {
+	if err := shapeRows(rows, nil, nil, nil, map[string]any{"sid": "12534"}); err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
 	if len(rows[0]) != 1 || rows[0]["a"] != 1 {
@@ -25,7 +25,7 @@ func TestShapeRowsNestedArrayIndex(t *testing.T) {
 			map[string]any{"asin": "B0FGDQ72GG", "sid": "12534"},
 		},
 	}}
-	err := shapeRows(rows, map[string]string{"asin": "asins[0].asin"}, nil, nil)
+	err := shapeRows(rows, map[string]string{"asin": "asins[0].asin"}, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
@@ -37,7 +37,7 @@ func TestShapeRowsNestedArrayIndex(t *testing.T) {
 // TestShapeRowsInjectParams 领星不回显请求参数 sid，需从 params 补进行。
 func TestShapeRowsInjectParams(t *testing.T) {
 	rows := []map[string]any{{"asin": "B01"}, {"asin": "B02"}}
-	err := shapeRows(rows, nil, []string{"sid"}, map[string]any{"sid": "12534", "offset": 0})
+	err := shapeRows(rows, nil, []string{"sid"}, nil, map[string]any{"sid": "12534", "offset": 0})
 	if err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
@@ -55,7 +55,7 @@ func TestShapeRowsInjectParams(t *testing.T) {
 // 防止「请求参数悄悄覆盖真实响应」这类静默改数据。
 func TestShapeRowsInjectDoesNotOverwrite(t *testing.T) {
 	rows := []map[string]any{{"sid": "99999"}}
-	if err := shapeRows(rows, nil, []string{"sid"}, map[string]any{"sid": "12534"}); err != nil {
+	if err := shapeRows(rows, nil, []string{"sid"}, nil, map[string]any{"sid": "12534"}); err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
 	if rows[0]["sid"] != "99999" {
@@ -63,10 +63,23 @@ func TestShapeRowsInjectDoesNotOverwrite(t *testing.T) {
 	}
 }
 
+// TestShapeRowsForceInjectPreservesRequestID
+// 上游把 18 位 sid 当 JSON number 返回时，解码后的末位可能已变化；
+// 强制回注必须恢复本页请求使用的精确字符串。
+func TestShapeRowsForceInjectPreservesRequestID(t *testing.T) {
+	rows := []map[string]any{{"sid": float64(134618505906074620)}}
+	if err := shapeRows(rows, nil, nil, []string{"sid"}, map[string]any{"sid": "134618505906074624"}); err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if got := rows[0]["sid"]; got != "134618505906074624" {
+		t.Fatalf("force inject 未恢复请求 sid: %#v", got)
+	}
+}
+
 // TestShapeRowsInjectFillsEmptyString 空串视同缺失（领星常用 "" 表示无值）。
 func TestShapeRowsInjectFillsEmptyString(t *testing.T) {
 	rows := []map[string]any{{"sid": ""}}
-	if err := shapeRows(rows, nil, []string{"sid"}, map[string]any{"sid": "12534"}); err != nil {
+	if err := shapeRows(rows, nil, []string{"sid"}, nil, map[string]any{"sid": "12534"}); err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
 	if rows[0]["sid"] != "12534" {
@@ -85,7 +98,7 @@ func TestShapeRowsPathTypoFailsLoud(t *testing.T) {
 		{"amount": "2", "asins": []any{map[string]any{"asin": "B02"}}},
 	}
 	// 键名写错（asinz），语法合法，但整页零命中。
-	err := shapeRows(rows, map[string]string{"asin": "asinz[0].asin"}, nil, nil)
+	err := shapeRows(rows, map[string]string{"asin": "asinz[0].asin"}, nil, nil, nil)
 	if err == nil {
 		t.Fatal("键名写错却静默通过了；期望整页零命中时 fail-loud")
 	}
@@ -108,7 +121,7 @@ func TestShapeRowsSparseRowsTolerated(t *testing.T) {
 		{"amount": "3"},                                                // 整个键缺失
 		{"amount": "4", "asins": []any{map[string]any{"other": "x"}}},  // 叶子键不存在
 	}
-	if err := shapeRows(rows, map[string]string{"asin": "asins[0].asin"}, nil, nil); err != nil {
+	if err := shapeRows(rows, map[string]string{"asin": "asins[0].asin"}, nil, nil, nil); err != nil {
 		t.Fatalf("路径已有命中行，个别行缺值不该报错: %v", err)
 	}
 	if got := rows[0]["asin"]; got != "B01" {
@@ -128,7 +141,7 @@ func TestShapeRowsExistingTopLevelWins(t *testing.T) {
 		"asin":  "TOP",
 		"asins": []any{map[string]any{"asin": "NESTED"}},
 	}}
-	if err := shapeRows(rows, map[string]string{"asin": "asins[0].asin"}, nil, nil); err != nil {
+	if err := shapeRows(rows, map[string]string{"asin": "asins[0].asin"}, nil, nil, nil); err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
 	if rows[0]["asin"] != "TOP" {
@@ -143,7 +156,7 @@ func TestShapeRowsPlainNestedObject(t *testing.T) {
 	}}
 	err := shapeRows(rows, map[string]string{
 		"afn_fulfillable_quantity": "available_inventory.afn_fulfillable_quantity",
-	}, nil, nil)
+	}, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}

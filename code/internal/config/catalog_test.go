@@ -1,6 +1,7 @@
 package config
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -90,6 +91,69 @@ func TestCatalogSCProductsContract(t *testing.T) {
 	}
 	if ep.IterateByStore {
 		t.Fatal("SC 产品列表不按店铺迭代，应按账号全量分页")
+	}
+}
+
+// 016-022 已完成真实请求、落库验证；除需账号专属 VC 店铺 ID 的 vc_listing 外，
+// 其余模板必须能在部署后的清单中按账号直接启用，不能依赖本地 ignored config.yaml。
+func TestCatalogIncludesVerifiedSyncTemplates(t *testing.T) {
+	tests := []struct {
+		key      string
+		path     string
+		table    string
+		advanced func(Endpoint) bool
+	}{
+		{
+			key: "vc_margin", path: "/basicOpen/vc/report/nppm/list", table: "ls_vc_margin",
+			advanced: func(ep Endpoint) bool {
+				return ep.IterateByStore && ep.StoreType == "VC" && ep.WindowStartField == "startDate" &&
+					ep.WindowEndField == "endDate" && reflect.DeepEqual(ep.ForceInjectParams, []string{"sid"})
+			},
+		},
+		{
+			key: "sc_refunds", path: "/erp/sc/data/mws_report/refundOrders", table: "ls_sc_refunds",
+			advanced: func(ep Endpoint) bool {
+				return ep.IterateByStore && ep.StoreType == "SC" && reflect.DeepEqual(ep.InjectParams, []string{"sid"})
+			},
+		},
+		{
+			key: "ad_accounts", path: "/basicOpen/baseData/account/list", table: "ls_ad_accounts",
+			advanced: func(ep Endpoint) bool { return ep.ExtraParams["type"] == "seller" },
+		},
+		{
+			key: "ad_sp_product", path: "/pb/openapi/newad/spProductAdReports", table: "ls_ad_sp_product",
+			advanced: func(ep Endpoint) bool {
+				return ep.IterateByAdAccount && ep.AdAccountType == "seller" && ep.RequestHeaders["X-API-VERSION"] == "2" &&
+					ep.DateField == "report_date" && ep.DateOffsetDays == 2 && reflect.DeepEqual(ep.ForceInjectParams, []string{"sid", "profile_id"})
+			},
+		},
+		{
+			key: "ad_sp_campaign", path: "/pb/openapi/newad/spCampaignReports", table: "ls_ad_sp_campaign",
+			advanced: func(ep Endpoint) bool {
+				return ep.IterateByAdAccount && ep.AdAccountType == "seller" && ep.DateField == "report_date" &&
+					ep.DateOffsetDays == 2 && reflect.DeepEqual(ep.ForceInjectParams, []string{"sid", "profile_id"})
+			},
+		},
+		{
+			key: "ad_sd_product", path: "/pb/openapi/newad/sdProductAdReports", table: "ls_ad_sd_product",
+			advanced: func(ep Endpoint) bool {
+				return ep.IterateByAdAccount && ep.AdAccountType == "seller" && ep.RequestHeaders["X-API-VERSION"] == "2" &&
+					ep.DateField == "report_date" && ep.DateOffsetDays == 2 && reflect.DeepEqual(ep.ForceInjectParams, []string{"sid", "profile_id"})
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.key, func(t *testing.T) {
+			e, err := FindCatalogEntry(tc.key)
+			if err != nil {
+				t.Fatalf("FindCatalogEntry(%q): %v", tc.key, err)
+			}
+			ep := e.ToEndpoint("sc_us")
+			if ep.Path != tc.path || ep.Table != tc.table || !tc.advanced(ep) {
+				t.Fatalf("template contract = %#v", ep)
+			}
+		})
 	}
 }
 

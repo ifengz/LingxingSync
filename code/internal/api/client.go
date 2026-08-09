@@ -140,18 +140,24 @@ func isSuccessMessage(msg string) bool {
 //   - apiCode 同上
 //   - error 非 nil 时，result 为 nil；error 内含 code/msg，fail-loud
 func (c *Client) Fetch(ctx context.Context, method, path string, params map[string]any) (*FetchResult, int, int, error) {
-	return c.FetchWithShape(ctx, method, path, params, "list")
+	return c.FetchWithShapeAndHeaders(ctx, method, path, params, "list", nil)
 }
 
 // FetchWithShape 拉取一页，并按 endpoint 声明的响应形态解析 data。
 // responseShape 为空时按 list 处理；object 仅用于 data 是单个业务对象的接口。
 func (c *Client) FetchWithShape(ctx context.Context, method, path string, params map[string]any, responseShape string) (*FetchResult, int, int, error) {
+	return c.FetchWithShapeAndHeaders(ctx, method, path, params, responseShape, nil)
+}
+
+// FetchWithShapeAndHeaders 拉取一页，并附加 endpoint 声明的固定协议头。
+// 认证与通用 Accept/Content-Type 仍由 Client 自己控制，配置校验会拒绝覆盖它们。
+func (c *Client) FetchWithShapeAndHeaders(ctx context.Context, method, path string, params map[string]any, responseShape string, headers map[string]string) (*FetchResult, int, int, error) {
 	m := strings.ToUpper(strings.TrimSpace(method))
 	if m == "" {
 		m = http.MethodPost // 领星业务接口默认 POST
 	}
 
-	result, httpStatus, apiCode, err := c.fetchOnce(ctx, m, path, params, responseShape)
+	result, httpStatus, apiCode, err := c.fetchOnce(ctx, m, path, params, responseShape, headers)
 	if err != nil {
 		// token 过期类错误：强制刷新后重试一次（宪法 §8）。
 		// fetchOnce 返回的 err 在 token 过期段会带 sentinel errTokenExpired。
@@ -159,7 +165,7 @@ func (c *Client) FetchWithShape(ctx context.Context, method, path string, params
 			if ferr := c.holder.ForceRefresh(ctx); ferr != nil {
 				return nil, httpStatus, apiCode, fmt.Errorf("lingxing fetch: token refresh failed after expired (refresh err: %v): %w", ferr, err)
 			}
-			return c.fetchOnce(ctx, m, path, params, responseShape)
+			return c.fetchOnce(ctx, m, path, params, responseShape, headers)
 		}
 		return nil, httpStatus, apiCode, err
 	}
@@ -167,7 +173,7 @@ func (c *Client) FetchWithShape(ctx context.Context, method, path string, params
 }
 
 // fetchOnce 执行一次完整的请求（签名 → 发送 → 解析），不做 token 重试。
-func (c *Client) fetchOnce(ctx context.Context, method, path string, params map[string]any, responseShape string) (*FetchResult, int, int, error) {
+func (c *Client) fetchOnce(ctx context.Context, method, path string, params map[string]any, responseShape string, headers map[string]string) (*FetchResult, int, int, error) {
 	// 1. 取 access_token
 	token, err := c.holder.Get(ctx)
 	if err != nil {
@@ -230,6 +236,9 @@ func (c *Client) fetchOnce(ctx context.Context, method, path string, params map[
 		req.Header.Set("Content-Type", "application/json")
 	}
 	req.Header.Set("Accept", "application/json")
+	for name, value := range headers {
+		req.Header.Set(name, value)
+	}
 
 	// 6. 发送
 	resp, err := c.http.Do(req)

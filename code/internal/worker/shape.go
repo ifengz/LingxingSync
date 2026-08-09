@@ -24,16 +24,17 @@ import (
 	"strings"
 )
 
-// shapeRows 就地整形 rows。两步都只在目标列「缺失或为空」时才写入。
+// shapeRows 就地整形 rows。普通注入只填空值，强制注入始终以请求值覆盖。
 //
 //	fieldPaths   目标列名 → 取值路径（如 {"asin": "asins[0].asin"}）
 //	injectParams 要回填进每行的请求参数名（如 ["sid"]）
+//	forceInjectParams 要强制回填的请求参数名（如 ["sid"]）
 //	params       本页实际发出的请求参数（injectParams 的取值来源）
 //
 // rows 为空、两个机制都没配时是纯空转，对绝大多数接口零开销。
 // 返回 error 仅代表 fieldPaths 里有非法路径写法（配置错误）。
-func shapeRows(rows []map[string]any, fieldPaths map[string]string, injectParams []string, params map[string]any) error {
-	if len(fieldPaths) == 0 && len(injectParams) == 0 {
+func shapeRows(rows []map[string]any, fieldPaths map[string]string, injectParams, forceInjectParams []string, params map[string]any) error {
+	if len(fieldPaths) == 0 && len(injectParams) == 0 && len(forceInjectParams) == 0 {
 		return nil
 	}
 
@@ -75,6 +76,12 @@ func shapeRows(rows []map[string]any, fieldPaths map[string]string, injectParams
 			if name == "" || !isBlank(row[name]) {
 				continue
 			}
+			if v, ok := params[name]; ok && !isBlank(v) {
+				row[name] = v
+			}
+		}
+		// 3. 对明确配置的身份参数强制使用请求值，避免上游 JSON number 精度丢失。
+		for _, name := range forceInjectParams {
 			if v, ok := params[name]; ok && !isBlank(v) {
 				row[name] = v
 			}

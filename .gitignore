@@ -21,6 +21,7 @@ code/.playwright-cli/
 .zcode/
 
 # 过程文件与测试数据
+doc/test/
 doc/task_plan.md
 doc/progress.md
 doc/findings.md

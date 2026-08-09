@@ -134,28 +134,36 @@ func dtoToRate(d rateDTO) config.Rate {
 
 // endpointDTO 是接口的 HTTP 输入输出结构。
 type endpointDTO struct {
-	Name             string         `json:"name"`
-	Display          string         `json:"display"`
-	Account          string         `json:"account"`
-	Path             string         `json:"path"`
-	Method           string         `json:"method"`
-	Table            string         `json:"table"`
-	RecordIDFields   []string       `json:"record_id_fields"`
-	Rate             rateDTO        `json:"rate"`
-	Cron             string         `json:"cron"`
-	Enabled          bool           `json:"enabled"`
-	WindowDays       int            `json:"window_days"`
-	WindowStartField string         `json:"window_start_field"`
-	WindowEndField   string         `json:"window_end_field"`
-	DateField        string         `json:"date_field"`
-	DateOffsetDays   int            `json:"date_offset_days"`
-	DateRangeCapable bool           `json:"date_range_capable"`
-	ExtraParams      map[string]any `json:"extra_params"`
-	IsStoreSource    bool           `json:"is_store_source"`
-	IterateByStore   bool           `json:"iterate_by_store"`
-	StoreParamName   string         `json:"store_param_name"`
-	StoreSids        []string       `json:"store_sids"`
-	StoreType        string         `json:"store_type"`
+	Name               string            `json:"name"`
+	Display            string            `json:"display"`
+	Account            string            `json:"account"`
+	Path               string            `json:"path"`
+	Method             string            `json:"method"`
+	Table              string            `json:"table"`
+	RecordIDFields     []string          `json:"record_id_fields"`
+	ResponseShape      string            `json:"response_shape"`
+	Rate               rateDTO           `json:"rate"`
+	Cron               string            `json:"cron"`
+	Enabled            bool              `json:"enabled"`
+	WindowDays         int               `json:"window_days"`
+	WindowStartField   string            `json:"window_start_field"`
+	WindowEndField     string            `json:"window_end_field"`
+	DateField          string            `json:"date_field"`
+	DateOffsetDays     int               `json:"date_offset_days"`
+	DateRangeCapable   bool              `json:"date_range_capable"`
+	ExtraParams        map[string]any    `json:"extra_params"`
+	RequestHeaders     map[string]string `json:"headers"`
+	IsStoreSource      bool              `json:"is_store_source"`
+	IterateByStore     bool              `json:"iterate_by_store"`
+	StoreParamName     string            `json:"store_param_name"`
+	StoreSids          []string          `json:"store_sids"`
+	StoreType          string            `json:"store_type"`
+	IterateByAdAccount bool              `json:"iterate_by_ad_account"`
+	AdAccountType      string            `json:"ad_account_type"`
+	FieldPaths         map[string]string `json:"field_paths"`
+	InjectParams       []string          `json:"inject_params"`
+	ForceInjectParams  []string          `json:"force_inject_params"`
+	Probe              bool              `json:"probe"`
 
 	// 以下两个是**只读运行态**，由 apiGetConfig 从 worker registry 填充，
 	// dtoToEndpoint 故意不映射它们——运行态永远写不回 config.yaml。
@@ -170,28 +178,36 @@ type endpointDTO struct {
 
 func endpointToDTO(e config.Endpoint) endpointDTO {
 	return endpointDTO{
-		Name:             e.Name,
-		Display:          e.Display,
-		Account:          e.Account,
-		Path:             e.Path,
-		Method:           e.Method,
-		Table:            e.Table,
-		RecordIDFields:   e.RecordIDFields,
-		Rate:             rateToDTO(e.Rate),
-		Cron:             e.Cron,
-		Enabled:          e.Enabled,
-		WindowDays:       e.WindowDays,
-		WindowStartField: e.WindowStartField,
-		WindowEndField:   e.WindowEndField,
-		DateField:        e.DateField,
-		DateOffsetDays:   e.DateOffsetDays,
-		DateRangeCapable: e.DateRangeCapable(),
-		ExtraParams:      e.ExtraParams,
-		IsStoreSource:    e.IsStoreSource,
-		IterateByStore:   e.IterateByStore,
-		StoreParamName:   e.StoreParamName,
-		StoreSids:        e.StoreSids,
-		StoreType:        e.StoreType,
+		Name:               e.Name,
+		Display:            e.Display,
+		Account:            e.Account,
+		Path:               e.Path,
+		Method:             e.Method,
+		Table:              e.Table,
+		RecordIDFields:     e.RecordIDFields,
+		ResponseShape:      e.ResponseShape,
+		Rate:               rateToDTO(e.Rate),
+		Cron:               e.Cron,
+		Enabled:            e.Enabled,
+		WindowDays:         e.WindowDays,
+		WindowStartField:   e.WindowStartField,
+		WindowEndField:     e.WindowEndField,
+		DateField:          e.DateField,
+		DateOffsetDays:     e.DateOffsetDays,
+		DateRangeCapable:   e.DateRangeCapable(),
+		ExtraParams:        e.ExtraParams,
+		RequestHeaders:     e.RequestHeaders,
+		IsStoreSource:      e.IsStoreSource,
+		IterateByStore:     e.IterateByStore,
+		StoreParamName:     e.StoreParamName,
+		StoreSids:          e.StoreSids,
+		StoreType:          e.StoreType,
+		IterateByAdAccount: e.IterateByAdAccount,
+		AdAccountType:      e.AdAccountType,
+		FieldPaths:         e.FieldPaths,
+		InjectParams:       e.InjectParams,
+		ForceInjectParams:  e.ForceInjectParams,
+		Probe:              e.Probe,
 	}
 }
 
@@ -205,27 +221,35 @@ func endpointsToDTO(es []config.Endpoint) []endpointDTO {
 
 func dtoToEndpoint(d endpointDTO) config.Endpoint {
 	return config.Endpoint{
-		Name:             d.Name,
-		Display:          d.Display,
-		Account:          d.Account,
-		Path:             d.Path,
-		Method:           d.Method,
-		Table:            d.Table,
-		RecordIDFields:   d.RecordIDFields,
-		Rate:             dtoToRate(d.Rate),
-		Cron:             d.Cron,
-		Enabled:          d.Enabled,
-		WindowDays:       d.WindowDays,
-		WindowStartField: d.WindowStartField,
-		WindowEndField:   d.WindowEndField,
-		DateField:        d.DateField,
-		DateOffsetDays:   d.DateOffsetDays,
-		ExtraParams:      d.ExtraParams,
-		IsStoreSource:    d.IsStoreSource,
-		IterateByStore:   d.IterateByStore,
-		StoreParamName:   d.StoreParamName,
-		StoreSids:        d.StoreSids,
-		StoreType:        d.StoreType,
+		Name:               d.Name,
+		Display:            d.Display,
+		Account:            d.Account,
+		Path:               d.Path,
+		Method:             d.Method,
+		Table:              d.Table,
+		RecordIDFields:     d.RecordIDFields,
+		ResponseShape:      d.ResponseShape,
+		Rate:               dtoToRate(d.Rate),
+		Cron:               d.Cron,
+		Enabled:            d.Enabled,
+		WindowDays:         d.WindowDays,
+		WindowStartField:   d.WindowStartField,
+		WindowEndField:     d.WindowEndField,
+		DateField:          d.DateField,
+		DateOffsetDays:     d.DateOffsetDays,
+		ExtraParams:        d.ExtraParams,
+		RequestHeaders:     d.RequestHeaders,
+		IsStoreSource:      d.IsStoreSource,
+		IterateByStore:     d.IterateByStore,
+		StoreParamName:     d.StoreParamName,
+		StoreSids:          d.StoreSids,
+		StoreType:          d.StoreType,
+		IterateByAdAccount: d.IterateByAdAccount,
+		AdAccountType:      d.AdAccountType,
+		FieldPaths:         d.FieldPaths,
+		InjectParams:       d.InjectParams,
+		ForceInjectParams:  d.ForceInjectParams,
+		Probe:              d.Probe,
 	}
 }
 
