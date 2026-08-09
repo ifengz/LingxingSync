@@ -84,7 +84,8 @@ log "5/7 编译二进制"
 mkdir -p "${CODE_DIR}/.gocache"
 NEXT_APP="$(mktemp "${CODE_DIR}/.gocache/${APP}.new.XXXXXX")"
 trap 'rm -f "${NEXT_APP}"' EXIT
-go build -ldflags="-s -w -X lingxing-sync/internal/server.BuildCommit=${AFTER_FULL}" -o "${NEXT_APP}"
+# Go 的 VCS 探测不会继承上面的 git safe.directory；版本已通过 BuildCommit 注入，故禁用该重复探测。
+go build -buildvcs=false -ldflags="-s -w -X lingxing-sync/internal/server.BuildCommit=${AFTER_FULL}" -o "${NEXT_APP}"
 test -x "${NEXT_APP}" || fail "编译产物不存在或不可执行"
 
 log "6/7 校验生产配置（不连接数据库、不启动服务）"
