@@ -2,11 +2,15 @@ package server
 
 import (
 	"embed"
+	"encoding/json"
 	"html/template"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/jmoiron/sqlx"
 
 	"lingxing-sync/internal/config"
 	"lingxing-sync/internal/db"
@@ -30,6 +34,40 @@ func TestRenderPageWritesLayout(t *testing.T) {
 	s.renderPage(recorder, "sync_manage", pageData{Active: "sync_manage"})
 	if !strings.Contains(recorder.Body.String(), "<html>") {
 		t.Fatalf("rendered page missing layout: %q", recorder.Body.String())
+	}
+}
+
+func TestSettingsExposeDeployedCommit(t *testing.T) {
+	previousCommit := BuildCommit
+	BuildCommit = "0123456789abcdef0123456789abcdef01234567"
+	t.Cleanup(func() { BuildCommit = previousCommit })
+
+	dbx, err := sqlx.Open("mysql", "invalid:invalid@tcp(127.0.0.1:1)/invalid?timeout=10ms")
+	if err != nil {
+		t.Fatalf("open test db: %v", err)
+	}
+	defer dbx.Close()
+
+	s := &Server{
+		cfg:       &config.Config{},
+		dbx:       dbx,
+		startTime: time.Now(),
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/settings", nil)
+	rec := httptest.NewRecorder()
+
+	s.apiSettings(rec, req)
+
+	var response struct {
+		Data struct {
+			DeployCommit string `json:"deploy_commit"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode settings response: %v", err)
+	}
+	if response.Data.DeployCommit != BuildCommit {
+		t.Fatalf("deploy_commit=%q, want %q; body=%s", response.Data.DeployCommit, BuildCommit, rec.Body.String())
 	}
 }
 

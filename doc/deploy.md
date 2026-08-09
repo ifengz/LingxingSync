@@ -18,6 +18,8 @@ push main
 
 GitHub 原生 WebHook 不直接访问宝塔面板：面板使用自签名证书，GitHub 会拒绝投递。Actions 按同服务器现有项目的方式调用宝塔 WebHook，仓库 Secret `BAOTA_WEBHOOK_URL` 保存完整回调地址；Secret 不写入 workflow、日志或仓库。
 
+Actions 不能只看公网 HTTP `200`：宝塔 WebHook 会异步返回，旧进程仍可能存活。生产构建会把完整 Git SHA 写入 `/api/settings` 的 `deploy_commit`，Actions 只有在该值等于本次 `GITHUB_SHA` 且 `db_connected=true` 时才通过。
+
 ## 宝塔 WebHook
 
 WebHook 应只执行固定脚本：
@@ -132,10 +134,10 @@ mv code/config.yaml.bak.20260808164148 "${BACKUP_DIR}/config.yaml.bak.2026080816
 
 git -c safe.directory=/www/wwwroot/lingxing-sync status --short --untracked-files=all
 git -c safe.directory=/www/wwwroot/lingxing-sync pull --ff-only origin main
-FORCE_DEPLOY=1 BRANCH=main bash code/deploy.sh
+BRANCH=main bash code/deploy.sh
 ```
 
-如果 `009` 的 diff 不是临时补丁，先停在这里，不要执行 `restore`；把备份内容转成正式 migration commit 后再部署。`FORCE_DEPLOY=1` 只用于这次 bootstrap，之后正常 push 由 WebHook 触发即可。
+如果 `009` 的 diff 不是临时补丁，先停在这里，不要执行 `restore`；把备份内容转成正式 migration commit 后再部署。脚本即使发现 Git 提交未变化，也会完整执行测试、编译、重启和健康检查，以便恢复同一提交上一次失败的部署。
 
 ## 部署后固定入口复核
 

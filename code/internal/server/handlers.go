@@ -441,12 +441,16 @@ type accountStatusOut struct {
 }
 
 type settingsOut struct {
-	Version     string             `json:"version"`
-	UptimeSec   int64              `json:"uptime_sec"`
-	DBConnected bool               `json:"db_connected"`
-	BaseURL     string             `json:"base_url"`
-	Accounts    []accountStatusOut `json:"accounts"`
+	Version      string             `json:"version"`
+	DeployCommit string             `json:"deploy_commit"`
+	UptimeSec    int64              `json:"uptime_sec"`
+	DBConnected  bool               `json:"db_connected"`
+	BaseURL      string             `json:"base_url"`
+	Accounts     []accountStatusOut `json:"accounts"`
 }
+
+// BuildCommit 由生产构建通过 -ldflags 注入；本地开发保持 dev。
+var BuildCommit = "dev"
 
 func (s *Server) apiSettings(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
@@ -478,11 +482,12 @@ func (s *Server) apiSettings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	okJSON(w, settingsOut{
-		Version:     "0.1.0",
-		UptimeSec:   int64(time.Since(s.startTime).Seconds()),
-		DBConnected: dbOK,
-		BaseURL:     s.baseURL,
-		Accounts:    accounts,
+		Version:      "0.1.0",
+		DeployCommit: BuildCommit,
+		UptimeSec:    int64(time.Since(s.startTime).Seconds()),
+		DBConnected:  dbOK,
+		BaseURL:      s.baseURL,
+		Accounts:     accounts,
 	})
 }
 
