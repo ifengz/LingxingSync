@@ -18,6 +18,8 @@ push main
 
 GitHub 原生 WebHook 不直接访问宝塔面板：面板使用自签名证书，GitHub 会拒绝投递。Actions 按同服务器现有项目的方式调用宝塔 WebHook，仓库 Secret `BAOTA_WEBHOOK_URL` 保存完整回调地址；Secret 不写入 workflow、日志或仓库。
 
+Actions 不能只看公网 HTTP `200`：宝塔 WebHook 会异步返回，旧进程仍可能存活。生产构建会把完整 Git SHA 写入 `/api/settings` 的 `deploy_commit`，Actions 只有在该值等于本次 `GITHUB_SHA` 且 `db_connected=true` 时才通过。
+
 ## 宝塔 WebHook
 
 WebHook 应只执行固定脚本：

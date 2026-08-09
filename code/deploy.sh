@@ -41,6 +41,9 @@ SUPERVISOR_CONF="${SUPERVISOR_CONF:-/etc/supervisor/supervisord.conf}"
 export PATH="/usr/local/go/bin:/usr/local/bin:/www/server/panel/pyenv/bin:${PATH}"
 # Go 编译缓存/模块目录，避免落到 www 用户没权限的地方
 export GOCACHE="${GOCACHE:-${CODE_DIR}/.gocache}"
+# 宝塔 WebHook 不提供 HOME；Go 无法自行推导 GOPATH/GOMODCACHE，必须显式指定。
+export GOPATH="${GOPATH:-/root/go}"
+export GOMODCACHE="${GOMODCACHE:-${GOPATH}/pkg/mod}"
 
 log() { printf '\n\033[1;32m[deploy %(%F %T)T]\033[0m %s\n' -1 "$*"; }
 fail() { printf '\n\033[1;31m[deploy 失败]\033[0m %s\n' "$*" >&2; exit 1; }
@@ -64,6 +67,7 @@ fi
 "${GIT[@]}" checkout "${BRANCH}"
 "${GIT[@]}" pull --ff-only origin "${BRANCH}"
 AFTER="$("${GIT[@]}" rev-parse --short HEAD)"
+AFTER_FULL="$("${GIT[@]}" rev-parse HEAD)"
 log "版本：${BEFORE} → ${AFTER}"
 
 if [ "${BEFORE}" = "${AFTER}" ] && [ "${FORCE_DEPLOY}" != "1" ]; then
@@ -79,11 +83,14 @@ log "4/7 运行 go vet"
 go vet ./... || fail "go vet ./... 失败，拒绝部署"
 
 log "5/7 编译二进制"
-go build -ldflags="-s -w" -o "${APP}"
-test -x "./${APP}" || fail "编译产物不存在或不可执行"
+NEXT_APP="${APP}.new"
+rm -f "${NEXT_APP}"
+go build -ldflags="-s -w -X lingxing-sync/internal/server.BuildCommit=${AFTER_FULL}" -o "${NEXT_APP}"
+test -x "./${NEXT_APP}" || fail "编译产物不存在或不可执行"
 
 log "6/7 校验生产配置（不连接数据库、不启动服务）"
-"./${APP}" -config config.yaml -validate-config || fail "config.yaml 校验失败，拒绝部署"
+"./${NEXT_APP}" -config config.yaml -validate-config || fail "config.yaml 校验失败，拒绝部署"
+mv -f "${NEXT_APP}" "${APP}"
 
 log "7/7 重启服务（supervisor）"
 # 必须带 -c：宝塔的 supervisord 是用 -c /etc/supervisor/supervisord.conf 起的，
