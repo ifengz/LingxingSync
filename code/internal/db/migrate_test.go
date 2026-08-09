@@ -41,3 +41,65 @@ func TestFBAInventoryTableRenameMigrationIsPresent(t *testing.T) {
 		t.Fatal("FBA 库存表迁移必须先检查旧表和新表是否存在")
 	}
 }
+
+func TestVCReportStoreScopeMigrationPreservesLegacyRows(t *testing.T) {
+	baseRaw, err := os.ReadFile("../../migrations/008_add_vc_report_tables.sql")
+	if err != nil {
+		t.Fatalf("读取 VC 报表基础迁移失败: %v", err)
+	}
+	baseSQL := strings.ToUpper(string(baseRaw))
+	for _, want := range []string{
+		"PRIMARY KEY (ACCOUNT_ID, SID, ASIN, `DATE`)",
+		"PRIMARY KEY (ACCOUNT_ID, SID, ASIN, STARTTIME)",
+	} {
+		if !strings.Contains(baseSQL, want) {
+			t.Fatalf("VC 报表基础迁移缺少 %q", want)
+		}
+	}
+
+	raw, err := os.ReadFile("../../migrations/023_scope_vc_reports_by_store.sql")
+	if err != nil {
+		t.Fatalf("读取 VC 报表店铺键迁移失败: %v", err)
+	}
+	sql := strings.ToUpper(string(raw))
+	for _, destructive := range []string{"DROP TABLE", "DELETE FROM", "TRUNCATE"} {
+		if strings.Contains(sql, destructive) {
+			t.Fatalf("VC 报表迁移不得使用破坏性语句 %s", destructive)
+		}
+	}
+	for _, want := range []string{
+		"LS_VC_SALES_REPORT_LEGACY_UNSCOPED",
+		"PRIMARY KEY (ACCOUNT_ID, SID, ASIN, `DATE`)",
+		"LS_VC_REALTIME_SALES_LEGACY_UNSCOPED",
+		"PRIMARY KEY (ACCOUNT_ID, SID, ASIN, STARTTIME)",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("VC 报表迁移缺少 %q", want)
+		}
+	}
+}
+
+func TestCampaignAdMigrationsMatchVerifiedKeys(t *testing.T) {
+	tests := []struct {
+		file  string
+		table string
+	}{
+		{file: "../../migrations/024_add_ls_ad_sd_campaign.sql", table: "LS_AD_SD_CAMPAIGN"},
+		{file: "../../migrations/025_add_ls_ad_hsa_campaign.sql", table: "LS_AD_HSA_CAMPAIGN"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.table, func(t *testing.T) {
+			raw, err := os.ReadFile(tc.file)
+			if err != nil {
+				t.Fatalf("读取广告活动迁移失败: %v", err)
+			}
+			sql := strings.ToUpper(string(raw))
+			if !strings.Contains(sql, "CREATE TABLE IF NOT EXISTS "+tc.table) {
+				t.Fatalf("迁移未创建 %s", tc.table)
+			}
+			if !strings.Contains(sql, "PRIMARY KEY (ACCOUNT_ID, SID, PROFILE_ID, REPORT_DATE, CAMPAIGN_ID)") {
+				t.Fatal("广告活动表主键必须隔离账号、店铺、profile、日期和 campaign")
+			}
+		})
+	}
+}
