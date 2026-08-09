@@ -174,6 +174,107 @@ func TestCatalogIncludesVerifiedSyncTemplates(t *testing.T) {
 	}
 }
 
+func TestCatalogIncludesVerifiedReportTemplates(t *testing.T) {
+	tests := []struct {
+		key      string
+		path     string
+		table    string
+		ids      []string
+		contract func(Endpoint) bool
+	}{
+		{
+			key: "sc_sales_report", path: "/erp/sc/data/sales_report/asinDailyLists", table: "ls_sc_sales_report",
+			ids: []string{"sid", "r_date", "asin"},
+			contract: func(ep Endpoint) bool {
+				return ep.Cron == "*/30 * * * *" && ep.DateField == "event_date" && ep.DateOffsetDays == 2 &&
+					ep.IterateByStore && ep.StoreType == "SC"
+			},
+		},
+		{
+			key: "vc_orders", path: "/basicOpen/platformOrder/vcOrder/pageList", table: "ls_vc_orders",
+			ids: []string{"local_po_number"},
+			contract: func(ep Endpoint) bool {
+				return ep.Cron == "*/30 * * * *" && ep.WindowDays == 7
+			},
+		},
+		{
+			key: "vc_sales_report", path: "/basicOpen/vc/report/sales/list", table: "ls_vc_sales_report",
+			ids: []string{"sid", "asin", "date"},
+			contract: func(ep Endpoint) bool {
+				return ep.Cron == "*/30 * * * *" && ep.IterateByStore && ep.StoreType == "VC" &&
+					reflect.DeepEqual(ep.InjectParams, []string{"sid"})
+			},
+		},
+		{
+			key: "vc_realtime_sales", path: "/basicOpen/vc/report/realtimeSales/list", table: "ls_vc_realtime_sales",
+			ids: []string{"sid", "asin", "startTime"},
+			contract: func(ep Endpoint) bool {
+				return ep.Cron == "*/30 * * * *" && ep.IterateByStore && ep.StoreType == "VC" &&
+					reflect.DeepEqual(ep.InjectParams, []string{"sid"})
+			},
+		},
+		{
+			key: "vc_traffic", path: "/basicOpen/vc/report/traffic/list", table: "ls_vc_traffic",
+			ids: []string{"sid", "asin", "date"},
+			contract: func(ep Endpoint) bool {
+				return ep.IterateByStore && ep.StoreType == "VC" &&
+					reflect.DeepEqual(ep.ForceInjectParams, []string{"sid"})
+			},
+		},
+		{
+			key: "sc_performance", path: "/bd/productPerformance/openApi/asinList", table: "ls_sc_performance",
+			ids: []string{"sid", "asin"},
+			contract: func(ep Endpoint) bool {
+				return ep.IterateByStore && ep.StoreType == "SC" && ep.FieldPaths["asin"] == "asins[0].asin" &&
+					reflect.DeepEqual(ep.InjectParams, []string{"sid"})
+			},
+		},
+		{
+			key: "ad_sd_campaign", path: "/pb/openapi/newad/sdCampaignReports", table: "ls_ad_sd_campaign",
+			ids: []string{"sid", "profile_id", "report_date", "campaign_id"},
+			contract: func(ep Endpoint) bool {
+				return ep.IterateByAdAccount && ep.AdAccountType == "seller" && ep.DateField == "report_date" &&
+					ep.ExtraParams["show_detail"] == 0 &&
+					reflect.DeepEqual(ep.ForceInjectParams, []string{"sid", "profile_id"})
+			},
+		},
+		{
+			key: "ad_hsa_campaign", path: "/pb/openapi/newad/hsaCampaignReports", table: "ls_ad_hsa_campaign",
+			ids: []string{"sid", "profile_id", "report_date", "campaign_id"},
+			contract: func(ep Endpoint) bool {
+				_, hasShowDetail := ep.ExtraParams["show_detail"]
+				return ep.IterateByAdAccount && ep.AdAccountType == "seller" && ep.DateField == "report_date" &&
+					!hasShowDetail && reflect.DeepEqual(ep.ForceInjectParams, []string{"sid", "profile_id"})
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.key, func(t *testing.T) {
+			e, err := FindCatalogEntry(tc.key)
+			if err != nil {
+				t.Fatalf("FindCatalogEntry(%q): %v", tc.key, err)
+			}
+			ep := e.ToEndpoint("sc_us")
+			if ep.Path != tc.path || ep.Table != tc.table || !reflect.DeepEqual(ep.RecordIDFields, tc.ids) || !tc.contract(ep) {
+				t.Fatalf("template contract = %#v", ep)
+			}
+		})
+	}
+}
+
+func TestHalfHourlyCatalogDefaults(t *testing.T) {
+	for _, key := range []string{"sc_stores", "vc_stores", "sc_listing", "sc_products"} {
+		e, err := FindCatalogEntry(key)
+		if err != nil {
+			t.Fatalf("FindCatalogEntry(%q): %v", key, err)
+		}
+		if e.DefaultCron != "*/30 * * * *" {
+			t.Errorf("%s DefaultCron = %q, want */30 * * * *", key, e.DefaultCron)
+		}
+	}
+}
+
 func TestDeletedSalesOrdersCatalogEntry(t *testing.T) {
 	if _, err := FindCatalogEntry("sc_sales_orders"); err == nil {
 		t.Fatal("sc_sales_orders 已确认删除，不应重新出现在接口清单")
