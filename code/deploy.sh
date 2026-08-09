@@ -18,7 +18,6 @@ CODE_DIR="${REPO_DIR}/code"
 BRANCH="${BRANCH:-main}"
 APP="${APP:-lingxing-sync}"
 GIT=(git -c "safe.directory=${REPO_DIR}")
-FORCE_DEPLOY="${FORCE_DEPLOY:-0}"
 # Supervisor 目标名。必须是「组名:*」而不是裸程序名：
 # 宝塔的 lingxingsync.ini 里 [program:lingxingsync] 带 numprocs，实际进程叫
 # lingxingsync_00 并归在 lingxingsync 组下。裸 `supervisorctl restart lingxingsync`
@@ -42,7 +41,7 @@ export PATH="/usr/local/go/bin:/usr/local/bin:/www/server/panel/pyenv/bin:${PATH
 # Go 编译缓存/模块目录，避免落到 www 用户没权限的地方
 export GOCACHE="${GOCACHE:-${CODE_DIR}/.gocache}"
 # 宝塔 WebHook 不提供 HOME；Go 无法自行推导 GOPATH/GOMODCACHE，必须显式指定。
-export GOPATH="${GOPATH:-/root/go}"
+export GOPATH="${GOPATH:-${CODE_DIR}/.gocache/gopath}"
 export GOMODCACHE="${GOMODCACHE:-${GOPATH}/pkg/mod}"
 
 log() { printf '\n\033[1;32m[deploy %(%F %T)T]\033[0m %s\n' -1 "$*"; }
@@ -70,9 +69,8 @@ AFTER="$("${GIT[@]}" rev-parse --short HEAD)"
 AFTER_FULL="$("${GIT[@]}" rev-parse HEAD)"
 log "版本：${BEFORE} → ${AFTER}"
 
-if [ "${BEFORE}" = "${AFTER}" ] && [ "${FORCE_DEPLOY}" != "1" ]; then
-  log "代码无变化，跳过编译与重启"
-  exit 0
+if [ "${BEFORE}" = "${AFTER}" ]; then
+	log "代码无变化，仍执行完整部署以恢复可能失败的同版本部署"
 fi
 
 log "3/7 运行 Go 测试"
@@ -83,14 +81,16 @@ log "4/7 运行 go vet"
 go vet ./... || fail "go vet ./... 失败，拒绝部署"
 
 log "5/7 编译二进制"
-NEXT_APP="${APP}.new"
-rm -f "${NEXT_APP}"
+mkdir -p "${CODE_DIR}/.gocache"
+NEXT_APP="$(mktemp "${CODE_DIR}/.gocache/${APP}.new.XXXXXX")"
+trap 'rm -f "${NEXT_APP}"' EXIT
 go build -ldflags="-s -w -X lingxing-sync/internal/server.BuildCommit=${AFTER_FULL}" -o "${NEXT_APP}"
-test -x "./${NEXT_APP}" || fail "编译产物不存在或不可执行"
+test -x "${NEXT_APP}" || fail "编译产物不存在或不可执行"
 
 log "6/7 校验生产配置（不连接数据库、不启动服务）"
-"./${NEXT_APP}" -config config.yaml -validate-config || fail "config.yaml 校验失败，拒绝部署"
+"${NEXT_APP}" -config config.yaml -validate-config || fail "config.yaml 校验失败，拒绝部署"
 mv -f "${NEXT_APP}" "${APP}"
+trap - EXIT
 
 log "7/7 重启服务（supervisor）"
 # 必须带 -c：宝塔的 supervisord 是用 -c /etc/supervisor/supervisord.conf 起的，

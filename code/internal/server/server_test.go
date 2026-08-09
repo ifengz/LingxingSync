@@ -38,6 +38,10 @@ func TestRenderPageWritesLayout(t *testing.T) {
 }
 
 func TestSettingsExposeDeployedCommit(t *testing.T) {
+	previousCommit := BuildCommit
+	BuildCommit = "0123456789abcdef0123456789abcdef01234567"
+	t.Cleanup(func() { BuildCommit = previousCommit })
+
 	dbx, err := sqlx.Open("mysql", "invalid:invalid@tcp(127.0.0.1:1)/invalid?timeout=10ms")
 	if err != nil {
 		t.Fatalf("open test db: %v", err)
@@ -62,8 +66,8 @@ func TestSettingsExposeDeployedCommit(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 		t.Fatalf("decode settings response: %v", err)
 	}
-	if response.Data.DeployCommit != "dev" {
-		t.Fatalf("deploy_commit=%q, want dev; body=%s", response.Data.DeployCommit, rec.Body.String())
+	if response.Data.DeployCommit != BuildCommit {
+		t.Fatalf("deploy_commit=%q, want %q; body=%s", response.Data.DeployCommit, BuildCommit, rec.Body.String())
 	}
 }
 

@@ -134,10 +134,10 @@ mv code/config.yaml.bak.20260808164148 "${BACKUP_DIR}/config.yaml.bak.2026080816
 
 git -c safe.directory=/www/wwwroot/lingxing-sync status --short --untracked-files=all
 git -c safe.directory=/www/wwwroot/lingxing-sync pull --ff-only origin main
-FORCE_DEPLOY=1 BRANCH=main bash code/deploy.sh
+BRANCH=main bash code/deploy.sh
 ```
 
-如果 `009` 的 diff 不是临时补丁，先停在这里，不要执行 `restore`；把备份内容转成正式 migration commit 后再部署。`FORCE_DEPLOY=1` 只用于这次 bootstrap，之后正常 push 由 WebHook 触发即可。
+如果 `009` 的 diff 不是临时补丁，先停在这里，不要执行 `restore`；把备份内容转成正式 migration commit 后再部署。脚本即使发现 Git 提交未变化，也会完整执行测试、编译、重启和健康检查，以便恢复同一提交上一次失败的部署。
 
 ## 部署后固定入口复核
 
