@@ -157,4 +157,4 @@ curl --fail --silent --show-error --max-time 10 \
 
 ## 本轮线上证据
 
-目标主机 `38.246.250.228`，时间 `2026-08-09 01:48`。宝塔 WebHook `sync.usfan.net` 已存在，最近调用一次但在 Git 拉取阶段失败；线上 `lingxingsync:lingxingsync_00` 为 `RUNNING`，本机 `/api/settings` 为 `401`，公网固定入口为 `200`。线上还存在 tracked 的 `009` 修改和配置备份未跟踪文件，未执行清理、重启或其他生产写操作。
+目标主机 `38.246.250.228`，时间 `2026-08-09 10:34`。已人工完成一次部署脚本升级引导：线上仓库为 `69fe278`，测试、静态检查、编译、生产配置校验、Supervisor 重启及本机 `/api/settings` 健康检查全部通过。后续以合并到 `main` 后的 GitHub Actions 运行、线上 Git 提交和 Supervisor 状态共同证明自动部署，不能只凭公网旧进程返回 HTTP `200` 判定成功。
