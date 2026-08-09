@@ -266,6 +266,7 @@ window.syncManage = function () {
         this.form.accounts = this.form.accounts.filter(a => this.accounts.includes(a));
         const validPaths = new Set(this.endpoints.map(e => e.path));
         this.form.types = this.form.types.filter(p => validPaths.has(p));
+        this.pruneUnavailableTypes();
       }
       await this.loadCatalog();
       await this.loadRecentTasks();
@@ -361,27 +362,24 @@ window.syncManage = function () {
     toggleAccount(acc) {
       const i = this.form.accounts.indexOf(acc);
       if (i >= 0) this.form.accounts.splice(i, 1); else this.form.accounts.push(acc);
+      this.pruneUnavailableTypes();
     },
     isAccountPicked(acc) { return this.form.accounts.includes(acc); },
-    selectAllAccounts() { this.form.accounts = this.accounts.slice(); },
-    clearAccounts() { this.form.accounts = []; },
+    selectAllAccounts() { this.form.accounts = this.accounts.slice(); this.pruneUnavailableTypes(); },
+    clearAccounts() { this.form.accounts = []; this.clearTypes(); },
 
-    // 数据类型清单：已选账号时只展示其真实配置的接口，避免“联营有、
-    // 自营没有”的类型仍可被勾选，最后解析成 0 个接口。按 path 去重后，
-    // 两个已选账号同类型仍只展示一张卡。
+    // 数据类型目录按所有配置生成，位置不随账号切换而变化。当前账号能否触发
+    // 由 isTypeAvailable 单独决定：不可用类型保持原位、禁用，避免选择区重排。
     get dataTypes() {
       const byPath = new Map();
-      const selectedAccounts = new Set(this.form.accounts);
-      const source = selectedAccounts.size
-        ? this.endpoints.filter(e => selectedAccounts.has(e.account_id))
-        : this.endpoints;
-      for (const e of source) {
+      for (const e of this.endpoints) {
         const label = (e.display || e.name).replace(/（[^）]*）\s*$/, '').trim();
         const cur = byPath.get(e.path);
         if (cur) {
           cur.iterate_by_store = cur.iterate_by_store || !!e.iterate_by_store;
+          if (!cur.account_ids.includes(e.account_id)) cur.account_ids.push(e.account_id);
         } else {
-          byPath.set(e.path, { key: e.path, label, iterate_by_store: !!e.iterate_by_store });
+          byPath.set(e.path, { key: e.path, label, iterate_by_store: !!e.iterate_by_store, account_ids: [e.account_id] });
         }
       }
       return Array.from(byPath.values());
@@ -395,13 +393,30 @@ window.syncManage = function () {
         { label: '其他', items: t.filter(x => !/^(SC|VC)/i.test(x.label)) },
       ];
     },
+    typeForKey(key) { return this.dataTypes.find(t => t.key === key); },
+    isTypeAvailable(key) {
+      const type = this.typeForKey(key);
+      return !!type && this.form.accounts.some(acc => type.account_ids.includes(acc));
+    },
+    pruneUnavailableTypes() {
+      this.form.types = this.form.types.filter(key => this.isTypeAvailable(key));
+      if (!this.dateControlsEnabled) {
+        this.form.date_from = '';
+        this.form.date_to = '';
+      }
+    },
     toggleType(key) {
+      if (!this.isTypeAvailable(key)) return;
       const i = this.form.types.indexOf(key);
       if (i >= 0) this.form.types.splice(i, 1); else this.form.types.push(key);
+      this.pruneUnavailableTypes();
     },
     isTypePicked(key) { return this.form.types.includes(key); },
-    selectAllTypes() { this.form.types = this.dataTypes.map(t => t.key); },
-    clearTypes() { this.form.types = []; },
+    selectAllTypes() {
+      this.form.types = this.dataTypes.filter(t => this.isTypeAvailable(t.key)).map(t => t.key);
+      this.pruneUnavailableTypes();
+    },
+    clearTypes() { this.form.types = []; this.form.date_from = ''; this.form.date_to = ''; },
 
     // 解析：选中账号 × 选中类型(path) → 真实接口对象数组（笛卡尔积，跳过不存在的组合）。
     // 这是矩阵模型与后端「按 name 触发」之间的唯一映射点，所有下游逻辑都读它。
@@ -423,6 +438,9 @@ window.syncManage = function () {
         !e.date_range_capable && !(e.date_field && from === to));
       if (unsupported.length) return '所选接口不支持此日期范围：' + unsupported.map(e => e.display || e.name).join('、');
       return '';
+    },
+    get dateControlsEnabled() {
+      return this.resolvedEndpoints.some(e => e.date_range_capable || e.date_field);
     },
     get dateRangeHint() {
       const selected = this.resolvedEndpoints;
@@ -447,6 +465,31 @@ window.syncManage = function () {
         if (e.iterate_by_store && !out.includes(e.account_id)) out.push(e.account_id);
       }
       return out;
+    },
+    get selectedStoreCount() {
+      return this.storeAccounts.reduce((count, acc) => count + this.accountSelectedCount(acc), 0);
+    },
+    get manualSubmitDisabled() {
+      return this.selectedCount === 0 || !!this.dateRangeIssue;
+    },
+    get manualSubmitHint() {
+      if (!this.form.accounts.length) return '先选择账号';
+      if (!this.form.types.length) return '再选择数据类型';
+      if (this.dateRangeIssue) return this.dateRangeIssue;
+      if (!this.selectedCount) return '所选账号没有可触发接口';
+      return '确认后创建同步任务';
+    },
+    manualSyncSummary() {
+      const accounts = this.form.accounts.map(acc => this.accountName(acc)).join('、');
+      const selectedPaths = new Set(this.form.types);
+      const types = this.dataTypes.filter(t => selectedPaths.has(t.key)).map(t => t.label).join('、');
+      const dates = this.form.date_from && this.form.date_to
+        ? this.form.date_from + ' 至 ' + this.form.date_to
+        : '接口默认策略';
+      const stores = this.showStoreGrid
+        ? (this.selectedStoreCount ? '已选 ' + this.selectedStoreCount + ' 家店铺' : '按接口配置全量')
+        : '不按店铺';
+      return '账号：' + accounts + '\n数据类型：' + types + '\n任务：' + this.selectedCount + ' 个\n日期：' + dates + '\n店铺：' + stores;
     },
     // 某 account 是否存在勾选子集（UI 提示用）；无 = 不传 store_sids（等价全部）
     accountSelectedCount(acc) {
@@ -536,6 +579,8 @@ window.syncManage = function () {
       }
       const sel = resolved.map(e => e.name);
       if (this.dateRangeIssue) { window.toast('warn', this.dateRangeIssue); return; }
+      const confirmed = await window.syncConfirm(this.manualSyncSummary(), '确认同步');
+      if (!confirmed) return;
       // 为每个接口构造请求体：只有 iterate_by_store 且该账号有勾选时才带 store_sids；
       // 不勾 = 不传 = 后端按配置白名单（决策③：每次进页面空选）
       const buildReq = (name) => {

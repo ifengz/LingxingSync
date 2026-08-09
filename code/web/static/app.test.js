@@ -75,6 +75,22 @@ assert.equal(entryManage.advancedAdd, false);
   assert.equal(m.dateRangeIssue, '');
   m.form.types = ['/snapshot'];
   assert.match(m.dateRangeIssue, /快照/);
+  assert.equal(m.dateControlsEnabled, false, '纯快照接口不应允许填写日期');
+  m.form.types = ['/range'];
+  assert.equal(m.dateControlsEnabled, true, '声明日期合同的接口应允许填写日期');
+  m.form.date_from = '2026-08-01';
+  m.form.date_to = '2026-08-01';
+  m.form.types = ['/snapshot'];
+  m.pruneUnavailableTypes();
+  assert.equal(m.form.date_from, '', '切换到无日期接口时应清空失效的开始日期');
+  assert.equal(m.form.date_to, '', '切换到无日期接口时应清空失效的结束日期');
+  m.form.date_from = '2026-08-01';
+  m.form.date_to = '2026-08-01';
+  m.clearAccounts();
+  assert.equal(JSON.stringify(m.form.accounts), '[]');
+  assert.equal(JSON.stringify(m.form.types), '[]');
+  assert.equal(m.form.date_from, '');
+  assert.equal(m.form.date_to, '');
 }
 
 // 触发同步矩阵模型：两账号同 path 接口在 UI 合并成一份数据类型；
@@ -129,18 +145,27 @@ assert.equal(entryManage.advancedAdd, false);
   assert.equal(vis[0].sid, '7860');
 }
 
-// 数据类型必须匹配已选账号：不能把仅联营有的 VC 毛利日报展示为自营可选，
-// 否则 resolvedEndpoints 为 0，按店铺网格不会显示且用户无法知道原因。
+// 固定工作台：账号切换不能让类型卡消失或重排；不可用类型留在原位并禁用。
 {
   const m = sandbox.window.syncManage();
   m.endpoints = [
+    { name: 'sc_stores_sc_us_1', display: 'SC 店铺列表', account_id: 'sc_us_1', path: '/stores', iterate_by_store: false },
+    { name: 'sc_stores_sc_us_2', display: 'SC 店铺列表（联营）', account_id: 'sc_us_2', path: '/stores', iterate_by_store: false },
     { name: 'vc_margin_sc_us_2', display: 'VC 毛利日报', account_id: 'sc_us_2', path: '/vc-margin', iterate_by_store: true, store_type: 'VC' },
     { name: 'vc_stores_sc_us_1', display: 'VC 店铺列表', account_id: 'sc_us_1', path: '/vc-stores', iterate_by_store: false },
   ];
+  const keysBefore = m.dataTypes.map(t => t.key);
   m.form.accounts = ['sc_us_1'];
-  assert.equal(m.dataTypes.some(t => t.key === '/vc-margin'), false, '自营未配置 VC 毛利时不应展示该类型');
+  assert.equal(m.dataTypes.some(t => t.key === '/vc-margin'), true, '自营未配置 VC 毛利时仍应保留卡片位置');
+  assert.equal(m.isTypeAvailable('/vc-margin'), false, '自营未配置 VC 毛利时应禁用该卡片');
+  m.form.types = ['/stores', '/vc-margin'];
+  m.pruneUnavailableTypes();
+  assert.equal(JSON.stringify(m.form.types), JSON.stringify(['/stores']), '账号切换后只清掉不可用的已选类型');
   m.form.accounts = ['sc_us_2'];
-  assert.equal(m.dataTypes.some(t => t.key === '/vc-margin'), true, '联营已配置 VC 毛利时应展示该类型');
+  m.pruneUnavailableTypes();
+  assert.equal(JSON.stringify(m.dataTypes.map(t => t.key)), JSON.stringify(keysBefore), '账号切换后类型卡顺序必须保持不变');
+  assert.equal(JSON.stringify(m.form.types), JSON.stringify(['/stores']), '共享类型在账号切换后应保留选择');
+  assert.equal(m.isTypeAvailable('/vc-margin'), true, '联营已配置 VC 毛利时应启用该卡片');
 }
 
 const confirmation = sandbox.window.syncConfirm('删除账号？', '确认');
@@ -175,6 +200,37 @@ void (async () => {
   ]));
   assert.equal(batch.needRestart, true);
   assert.equal(JSON.stringify(batch.catalogBatchKeys), '[]');
+
+  // 手动同步先确认摘要；取消时不发请求，确认后保留原有按接口 fan-out 和店铺范围合同。
+  const manual = sandbox.window.syncManage();
+  manual.endpoints = [
+    { name: 'stores', display: '店铺列表', account_id: 'sc_us_1', path: '/stores', iterate_by_store: false },
+    { name: 'inventory', display: 'FBA 库存', account_id: 'sc_us_1', path: '/inventory', iterate_by_store: true },
+  ];
+  manual.accountNames = { sc_us_1: '自营领星' };
+  manual.form.accounts = ['sc_us_1'];
+  manual.form.types = ['/stores', '/inventory'];
+  manual.storesByAccount = { sc_us_1: { selected: { '1001': true } } };
+  manual.load = async () => {};
+  const syncCalls = [];
+  sandbox.window.apiPost = async (url, body) => {
+    syncCalls.push({ url, body });
+    return { task_id: 1 };
+  };
+  let confirmMessage = '';
+  sandbox.window.syncConfirm = async (message) => { confirmMessage = message; return false; };
+  await manual.triggerSync();
+  assert.equal(syncCalls.length, 0, '取消确认后不得创建同步任务');
+  assert.match(confirmMessage, /账号：自营领星/);
+  assert.match(confirmMessage, /数据类型：店铺列表、FBA 库存/);
+  assert.match(confirmMessage, /任务：2 个/);
+  assert.match(confirmMessage, /店铺：已选 1 家店铺/);
+  sandbox.window.syncConfirm = async () => true;
+  await manual.triggerSync();
+  assert.equal(JSON.stringify(syncCalls), JSON.stringify([
+    { url: '/api/sync/stores', body: {} },
+    { url: '/api/sync/inventory', body: { store_sids: ['1001'] } },
+  ]));
 
   sandbox.window.apiPost = async (url, body) => {
     request = { url, body };
