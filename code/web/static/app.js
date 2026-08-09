@@ -205,9 +205,9 @@ window.syncManage = function () {
     // 高级/开发者「手动填合同」折叠区开关（清单没有的接口才用）。默认收起。
     advancedAdd: false,
     // 接口清单（从后端 /api/catalog 拉）：templates=模板列表，accounts=可选账号。
-    // catalogPick[key] = 该模板当前在下拉里选中的账号 id。
     catalog: { templates: [], accounts: [] },
-    catalogPick: {},
+    catalogBatchAccount: '',
+    catalogBatchKeys: [],
     // 保守限流默认：桶 1 / 间隔 1000ms（对齐 otherlingxinggithub.md §3「业务 API ≥0.6s」留足余量）。
     // extra_params_text 是 JSON 文本输入，保存时解析成对象；解析失败拦截不发请求。
     addForm: { name: '', display: '', account: '', path: '', method: 'GET', table: '', record_id_fields: '', cron: '', bucket: 1, interval_ms: 1000, multi_interval_ms: 0, window_days: 0, iterate_by_store: false, store_param_name: '', extra_params_text: '' },
@@ -273,19 +273,78 @@ window.syncManage = function () {
     // 接口清单（从清单添加的主路径数据）。失败静默：清单拉不到不影响调度表。
     async loadCatalog() {
       const d = await window.apiGet('/api/catalog').catch(window.toastError);
-      if (d) this.catalog = { templates: d.templates || [], accounts: d.accounts || [] };
+      if (d) {
+        this.catalog = { templates: d.templates || [], accounts: d.accounts || [] };
+        const keys = new Set(this.catalog.templates.map(t => t.key));
+        this.catalogBatchKeys = this.catalogBatchKeys.filter(key => keys.has(key));
+        if (this.catalogBatchAccount && !this.catalog.accounts.some(a => a.id === this.catalogBatchAccount)) {
+          this.catalogBatchAccount = '';
+          this.catalogBatchKeys = [];
+        }
+      }
     },
-    // 启用清单里的一个模板到所选账号：选账号 → 点启用 → 复用后端 /api/catalog/enable。
-    // 成功即结构性变更（need_restart），提示重启后刷新清单（已启用的账号会被划掉）。
-    async enableCatalog(key) {
-      const account = this.catalogPick[key];
-      if (!account) { window.toast('warn', '请先为该接口选择账号'); return; }
-      const r = await window.apiPost('/api/catalog/enable', { key, account }).catch(window.toastError);
-      if (r) {
-        if (r.need_restart) this.needRestart = true;
-        window.toast('success', r.message || '已启用，需重启生效');
-        this.catalogPick[key] = '';
-        await this.load();
+    catalogAccountName(id) {
+      const account = this.catalog.accounts.find(a => a.id === id);
+      return account ? (account.name || account.id) : id;
+    },
+    catalogEnabledLabel(t) {
+      const ids = t.enabled_accounts || [];
+      return ids.length ? '已启用：' + ids.map(id => this.catalogAccountName(id)).join('、') : '未启用';
+    },
+    catalogBatchAvailable(t) {
+      return !!this.catalogBatchAccount && !(t.enabled_accounts || []).includes(this.catalogBatchAccount);
+    },
+    isCatalogBatchPicked(key) {
+      return this.catalogBatchKeys.includes(key);
+    },
+    toggleCatalogBatch(key) {
+      const template = this.catalog.templates.find(t => t.key === key);
+      if (!template || !this.catalogBatchAvailable(template)) return;
+      const i = this.catalogBatchKeys.indexOf(key);
+      if (i >= 0) this.catalogBatchKeys.splice(i, 1);
+      else this.catalogBatchKeys.push(key);
+    },
+    selectAllCatalogPending() {
+      this.catalogBatchKeys = this.catalog.templates
+        .filter(t => this.catalogBatchAvailable(t))
+        .map(t => t.key);
+    },
+    clearCatalogBatch() {
+      this.catalogBatchKeys = [];
+    },
+    catalogBatchDisabled() {
+      return !this.catalogBatchAccount || this.catalogBatchKeys.length === 0;
+    },
+    // 一次选择账号并批量提交清单接口；复用现有单接口启用 API，保持逐项校验、备份和重启提示。
+    async enableCatalogBatch() {
+      const account = this.catalogBatchAccount;
+      const keys = this.catalogBatchKeys.filter(key => {
+        const template = this.catalog.templates.find(t => t.key === key);
+        return template && this.catalogBatchAvailable(template);
+      });
+      if (!account) { window.toast('warn', '请先选择目标账号'); return; }
+      if (!keys.length) { window.toast('warn', '请至少选择一个未启用接口'); return; }
+
+      let success = 0;
+      const failed = [];
+      for (const key of keys) {
+        try {
+          const r = await window.apiPost('/api/catalog/enable', { key, account });
+          if (!r) { failed.push(key); continue; }
+          success++;
+          if (r.need_restart) this.needRestart = true;
+        } catch (err) {
+          failed.push(key);
+        }
+      }
+      this.clearCatalogBatch();
+      await this.load();
+      if (failed.length === 0) {
+        window.toast('success', '已启用 ' + success + ' 个接口，重启后生效');
+      } else if (success > 0) {
+        window.toast('warn', '已启用 ' + success + ' 个，失败 ' + failed.length + ' 个');
+      } else {
+        window.toast('error', '批量启用失败');
       }
     },
     // 只为定时调度 Tab 的 lastRunOf()（每行「上次运行」）取一批最近任务，不做任何列表渲染。
