@@ -53,6 +53,19 @@ type catalogListOut struct {
 	Accounts  []catalogAccountRef  `json:"accounts"`
 }
 
+// catalogAccountEnabled 判断某账号是否已经启用模板。
+// 精确 name 是 catalog 生成的标准形式；同 path 冲突兼容历史手工配置的自定义 name。
+func catalogAccountEnabled(cfg *config.Config, entry config.CatalogEntry, accountID string) bool {
+	candidate := entry.ToEndpoint(accountID)
+	for _, ep := range cfg.Endpoints {
+		if ep.Name == candidate.Name {
+			return true
+		}
+	}
+	_, conflict := cfg.ConflictingLimiterKey(candidate)
+	return conflict
+}
+
 // paramShapeText 把模板的参数形态翻译成一句人话，给不懂技术的用户在清单里看。
 func paramShapeText(e config.CatalogEntry) string {
 	switch {
@@ -82,11 +95,11 @@ func (s *Server) apiCatalogList(w http.ResponseWriter, r *http.Request) {
 
 	templates := make([]catalogTemplateOut, 0)
 	for _, e := range config.Catalog() {
-		// 对每个账号判断「本模板是否已启用」：用 ToEndpoint 生成候选，
-		// 若其 (quota_group, path) 已被现有接口占用即视为已启用（复用限流键判定）。
+		// 对每个账号判断「本模板是否已启用」：优先匹配 catalog 生成的标准 name，
+		// 再用同 quota_group+path 兼容历史自定义接口名。
 		enabled := make([]string, 0)
 		for _, a := range cfg.Accounts {
-			if _, dup := cfg.ConflictingLimiterKey(e.ToEndpoint(a.ID)); dup {
+			if catalogAccountEnabled(cfg, e, a.ID) {
 				enabled = append(enabled, a.ID)
 			}
 		}

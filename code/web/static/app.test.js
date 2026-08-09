@@ -21,6 +21,42 @@ const entryManage = sandbox.window.syncManage();
 assert.equal(entryManage.tab, 'manual');
 assert.equal(entryManage.advancedAdd, false);
 
+// 接口清单启用状态必须在下拉和按钮上可见、可禁用。
+{
+  const m = sandbox.window.syncManage();
+  m.catalog = { accounts: [
+    { id: 'sc_us_1', name: '自营领星' },
+    { id: 'sc_us_2', name: '联营领星' },
+  ], templates: [] };
+  const enabled = { key: 'vc_stores', enabled_accounts: ['sc_us_1'] };
+  const pending = { key: 'vc_margin', enabled_accounts: [] };
+  assert.equal(m.catalogEnabledLabel(enabled), '已启用：自营领星');
+  m.catalogBatchAccount = 'sc_us_1';
+  assert.equal(m.catalogBatchAvailable(enabled), false);
+  m.catalogBatchAccount = 'sc_us_2';
+  assert.equal(m.catalogBatchAvailable(pending), true);
+}
+
+// 清单批量启用：先选一次账号，再勾选多个未启用接口；已启用项不可选。
+{
+  const m = sandbox.window.syncManage();
+  m.catalog = { accounts: [{ id: 'sc_us_1', name: '自营领星' }], templates: [
+    { key: 'stores', enabled_accounts: ['sc_us_1'] },
+    { key: 'listing', enabled_accounts: [] },
+    { key: 'margin', enabled_accounts: [] },
+  ] };
+  m.catalogBatchAccount = 'sc_us_1';
+  m.catalogBatchKeys = [];
+  assert.equal(m.catalogBatchAvailable(m.catalog.templates[0]), false);
+  assert.equal(m.catalogBatchAvailable(m.catalog.templates[1]), true);
+  m.selectAllCatalogPending();
+  assert.deepEqual(m.catalogBatchKeys, ['listing', 'margin']);
+  m.toggleCatalogBatch('listing');
+  assert.deepEqual(m.catalogBatchKeys, ['margin']);
+  m.clearCatalogBatch();
+  assert.equal(JSON.stringify(m.catalogBatchKeys), '[]');
+}
+
 // 手动日期只允许已声明日期合同的接口，并且单日接口只能选同一天。
 {
   const m = sandbox.window.syncManage();
@@ -114,6 +150,32 @@ confirmation.then((accepted) => assert.equal(accepted, true));
 void (async () => {
   let request = null;
   sandbox.window.syncConfirm = async () => true;
+  sandbox.window.apiPost = async (url, body) => {
+    request = { url, body };
+    return { message: '已请求取消' };
+  };
+  // 批量启用必须按所选顺序复用单接口 API，并在任一项成功后提示重启。
+  const batch = sandbox.window.syncManage();
+  batch.catalog = { accounts: [{ id: 'sc_us_1', name: '自营领星' }], templates: [
+    { key: 'listing', enabled_accounts: [] },
+    { key: 'margin', enabled_accounts: [] },
+  ] };
+  batch.catalogBatchAccount = 'sc_us_1';
+  batch.catalogBatchKeys = ['listing', 'margin'];
+  batch.load = async () => {};
+  const batchRequests = [];
+  sandbox.window.apiPost = async (url, body) => {
+    batchRequests.push({ url, body });
+    return { need_restart: true };
+  };
+  await batch.enableCatalogBatch();
+  assert.equal(JSON.stringify(batchRequests), JSON.stringify([
+    { url: '/api/catalog/enable', body: { key: 'listing', account: 'sc_us_1' } },
+    { url: '/api/catalog/enable', body: { key: 'margin', account: 'sc_us_1' } },
+  ]));
+  assert.equal(batch.needRestart, true);
+  assert.equal(JSON.stringify(batch.catalogBatchKeys), '[]');
+
   sandbox.window.apiPost = async (url, body) => {
     request = { url, body };
     return { message: '已请求取消' };
