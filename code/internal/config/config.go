@@ -140,6 +140,9 @@ type Endpoint struct {
 	Enabled        bool           `yaml:"enabled"`
 	WindowDays     int            `yaml:"window_days"` // 0=全量；>0=滚动 N 天（注入窗口起止日期）
 	ExtraParams    map[string]any `yaml:"extra_params"`
+	// RequestHeaders 是接口协议要求的固定非敏感请求头（如 X-API-VERSION: "2"）。
+	// 公共认证仍由 Client 统一签名，禁止在这里放 Authorization/Cookie。
+	RequestHeaders map[string]string `yaml:"headers"`
 
 	// 窗口参数名（WindowDays>0 时注入的那两个参数叫什么）。
 	// 领星各接口对日期参数的命名不统一，实测两派并存：
@@ -166,6 +169,10 @@ type Endpoint struct {
 	// 空=不过滤（迭代账号全部店铺，向后兼容）。SC 接口喂 VC 店铺 sid（或反之）会拉到错数据，
 	// 故 SC 迭代接口应填 "SC"、VC 迭代接口填 "VC"。
 	StoreType string `yaml:"store_type"`
+	// 广告账号迭代：从 ls_ad_accounts 的有效账号读取 sid + profile_id。
+	// 与 IterateByStore 互斥；AdAccountType 必须明确广告域，避免混用。
+	IterateByAdAccount bool   `yaml:"iterate_by_ad_account"`
+	AdAccountType      string `yaml:"ad_account_type"`
 
 	// ---- 行整形（落库前把领星返回的行"摆正"，两个机制都是通用的、配置驱动的）----
 	//
@@ -191,6 +198,10 @@ type Endpoint struct {
 	// 没法区分这行属于哪个店铺。同样只在该列缺失或为空时写入：领星若回显了自己的
 	// 值，以领星的为准（若两者不一致，说明接口行为变了，应当被主键冲突暴露出来）。
 	InjectParams []string `yaml:"inject_params"`
+
+	// ForceInjectParams 强制以请求参数覆盖响应同名字段，仅用于已确认的大整数 ID 精度问题。
+	// 普通接口继续使用 InjectParams 的只填空语义。
+	ForceInjectParams []string `yaml:"force_inject_params"`
 
 	// 探测模式（临时）：true 时不要求目标表存在，worker 跳过建表断言与 Upsert，
 	// 仅把领星返回的原始 JSON 存进 sync_task_logs.error_raw，用于摸清真实字段名后再正式建表。
@@ -319,6 +330,26 @@ func (c *Config) validate() error {
 		}
 		if e.StoreType != "" && e.StoreType != "SC" && e.StoreType != "VC" {
 			return fmt.Errorf("endpoint %s 的 store_type=%q 非法：只能是 SC / VC / 空", e.Name, e.StoreType)
+		}
+		if e.IterateByStore && e.IterateByAdAccount {
+			return fmt.Errorf("endpoint %s 不能同时启用 iterate_by_store 与 iterate_by_ad_account", e.Name)
+		}
+		if e.IterateByAdAccount && e.AdAccountType != "seller" {
+			return fmt.Errorf("endpoint %s 的 ad_account_type=%q 非法：当前仅支持已验证的 seller", e.Name, e.AdAccountType)
+		}
+		for _, name := range e.ForceInjectParams {
+			if strings.TrimSpace(name) == "" {
+				return fmt.Errorf("endpoint %s 的 force_inject_params 不能包含空参数名", e.Name)
+			}
+		}
+		for name, value := range e.RequestHeaders {
+			normalized := strings.ToLower(strings.TrimSpace(name))
+			if normalized == "" || strings.TrimSpace(value) == "" {
+				return fmt.Errorf("endpoint %s 的 headers 不能包含空名称或空值", e.Name)
+			}
+			if normalized == "authorization" || normalized == "cookie" || normalized == "content-type" || normalized == "accept" {
+				return fmt.Errorf("endpoint %s 的 headers 不允许覆盖认证或通用协议头: %s", e.Name, name)
+			}
 		}
 		if e.Cron == "" {
 			return fmt.Errorf("endpoint %s 缺 cron", e.Name)

@@ -153,7 +153,7 @@ func (w *EndpointWorker) fetchPageWithRetry(ctx context.Context, limiter *Limite
 			return nil, 0, 0, int(time.Since(start).Milliseconds()), werr
 		}
 
-		result, httpStatus, apiCode, err := w.Client.FetchWithShape(ctx, method, path, params, w.Endpoint.ResponseShapeOrDefault())
+		result, httpStatus, apiCode, err := w.Client.FetchWithShapeAndHeaders(ctx, method, path, params, w.Endpoint.ResponseShapeOrDefault(), w.Endpoint.RequestHeaders)
 		if err == nil {
 			return result, httpStatus, apiCode, int(time.Since(start).Milliseconds()), nil
 		}

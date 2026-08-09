@@ -169,6 +169,75 @@ func TestValidateResponseShape(t *testing.T) {
 	}
 }
 
+func TestValidateForceInjectParams(t *testing.T) {
+	cfg := &Config{
+		Database: Database{Host: "h", User: "u", DB: "d"},
+		Accounts: []Account{{ID: "sc_us_1", Name: "n", AppKey: "k", AppSecret: "s"}},
+		Endpoints: []Endpoint{{
+			Name: "vc_margin", Account: "sc_us_1", Path: "/margin", Method: "POST", Table: "ls_margin",
+			RecordIDFields: []string{"sid", "asin", "date"}, Cron: "0 * * * *",
+			Rate:              Rate{Bucket: 1, IntervalMs: 1000, Dimension: "account+path"},
+			ForceInjectParams: []string{"sid"},
+		}},
+	}
+	if err := cfg.validate(); err != nil {
+		t.Fatalf("valid force_inject_params rejected: %v", err)
+	}
+	cfg.Endpoints[0].ForceInjectParams = []string{""}
+	if err := cfg.validate(); err == nil {
+		t.Fatal("empty force_inject_params name accepted")
+	}
+}
+
+func TestValidateRequestHeaders(t *testing.T) {
+	mk := func(headers map[string]string) *Config {
+		return &Config{
+			Database: Database{Host: "h", User: "u", DB: "d"},
+			Accounts: []Account{{ID: "sc_us_1", Name: "n", AppKey: "k", AppSecret: "s"}},
+			Endpoints: []Endpoint{{
+				Name: "sp_report", Account: "sc_us_1", Path: "/sp", Method: "POST", Table: "ls_sp",
+				RecordIDFields: []string{"id"}, Cron: "0 * * * *",
+				Rate: Rate{Bucket: 1, IntervalMs: 1000, Dimension: "account+path"}, RequestHeaders: headers,
+			}},
+		}
+	}
+	if err := mk(map[string]string{"X-API-VERSION": "2"}).validate(); err != nil {
+		t.Fatalf("valid request header rejected: %v", err)
+	}
+	for _, headers := range []map[string]string{{"": "2"}, {"X-Test": ""}, {"Authorization": "secret"}, {"Content-Type": "text/plain"}} {
+		if err := mk(headers).validate(); err == nil {
+			t.Fatalf("unsafe headers accepted: %#v", headers)
+		}
+	}
+}
+
+func TestValidateAdAccountIteration(t *testing.T) {
+	mk := func(iterateByStore, iterateByAdAccount bool, accountType string) *Config {
+		return &Config{
+			Database: Database{Host: "h", User: "u", DB: "d"},
+			Accounts: []Account{{ID: "sc_us_1", Name: "n", AppKey: "k", AppSecret: "s"}},
+			Endpoints: []Endpoint{{
+				Name: "sp_report", Account: "sc_us_1", Path: "/sp", Method: "POST", Table: "ls_sp",
+				RecordIDFields: []string{"id"}, Cron: "0 * * * *",
+				Rate:           Rate{Bucket: 1, IntervalMs: 1000, Dimension: "account+path"},
+				IterateByStore: iterateByStore, IterateByAdAccount: iterateByAdAccount, AdAccountType: accountType,
+			}},
+		}
+	}
+	if err := mk(false, true, "seller").validate(); err != nil {
+		t.Fatalf("seller ad iteration rejected: %v", err)
+	}
+	if err := mk(false, true, "").validate(); err == nil {
+		t.Fatal("ad iteration without type accepted")
+	}
+	if err := mk(false, true, "vendor").validate(); err == nil {
+		t.Fatal("未验证的 vendor 广告账号迭代被接受")
+	}
+	if err := mk(true, true, "seller").validate(); err == nil {
+		t.Fatal("store and ad-account iteration together accepted")
+	}
+}
+
 func TestResponseShapeOrDefault(t *testing.T) {
 	if got := (Endpoint{}).ResponseShapeOrDefault(); got != "list" {
 		t.Fatalf("空 response_shape 默认值 = %q, want list", got)

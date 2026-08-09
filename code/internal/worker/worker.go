@@ -430,6 +430,48 @@ func (w *EndpointWorker) doSync(ctx context.Context, req triggerReq) {
 	}()
 
 	// 4. 单店铺 or 多店铺
+	if w.Endpoint.IterateByAdAccount {
+		accounts, qerr := db.QueryEnabledAdAccountsForAccount(w.DB, w.Account.ID, w.Endpoint.AdAccountType)
+		if qerr != nil {
+			log.Printf("[worker:%s] QueryEnabledAdAccountsForAccount 失败: %v", w.Endpoint.Name, qerr)
+			status = "error"
+			return
+		}
+		if len(accounts) == 0 {
+			log.Printf("[worker:%s] 没有可用的 seller 广告账号，拒绝把未同步误报为 success", w.Endpoint.Name)
+			status = "error"
+			return
+		}
+		if req.kind == "manual" && len(req.storeSids) > 0 {
+			accounts = filterAdAccountsByStoreSIDs(accounts, req.storeSids)
+		}
+		for i, account := range accounts {
+			if syncCtx.Err() != nil {
+				status = "cancelled"
+				return
+			}
+			params := w.baseParamsFor(req)
+			params["sid"] = account.SID
+			params["profile_id"] = account.ProfileID
+			rec, pages, ok := w.fetchAllPages(syncCtx, taskID, params)
+			totalRecords += rec
+			totalPages += pages
+			if !ok {
+				status = "error"
+				return
+			}
+			if i < len(accounts)-1 && w.Endpoint.Rate.MultiIntervalMs > 0 {
+				select {
+				case <-syncCtx.Done():
+					status = "cancelled"
+					return
+				case <-time.After(time.Duration(w.Endpoint.Rate.MultiIntervalMs) * time.Millisecond):
+				}
+			}
+		}
+		return
+	}
+
 	if w.Endpoint.IterateByStore {
 		// 账号级同步闸门（migrations/004）：只迭代 store_sync_selection 里 enabled=1 的店铺；
 		// 该账号从未保存过选择时退回全放行（向后兼容）。此闸门在 endpoint.StoreSids 白名单之上游。
@@ -557,8 +599,9 @@ func (w *EndpointWorker) fetchAllPages(ctx context.Context, taskID int64, params
 		// 行整形（宪法 §1.3 零代码：全部由 field_paths / inject_params 配置驱动）：
 		//   - field_paths：把嵌套里的身份字段提到顶层（如 asins[0].asin → asin）
 		//   - inject_params：把请求参数补进行（如迭代的 sid，领星不回显）
+		//   - force_inject_params：对已确认会发生大整数精度丢失的字段强制使用请求值
 		// 两者都不配则原样透传，行为与改动前完全一致。
-		if uerr := shapeRows(list, w.Endpoint.FieldPaths, w.Endpoint.InjectParams, pageParams); uerr != nil {
+		if uerr := shapeRows(list, w.Endpoint.FieldPaths, w.Endpoint.InjectParams, w.Endpoint.ForceInjectParams, pageParams); uerr != nil {
 			_ = db.InsertTaskLog(w.DB, taskID, pages+1, httpStatus, apiCode, len(list), durationMs, "shape: "+uerr.Error())
 			log.Printf("[worker:%s] 行整形出错 offset=%d: %v", w.Endpoint.Name, offset, uerr)
 			return totalRecords, pages, false
@@ -839,6 +882,22 @@ func intersectSIDs(all []string, wanted []string) []string {
 		}
 	}
 	return out
+}
+
+// filterAdAccountsByStoreSIDs 是广告账号迭代的按次店铺过滤。
+// 输入 accounts 已由 DB 限定为当前账号的有效广告账号；这里仅按手动请求再缩小范围。
+func filterAdAccountsByStoreSIDs(accounts []db.AdAccountParams, storeSIDs []string) []db.AdAccountParams {
+	allow := make(map[string]struct{}, len(storeSIDs))
+	for _, sid := range storeSIDs {
+		allow[sid] = struct{}{}
+	}
+	filtered := make([]db.AdAccountParams, 0, len(accounts))
+	for _, account := range accounts {
+		if _, ok := allow[account.SID]; ok {
+			filtered = append(filtered, account)
+		}
+	}
+	return filtered
 }
 
 // Status 返回当前 worker 的状态快照拷贝。线程安全。
