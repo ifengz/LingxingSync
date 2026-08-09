@@ -8,6 +8,7 @@
 
 ```text
 push main
+  -> GitHub Actions（Deploy To Baota）
   -> 宝塔 WebHook（sync.usfan.net）
   -> /www/wwwroot/lingxing-sync/code/deploy.sh
   -> 拉取 main、测试、vet、编译、校验 config.yaml
@@ -15,7 +16,7 @@ push main
   -> 127.0.0.1:7799/api/settings 健康检查
 ```
 
-不再额外启用 GitHub Actions，避免同一次 push 触发两次部署。
+GitHub 原生 WebHook 不直接访问宝塔面板：面板使用自签名证书，GitHub 会拒绝投递。Actions 按同服务器现有项目的方式调用宝塔 WebHook，仓库 Secret `BAOTA_WEBHOOK_URL` 保存完整回调地址；Secret 不写入 workflow、日志或仓库。
 
 ## 宝塔 WebHook
 
@@ -28,11 +29,14 @@ bash /www/wwwroot/lingxing-sync/code/deploy.sh \
 
 面板中确认：
 
-- 事件为 GitHub `push`；
-- 仓库为 `ifengz/LingxingSync`；
-- 分支为 `main`；
 - 脚本路径和上面完全一致；
 - WebHook 用户能读写仓库、编译目录和 Supervisor 日志目录。
+
+GitHub 仓库中确认：
+
+- `.github/workflows/deploy-baota.yml` 只监听 `main` push；
+- Actions Secret `BAOTA_WEBHOOK_URL` 已配置；
+- Actions 调用 WebHook 后继续检查公网 `/api/settings`，只接受 `200` 或 `401`。
 
 ## 服务器一次性前置条件
 
