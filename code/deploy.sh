@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # deploy.sh — 领星同步机「服务器自动部署」脚本
-# 由宝塔 WebHook 触发（GitHub push → 服务器拉代码 → 重编 → 重启）。
+# 由 GitHub Actions 调用宝塔 WebHook 触发（push main → 拉代码 → 重编 → 重启）。
 # 也可手动执行：bash /www/wwwroot/lingxing-sync/code/deploy.sh
 #
 # 约定：

@@ -1,0 +1,42 @@
+name: Deploy To Baota
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: lingxing-sync-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Call Baota WebHook
+        env:
+          BAOTA_WEBHOOK_URL: ${{ secrets.BAOTA_WEBHOOK_URL }}
+        run: |
+          payload="$(printf '{\"ref\":\"refs/heads/main\",\"after\":\"%s\",\"repository\":{\"full_name\":\"%s\"},\"head_commit\":{\"id\":\"%s\"}}' "$GITHUB_SHA" "$GITHUB_REPOSITORY" "$GITHUB_SHA")"
+          curl --tls-max 1.2 -kfsS --retry 3 --retry-delay 5 \
+            --connect-timeout 10 --max-time 840 \
+            -X POST \
+            -H 'Content-Type: application/json' \
+            -H 'X-GitHub-Event: push' \
+            --data "$payload" \
+            "$BAOTA_WEBHOOK_URL"
+
+      - name: Verify public health
+        run: |
+          for attempt in $(seq 1 12); do
+            code="$(curl -sS --max-time 10 --output /dev/null --write-out '%{http_code}' \
+              https://sync.usfan.net/api/settings || true)"
+            case "$code" in
+              200|401) exit 0 ;;
+            esac
+            sleep 5
+          done
+          echo "Production health check failed: HTTP ${code:-000}" >&2
+          exit 1
