@@ -33,6 +33,7 @@ type Scheduler struct {
 	cron            *cron.Cron
 	reg             *Registry
 	dbx             *sqlx.DB // retention 清理用（db.CleanupOld 需要 db 句柄）
+	cleanupOld      func(*sqlx.DB, int, int) (db.CleanupResult, error)
 	connectionCheck func(context.Context, string) error
 	ctx             context.Context
 
@@ -60,6 +61,7 @@ func NewScheduler(cfg *config.Config, reg *Registry, dbx *sqlx.DB, connectionChe
 		reg:               reg,
 		cfg:               cfg,
 		dbx:               dbx,
+		cleanupOld:        db.CleanupOld,
 		connectionCheck:   connectionCheck,
 		entries:           make(map[cron.EntryID]*EndpointWorker),
 		connectionEntries: make(map[cron.EntryID]struct{}),
@@ -235,11 +237,7 @@ func (s *Scheduler) backfillNextRuns() {
 	}
 }
 
-// runCleanup 执行一次留存清理。db.CleanupOld 由 db 包提供：
-//
-//	db.CleanupOld(db *sqlx.DB, taskLogsDays, tasksDays int) error
-//
-// 参数顺序：taskLogsDays 在前、tasksDays 在后（与 db 包定义一致）。
+// runCleanup 执行一次留存清理，并只写一条成功或失败摘要。
 func (s *Scheduler) runCleanup(ctx context.Context) {
 	if ctx.Err() != nil {
 		return
@@ -251,7 +249,16 @@ func (s *Scheduler) runCleanup(ctx context.Context) {
 	s.mu.Lock()
 	taskLogsDays, tasksDays := s.cfg.Retention.TaskLogsDays, s.cfg.Retention.TasksDays
 	s.mu.Unlock()
-	if err := db.CleanupOld(s.dbx, taskLogsDays, tasksDays); err != nil {
-		log.Printf("[scheduler] CleanupOld 失败: %v", err)
+	cleanupOld := s.cleanupOld
+	if cleanupOld == nil {
+		cleanupOld = db.CleanupOld
 	}
+	result, err := cleanupOld(s.dbx, taskLogsDays, tasksDays)
+	if err != nil {
+		log.Printf("[scheduler] CleanupOld 失败: task_logs_deleted=%d task_logs_batches=%d tasks_deleted=%d tasks_batches=%d err=%v",
+			result.TaskLogsDeleted, result.TaskLogsBatches, result.TasksDeleted, result.TasksBatches, err)
+		return
+	}
+	log.Printf("[scheduler] CleanupOld 完成: task_logs_deleted=%d task_logs_batches=%d tasks_deleted=%d tasks_batches=%d",
+		result.TaskLogsDeleted, result.TaskLogsBatches, result.TasksDeleted, result.TasksBatches)
 }
