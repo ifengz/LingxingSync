@@ -83,6 +83,67 @@ endpoints:
 	}
 }
 
+func TestValidateAllowsSeparatedSalesReportTypeVariants(t *testing.T) {
+	rate := Rate{Bucket: 5, IntervalMs: 200, MultiIntervalMs: 1000, Dimension: "account+path"}
+	base := Endpoint{
+		Name:           "sc_sales_quantity",
+		Account:        "sc_us",
+		Path:           "/erp/sc/data/sales_report/asinDailyLists",
+		Method:         "POST",
+		Table:          "ls_sc_sales_report",
+		RecordIDFields: []string{"sid", "r_date", "asin"},
+		Rate:           rate,
+		Cron:           "*/30 * * * *",
+		ExtraParams:    map[string]any{"type": 2, "asin_type": 1},
+		DateField:      "event_date",
+		DateOffsetDays: 2,
+		IterateByStore: true,
+		StoreParamName: "sid",
+		StoreType:      "SC",
+	}
+	revenue := base
+	revenue.Name = "sc_sales_revenue"
+	revenue.Table = "ls_sc_sales_revenue"
+	revenue.ExtraParams = map[string]any{"type": 1, "asin_type": 1}
+
+	cfg := &Config{
+		Database:  Database{Host: "h", User: "u", DB: "d"},
+		Accounts:  []Account{{ID: "sc_us", AppKey: "key", AppSecret: "secret"}},
+		Endpoints: []Endpoint{base, revenue},
+	}
+
+	if err := cfg.validate(); err != nil {
+		t.Fatalf("separated type=1/type=2 raw lanes should share their upstream limiter: %v", err)
+	}
+
+	t.Run("same raw table still conflicts", func(t *testing.T) {
+		duplicateTarget := revenue
+		duplicateTarget.Table = base.Table
+		cfg.Endpoints = []Endpoint{base, duplicateTarget}
+		if err := cfg.validate(); err == nil {
+			t.Fatal("same-path variants writing one raw table would overwrite metric meaning")
+		}
+	})
+
+	t.Run("same fixed params still conflict", func(t *testing.T) {
+		duplicateRequest := revenue
+		duplicateRequest.ExtraParams = map[string]any{"type": 2, "asin_type": 1}
+		cfg.Endpoints = []Endpoint{base, duplicateRequest}
+		if err := cfg.validate(); err == nil {
+			t.Fatal("duplicate fixed request params would create a redundant raw lane")
+		}
+	})
+
+	t.Run("multiple fixed param differences still conflict", func(t *testing.T) {
+		driftedRequest := revenue
+		driftedRequest.ExtraParams = map[string]any{"type": 1, "asin_type": 2}
+		cfg.Endpoints = []Endpoint{base, driftedRequest}
+		if err := cfg.validate(); err == nil {
+			t.Fatal("multiple request-shape changes must not be hidden as one metric variant")
+		}
+	})
+}
+
 func TestValidateRejectsCaseInsensitiveDuplicateAccountID(t *testing.T) {
 	// sc_us 与 Sc_us 归一化后同为 sc_us，视为撞名，必须 fail-loud。
 	cfg := &Config{
@@ -291,5 +352,30 @@ func TestConflictingLimiterKey(t *testing.T) {
 	// 同名（更新自身）→ 豁免，不把自己判成冲突。
 	if _, dup := cfg.ConflictingLimiterKey(Endpoint{Name: "orders", Account: "key1", Path: "/orders"}); dup {
 		t.Fatal("same-name endpoint (update) must be exempt from self-conflict")
+	}
+}
+
+func TestConflictingLimiterKeyAllowsSeparatedFixedParamVariant(t *testing.T) {
+	rate := Rate{Bucket: 5, IntervalMs: 200, MultiIntervalMs: 1000, Dimension: "account+path"}
+	quantity := Endpoint{
+		Name:        "sc_sales_quantity",
+		Account:     "sc_us",
+		Path:        "/erp/sc/data/sales_report/asinDailyLists",
+		Method:      "POST",
+		Table:       "ls_sc_sales_report",
+		Rate:        rate,
+		ExtraParams: map[string]any{"type": 2, "asin_type": 1},
+	}
+	cfg := &Config{
+		Accounts:  []Account{{ID: "sc_us", AppKey: "key", AppSecret: "secret"}},
+		Endpoints: []Endpoint{quantity},
+	}
+	revenue := quantity
+	revenue.Name = "sc_sales_revenue"
+	revenue.Table = "ls_sc_sales_revenue"
+	revenue.ExtraParams = map[string]any{"type": 1, "asin_type": 1}
+
+	if owner, conflict := cfg.ConflictingLimiterKey(revenue); conflict {
+		t.Fatalf("separated type variant reported conflict with %q", owner)
 	}
 }

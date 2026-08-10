@@ -32,7 +32,7 @@ type catalogAccountRef struct {
 }
 
 // catalogTemplateOut 是清单里的一条模板对外结构。
-// EnabledAccounts 列出「已经启用了本模板（同 quota_group+path 已被占用）」的账号 ID，
+// EnabledAccounts 列出「已经启用了本模板（同名，或存在非变体的同 quota_group+path 配置）」的账号 ID，
 // 前端据此把这些账号从可选项里划掉/置灰，避免重复启用撞限流键。
 type catalogTemplateOut struct {
 	Key             string   `json:"key"`

@@ -299,10 +299,10 @@ func (c *Config) validate() error {
 	}
 	// endpoint：account 必须存在；name 全局唯一；必填字段齐全
 	endpointNames := make(map[string]bool, len(c.Endpoints))
-	// 限流键 (quota_group, path) 全局唯一：同分组同 path 的两个接口会共享同一个
-	// rate.Limiter 桶，一个翻页把配额占满会拖慢另一个——正是「各接口独立」要杜绝的
-	// 牵连。命中即 fail-loud，让加接口的人换 path 或换分组，而不是静默共享（CLAUDE.md §1.1）。
-	limiterKeyOwner := make(map[string]string, len(c.Endpoints))
+	// 默认禁止两个接口共享 (quota_group, path)。唯一例外是同账号、同请求方法、同限流档案、
+	// 不同原始表，且固定 extra_params 恰好只有一个值不同的明确变体；它们必须共用上游配额，
+	// 但各自仍是一条独立 Worker/原始表线路。
+	limiterKeyOwners := make(map[string][]Endpoint, len(c.Endpoints))
 	for i, e := range c.Endpoints {
 		if e.Name == "" {
 			return fmt.Errorf("endpoints[%d].name 不能为空", i)
@@ -355,11 +355,14 @@ func (c *Config) validate() error {
 			return fmt.Errorf("endpoint %s 缺 cron", e.Name)
 		}
 		key := c.limiterKey(e)
-		if owner, dup := limiterKeyOwner[key]; dup {
-			return fmt.Errorf("endpoint %s 与 %s 的限流键 (quota_group=%s, path=%s) 重复；换 path 或换 quota_group，勿共享同一限流桶",
-				e.Name, owner, c.QuotaGroupOf(e.Account), e.Path)
+		for _, owner := range limiterKeyOwners[key] {
+			if separatedFixedParamVariants(owner, e) {
+				continue
+			}
+			return fmt.Errorf("endpoint %s 与 %s 的限流键 (quota_group=%s, path=%s) 重复；仅允许同账号、同限流档案、不同原始表且恰好一个固定参数不同的独立变体",
+				e.Name, owner.Name, c.QuotaGroupOf(e.Account), e.Path)
 		}
-		limiterKeyOwner[key] = e.Name
+		limiterKeyOwners[key] = append(limiterKeyOwners[key], e)
 	}
 	return nil
 }
@@ -381,6 +384,31 @@ func (c *Config) limiterKey(e Endpoint) string {
 	return c.QuotaGroupOf(e.Account) + "|" + e.Path
 }
 
+// separatedFixedParamVariants 报告两个共享上游 path 的配置是否为明确分离的固定参数变体。
+// 恰好一个固定参数值不同，避免把完全重复请求或多处漂移的配置误当成合法变体。
+func separatedFixedParamVariants(a, b Endpoint) bool {
+	if NormID(a.Account) != NormID(b.Account) ||
+		!strings.EqualFold(a.Method, b.Method) ||
+		a.Table == b.Table ||
+		a.Rate != b.Rate ||
+		len(a.ExtraParams) == 0 ||
+		len(a.ExtraParams) != len(b.ExtraParams) {
+		return false
+	}
+
+	differences := 0
+	for name, value := range a.ExtraParams {
+		other, ok := b.ExtraParams[name]
+		if !ok {
+			return false
+		}
+		if fmt.Sprint(value) != fmt.Sprint(other) {
+			differences++
+		}
+	}
+	return differences == 1
+}
+
 // ConflictingLimiterKey 返回 cfg 中已存在的、与 e 共享同一 (quota_group, path) 限流键的
 // 接口名；无冲突返回 ("", false)。给 server 层「创建/更新接口」做前置校验，让用户在写盘前
 // 就拿到干净的报错（不带 validate 的 "校验新配置:" 包装前缀）。与 validate() 复用同一套
@@ -393,7 +421,7 @@ func (c *Config) ConflictingLimiterKey(e Endpoint) (string, bool) {
 		if other.Name == e.Name {
 			continue
 		}
-		if c.limiterKey(other) == key {
+		if c.limiterKey(other) == key && !separatedFixedParamVariants(other, e) {
 			return other.Name, true
 		}
 	}
