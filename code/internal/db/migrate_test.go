@@ -103,3 +103,26 @@ func TestCampaignAdMigrationsMatchVerifiedKeys(t *testing.T) {
 		})
 	}
 }
+
+func TestSCRevenueMigrationKeepsMetricInSeparateRawTable(t *testing.T) {
+	raw, err := os.ReadFile("../../migrations/026_add_ls_sc_sales_revenue.sql")
+	if err != nil {
+		t.Fatalf("读取 SC 销售额迁移失败: %v", err)
+	}
+	sql := strings.ToUpper(string(raw))
+	for _, want := range []string{
+		"CREATE TABLE IF NOT EXISTS LS_SC_SALES_REVENUE",
+		"MAP_VALUE",
+		"CURRENCY_CODE",
+		"PRIMARY KEY (ACCOUNT_ID, SID, R_DATE, ASIN)",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("SC 销售额迁移缺少 %q", want)
+		}
+	}
+	for _, destructive := range []string{"DROP TABLE", "DELETE FROM", "TRUNCATE"} {
+		if strings.Contains(sql, destructive) {
+			t.Fatalf("SC 销售额迁移不得使用破坏性语句 %s", destructive)
+		}
+	}
+}

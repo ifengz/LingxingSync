@@ -187,7 +187,15 @@ func TestCatalogIncludesVerifiedReportTemplates(t *testing.T) {
 			ids: []string{"sid", "r_date", "asin"},
 			contract: func(ep Endpoint) bool {
 				return ep.Cron == "*/30 * * * *" && ep.DateField == "event_date" && ep.DateOffsetDays == 2 &&
-					ep.IterateByStore && ep.StoreType == "SC"
+					ep.IterateByStore && ep.StoreType == "SC" && ep.ExtraParams["type"] == 2
+			},
+		},
+		{
+			key: "sc_sales_revenue", path: "/erp/sc/data/sales_report/asinDailyLists", table: "ls_sc_sales_revenue",
+			ids: []string{"sid", "r_date", "asin"},
+			contract: func(ep Endpoint) bool {
+				return ep.Cron == "*/30 * * * *" && ep.DateField == "event_date" && ep.DateOffsetDays == 2 &&
+					ep.IterateByStore && ep.StoreType == "SC" && ep.ExtraParams["type"] == 1
 			},
 		},
 		{
@@ -269,6 +277,28 @@ func TestCatalogIncludesVerifiedReportTemplates(t *testing.T) {
 				t.Fatalf("template contract = %#v", ep)
 			}
 		})
+	}
+}
+
+func TestCatalogSalesQuantityAndRevenueVariantsCoexist(t *testing.T) {
+	quantity, err := FindCatalogEntry("sc_sales_report")
+	if err != nil {
+		t.Fatal(err)
+	}
+	revenue, err := FindCatalogEntry("sc_sales_revenue")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := &Config{
+		Database: Database{Host: "h", User: "u", DB: "d"},
+		Accounts: []Account{{ID: "sc_us", AppKey: "key", AppSecret: "secret"}},
+		Endpoints: []Endpoint{
+			quantity.ToEndpoint("sc_us"),
+			revenue.ToEndpoint("sc_us"),
+		},
+	}
+	if err := cfg.validate(); err != nil {
+		t.Fatalf("verified sales metric variants must remain independent raw lanes: %v", err)
 	}
 }
 
