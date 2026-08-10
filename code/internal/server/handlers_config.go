@@ -706,8 +706,8 @@ func (s *Server) apiSaveStoreSelection(w http.ResponseWriter, r *http.Request) {
 // API: POST /api/endpoints
 // ---------------------------------------------------------------------------
 
-// apiCreateEndpoint 新增接口。name 全局唯一、account 必须存在、
-// path/method/table/record_id_fields 必填、table 必须已在 DB 建表。
+// apiCreateEndpoint 新增接口。name 全局唯一、account 必须存在、path/method/table 必填。
+// 正式接口还要求 record_id_fields 和已建表；probe 接口只记录响应样本，不落原始表。
 // 新增接口属结构性变更，恒为 need_restart:true。
 func (s *Server) apiCreateEndpoint(w http.ResponseWriter, r *http.Request) {
 	var in endpointDTO
@@ -719,7 +719,7 @@ func (s *Server) apiCreateEndpoint(w http.ResponseWriter, r *http.Request) {
 		errJSON(w, http.StatusBadRequest, "name/path/method/table 不能为空")
 		return
 	}
-	if len(in.RecordIDFields) == 0 {
+	if !in.Probe && len(in.RecordIDFields) == 0 {
 		errJSON(w, http.StatusBadRequest, "record_id_fields 不能为空")
 		return
 	}
@@ -736,21 +736,20 @@ func (s *Server) apiCreateEndpoint(w http.ResponseWriter, r *http.Request) {
 		errJSON(w, http.StatusBadRequest, "account 不存在: "+in.Account)
 		return
 	}
-	// 限流键 (quota_group, path) 不得与现有接口重复：否则两个接口共享同一个 rate.Limiter
-	// 桶，一个翻页占满配额会拖慢另一个——正是「各接口独立、互不牵连」要杜绝的（CLAUDE.md §1.1）。
-	// 在此 fail-loud 拦住，比等 Save→validate 报错更早、消息更直白（不带「校验新配置」前缀）。
+	// 限流键冲突在此 fail-loud；配置层只放行同账号、同限流档案、不同原始表，
+	// 且恰好一个固定请求参数不同的独立变体。
 	if owner, dup := snap.ConflictingLimiterKey(dtoToEndpoint(in)); dup {
 		errJSON(w, http.StatusBadRequest, fmt.Sprintf(
-			"限流键 (quota_group=%s, path=%s) 已被接口 %s 占用；换 path 或换 quota_group，勿共享同一限流桶",
+			"限流键 (quota_group=%s, path=%s) 已被接口 %s 占用；仅明确分离的固定参数变体可共享",
 			snap.QuotaGroupOf(in.Account), in.Path, owner))
 		return
 	}
-	// fail-loud：目标表必须已建好（宪法 §5）。Worker 启动时 GetTableColumns 会读不到列
-	// 而走 main.go FATAL 退出；这里在创建阶段就拦住，避免重启后才发现表不存在。
-	// 文档契约（04-api.md）：table 必须已建表，否则 400。
-	if _, err := db.GetTableColumns(s.dbx, in.Table); err != nil {
-		errJSON(w, http.StatusBadRequest, "目标表 "+in.Table+" 未建表或不可读，请先执行 migrations 建表: "+err.Error())
-		return
+	if !in.Probe {
+		// fail-loud：正式接口的目标表必须已建好（宪法 §5）。probe 只把响应样本写入任务日志。
+		if _, err := db.GetTableColumns(s.dbx, in.Table); err != nil {
+			errJSON(w, http.StatusBadRequest, "目标表 "+in.Table+" 未建表或不可读，请先执行 migrations 建表: "+err.Error())
+			return
+		}
 	}
 	snap.Endpoints = append(snap.Endpoints, dtoToEndpoint(in))
 

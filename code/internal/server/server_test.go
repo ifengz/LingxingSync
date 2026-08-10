@@ -137,6 +137,36 @@ func TestEndpointDTORoundTripPreservesAdvancedSyncContract(t *testing.T) {
 	}
 }
 
+func TestCreateProbeEndpointDoesNotRequireTableOrRecordIDs(t *testing.T) {
+	cfg := &config.Config{
+		Database: config.Database{Host: "127.0.0.1", User: "test", DB: "test"},
+		Accounts: []config.Account{{ID: "sc_us", AppKey: "key", AppSecret: "secret"}},
+	}
+	store := config.NewStore(t.TempDir()+"/config.yaml", cfg)
+	s := &Server{cfg: cfg, store: store}
+	body := `{
+		"name":"sc_sales_revenue_probe",
+		"account":"sc_us",
+		"path":"/erp/sc/data/sales_report/asinDailyLists",
+		"method":"POST",
+		"table":"ls_sc_sales_revenue_probe",
+		"record_id_fields":[],
+		"rate":{"bucket":5,"interval_ms":200,"multi_interval_ms":1000,"dimension":"account+path"},
+		"cron":"0 0 1 1 *",
+		"enabled":true,
+		"extra_params":{"type":1,"asin_type":1},
+		"probe":true
+	}`
+	req := httptest.NewRequest(http.MethodPost, "/api/endpoints", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	s.apiCreateEndpoint(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("probe endpoint status=%d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+}
+
 func TestValidateSyncDateRange(t *testing.T) {
 	if err := validateSyncDateRange("2026-08-01", "2026-08-03"); err != nil {
 		t.Fatalf("valid date range rejected: %v", err)
