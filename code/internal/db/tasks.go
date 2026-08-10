@@ -68,6 +68,34 @@ type TaskLog struct {
 	CreatedAt    time.Time      `db:"created_at" json:"created_at"`
 }
 
+// databaseUTCOffset 返回当前 MySQL 会话墙钟相对 UTC 的偏移。
+// DATETIME 不携带时区，而任务时间由 DB 的 NOW()/CURRENT_TIMESTAMP 写入；读取后减去
+// 这个偏移，才能把墙钟值还原成真实 UTC 时刻。UTC 会话返回 0，不发生二次转换。
+func databaseUTCOffset(db *sqlx.DB) (time.Duration, error) {
+	var seconds int64
+	const q = "SELECT TIMESTAMPDIFF(SECOND, UTC_TIMESTAMP(), NOW())"
+	if err := db.Get(&seconds, q); err != nil {
+		return 0, fmt.Errorf("db.databaseUTCOffset: 查询数据库 UTC 偏移失败: %w", err)
+	}
+	return time.Duration(seconds) * time.Second, nil
+}
+
+func normalizeDBTime(t time.Time, offset time.Duration) time.Time {
+	return t.Add(-offset).UTC()
+}
+
+func normalizeTaskTimes(t *Task, offset time.Duration) {
+	if t.StartedAt != nil {
+		v := normalizeDBTime(*t.StartedAt, offset)
+		t.StartedAt = &v
+	}
+	if t.FinishedAt != nil {
+		v := normalizeDBTime(*t.FinishedAt, offset)
+		t.FinishedAt = &v
+	}
+	t.CreatedAt = normalizeDBTime(t.CreatedAt, offset)
+}
+
 // 为了让 Task 的 json 序列化看着干净，ErrorMessage / TaskLog 的 NULL 字段都用 sql.Null*，
 // 它们会序列化成 {Valid:bool, ...}。如果 server 层要自定义，再包一层；这里只保证落库正确。
 
@@ -229,6 +257,13 @@ func ListTasks(db *sqlx.DB, endpoint, account, status, dateFrom, dateTo string, 
 	if err := db.Select(&tasks, listQ, listArgs...); err != nil {
 		return nil, 0, fmt.Errorf("db.ListTasks: 查列表失败: %w", err)
 	}
+	dbOffset, err := databaseUTCOffset(db)
+	if err != nil {
+		return nil, 0, err
+	}
+	for i := range tasks {
+		normalizeTaskTimes(&tasks[i], dbOffset)
+	}
 	return tasks, total, nil
 }
 
@@ -239,6 +274,11 @@ func GetTask(db *sqlx.DB, id int64) (*Task, error) {
 	if err := db.Get(&t, q, id); err != nil {
 		return nil, fmt.Errorf("db.GetTask: 查 sync_tasks id=%d 失败: %w", id, err)
 	}
+	dbOffset, err := databaseUTCOffset(db)
+	if err != nil {
+		return nil, err
+	}
+	normalizeTaskTimes(&t, dbOffset)
 	return &t, nil
 }
 
@@ -248,6 +288,13 @@ func ListTaskLogs(db *sqlx.DB, taskID int64) ([]TaskLog, error) {
 	const q = "SELECT * FROM sync_task_logs WHERE task_id = ? ORDER BY page ASC"
 	if err := db.Select(&logs, q, taskID); err != nil {
 		return nil, fmt.Errorf("db.ListTaskLogs: 查 sync_task_logs (task=%d) 失败: %w", taskID, err)
+	}
+	dbOffset, err := databaseUTCOffset(db)
+	if err != nil {
+		return nil, err
+	}
+	for i := range logs {
+		logs[i].CreatedAt = normalizeDBTime(logs[i].CreatedAt, dbOffset)
 	}
 	return logs, nil
 }
