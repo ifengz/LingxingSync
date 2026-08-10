@@ -72,6 +72,13 @@ window.toast = function (type, msg) {
   window.dispatchEvent(new CustomEvent('sync-toast', { detail: { type: type || 'info', msg: msg || '' } }));
 };
 
+const shanghaiDateTimeFormatter = new Intl.DateTimeFormat('zh-CN', {
+  timeZone: 'Asia/Shanghai',
+  year: 'numeric', month: '2-digit', day: '2-digit',
+  hour: '2-digit', minute: '2-digit', second: '2-digit',
+  hourCycle: 'h23'
+});
+
 // 时间格式化：RFC3339 → "3分钟前" / "刚刚" / "HH:mm:ss"；空值返回 '-'。
 window.fmtRel = function (iso) {
   if (!iso) return '-';
@@ -83,7 +90,7 @@ window.fmtRel = function (iso) {
   if (diff < 3600) return Math.floor(diff / 60) + ' 分钟前';
   if (diff < 86400) return Math.floor(diff / 3600) + ' 小时前';
   if (diff < 86400 * 7) return Math.floor(diff / 86400) + ' 天前';
-  return t.toLocaleDateString();
+  return t.toLocaleDateString('zh-CN', { timeZone: 'Asia/Shanghai' });
 };
 
 // 绝对时间：RFC3339 → "2026-08-06 12:34:56"。
@@ -91,9 +98,13 @@ window.fmtTime = function (iso) {
   if (!iso) return '-';
   const t = new Date(iso);
   if (isNaN(t.getTime())) return '-';
-  const pad = (n) => String(n).padStart(2, '0');
-  return t.getFullYear() + '-' + pad(t.getMonth() + 1) + '-' + pad(t.getDate()) +
-    ' ' + pad(t.getHours()) + ':' + pad(t.getMinutes()) + ':' + pad(t.getSeconds());
+  const parts = Object.fromEntries(
+    shanghaiDateTimeFormatter.formatToParts(t)
+      .filter(part => part.type !== 'literal')
+      .map(part => [part.type, part.value])
+  );
+  return parts.year + '-' + parts.month + '-' + parts.day +
+    ' ' + parts.hour + ':' + parts.minute + ':' + parts.second;
 };
 
 // 耗时秒 → "1m 23s" / "12s"。
@@ -792,7 +803,7 @@ window.logsPage = function () {
         this.tasks = d.items || [];
         this.total = d.total || 0;
         this.lastUpdatedAt = new Date().toLocaleTimeString('zh-CN', {
-          hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
+          timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
         });
       } finally {
         this.requesting = false;

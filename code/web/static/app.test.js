@@ -13,6 +13,18 @@ const sandbox = {
 sandbox.window.window = sandbox.window;
 vm.runInNewContext(fs.readFileSync(__dirname + '/app.js', 'utf8'), sandbox);
 
+// 同步日志是面向中国用户的操作时间；显示不能跟随浏览器或服务器时区漂移。
+{
+  const originalTZ = process.env.TZ;
+  process.env.TZ = 'UTC';
+  try {
+    assert.equal(sandbox.window.fmtTime('2026-08-10T04:30:00Z'), '2026-08-10 12:30:00');
+  } finally {
+    if (originalTZ === undefined) delete process.env.TZ;
+    else process.env.TZ = originalTZ;
+  }
+}
+
 const root = sandbox.window.AppRoot();
 root.init();
 assert.equal(typeof sandbox.window.syncConfirm, 'function');
