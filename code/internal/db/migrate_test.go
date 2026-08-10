@@ -126,3 +126,43 @@ func TestSCRevenueMigrationKeepsMetricInSeparateRawTable(t *testing.T) {
 		}
 	}
 }
+
+func TestStockAndAddressMigrationsPreserveVerifiedBusinessKeys(t *testing.T) {
+	tests := []struct {
+		file  string
+		table string
+		key   string
+	}{
+		{
+			file:  "../../migrations/027_add_ls_sc_removal_orders.sql",
+			table: "LS_SC_REMOVAL_ORDERS",
+			key:   "PRIMARY KEY (ACCOUNT_ID, SELLER_ID, ORDER_ID, SKU, FNSKU, DISPOSITION)",
+		},
+		{
+			file:  "../../migrations/028_add_ls_sc_fba_order_addresses.sql",
+			table: "LS_SC_FBA_ORDER_ADDRESSES",
+			key:   "PRIMARY KEY (ACCOUNT_ID, SID, SHIPMENT_ID, SHIPMENT_ITEM_ID)",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.table, func(t *testing.T) {
+			raw, err := os.ReadFile(tc.file)
+			if err != nil {
+				t.Fatalf("读取迁移失败: %v", err)
+			}
+			sql := strings.ToUpper(string(raw))
+			if !strings.Contains(sql, "CREATE TABLE IF NOT EXISTS "+tc.table) {
+				t.Fatalf("迁移未创建 %s", tc.table)
+			}
+			if !strings.Contains(sql, tc.key) {
+				t.Fatalf("迁移缺少已验证业务键 %q", tc.key)
+			}
+			for _, destructive := range []string{"DROP TABLE", "DELETE FROM", "TRUNCATE"} {
+				if strings.Contains(sql, destructive) {
+					t.Fatalf("新增原始表迁移不得使用破坏性语句 %s", destructive)
+				}
+			}
+		})
+	}
+}
