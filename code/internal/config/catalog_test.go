@@ -222,6 +222,15 @@ func TestCatalogIncludesVerifiedReportTemplates(t *testing.T) {
 			},
 		},
 		{
+			key: "vc_inventory", path: "/basicOpen/vc/report/inventory/list", table: "ls_vc_inventory",
+			ids: []string{"sid", "date", "asin"},
+			contract: func(ep Endpoint) bool {
+				return ep.WindowDays == 1 && ep.IterateByStore && ep.StoreType == "VC" &&
+					ep.ExtraParams["view"] == "sourcing" &&
+					reflect.DeepEqual(ep.ForceInjectParams, []string{"sid"})
+			},
+		},
+		{
 			key: "sc_performance", path: "/bd/productPerformance/openApi/asinList", table: "ls_sc_performance",
 			ids: []string{"sid", "asin"},
 			contract: func(ep Endpoint) bool {
