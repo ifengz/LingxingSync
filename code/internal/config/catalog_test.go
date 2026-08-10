@@ -320,6 +320,49 @@ func TestDeletedSalesOrdersCatalogEntry(t *testing.T) {
 	}
 }
 
+// TestCatalogIncludesStockAndAddressReadInterfaces 固化两个生产 probe 已验证的只读合同。
+// 退仓订单必须保留 seller_id 维度；FBA 订单响应不回 sid，必须从请求参数回填。
+func TestCatalogIncludesStockAndAddressReadInterfaces(t *testing.T) {
+	tests := []struct {
+		key      string
+		path     string
+		table    string
+		ids      []string
+		contract func(Endpoint) bool
+	}{
+		{
+			key: "sc_removal_orders", path: "/erp/sc/routing/data/order/removalOrderListNew", table: "ls_sc_removal_orders",
+			ids: []string{"seller_id", "order_id", "sku", "fnsku", "disposition"},
+			contract: func(ep Endpoint) bool {
+				return ep.IterateByStore && ep.StoreType == "SC" && ep.WindowDays == 30 &&
+					ep.ExtraParams["search_field_time"] == "last_updated_date"
+			},
+		},
+		{
+			key: "sc_fba_order_addresses", path: "/erp/sc/data/mws_report/fbaOrders", table: "ls_sc_fba_order_addresses",
+			ids: []string{"sid", "shipment_id", "shipment_item_id"},
+			contract: func(ep Endpoint) bool {
+				return ep.IterateByStore && ep.StoreType == "SC" && ep.WindowDays == 30 &&
+					ep.ExtraParams["date_type"] == 1 && reflect.DeepEqual(ep.InjectParams, []string{"sid"})
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.key, func(t *testing.T) {
+			e, err := FindCatalogEntry(tc.key)
+			if err != nil {
+				t.Fatalf("FindCatalogEntry(%q): %v", tc.key, err)
+			}
+			ep := e.ToEndpoint("sc_us")
+			if ep.Path != tc.path || ep.Method != "POST" || ep.Table != tc.table ||
+				!reflect.DeepEqual(ep.RecordIDFields, tc.ids) || !tc.contract(ep) {
+				t.Fatalf("template contract = %#v", ep)
+			}
+		})
+	}
+}
+
 // TestCatalogPathsHaveNoOpenapiPrefix 守卫清单里的 path 不带 /openapi 前缀。
 //
 // 历史 bug：baseURL 本身就是 https://openapi.lingxing.com，模板里又写
