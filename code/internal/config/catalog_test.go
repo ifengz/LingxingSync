@@ -200,7 +200,7 @@ func TestCatalogIncludesVerifiedReportTemplates(t *testing.T) {
 		},
 		{
 			key: "vc_orders", path: "/basicOpen/platformOrder/vcOrder/pageList", table: "ls_vc_orders",
-			ids: []string{"local_po_number"},
+			ids: []string{"vc_store_id", "local_po_number"},
 			contract: func(ep Endpoint) bool {
 				return ep.Cron == "*/30 * * * *" && ep.WindowDays == 7
 			},

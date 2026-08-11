@@ -8,6 +8,55 @@ import (
 	"github.com/jmoiron/sqlx"
 )
 
+// ValidateVCOrdersStoreScope verifies the exact table contract required before
+// the VC PO list worker may write. Migration 031 deliberately leaves unsafe or
+// drifted schemas untouched so one bad endpoint never prevents the service from
+// starting; this assertion turns only that endpoint into a visible error.
+func ValidateVCOrdersStoreScope(dbx *sqlx.DB, table string) error {
+	if dbx == nil {
+		return fmt.Errorf("db.ValidateVCOrdersStoreScope: db 不能为空")
+	}
+
+	const primaryQuery = `
+SELECT COALESCE(GROUP_CONCAT(COLUMN_NAME ORDER BY SEQ_IN_INDEX SEPARATOR ','), '')
+FROM INFORMATION_SCHEMA.STATISTICS
+WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND INDEX_NAME = 'PRIMARY'`
+	var primaryKey string
+	if err := dbx.Get(&primaryKey, primaryQuery, table); err != nil {
+		return fmt.Errorf("db.ValidateVCOrdersStoreScope: 查 %s 主键失败: %w", table, err)
+	}
+	if primaryKey != "account_id,vc_store_id,local_po_number" {
+		return fmt.Errorf("表 %s 主键=%q，必须是 account_id,vc_store_id,local_po_number", table, primaryKey)
+	}
+
+	const columnQuery = `
+SELECT DATA_TYPE, CHARACTER_MAXIMUM_LENGTH, IS_NULLABLE
+FROM INFORMATION_SCHEMA.COLUMNS
+WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = 'vc_store_id'`
+	var column struct {
+		DataType               string `db:"DATA_TYPE"`
+		CharacterMaximumLength int64  `db:"CHARACTER_MAXIMUM_LENGTH"`
+		IsNullable             string `db:"IS_NULLABLE"`
+	}
+	if err := dbx.Get(&column, columnQuery, table); err != nil {
+		return fmt.Errorf("db.ValidateVCOrdersStoreScope: 查 %s.vc_store_id 失败: %w", table, err)
+	}
+	if column.DataType != "varchar" || column.CharacterMaximumLength != 32 || column.IsNullable != "NO" {
+		return fmt.Errorf("表 %s.vc_store_id 结构=%s(%d) nullable=%s，必须是 varchar(32) NOT NULL",
+			table, column.DataType, column.CharacterMaximumLength, column.IsNullable)
+	}
+
+	quotedTable := "`" + strings.ReplaceAll(table, "`", "``") + "`"
+	var emptyStoreCount int64
+	if err := dbx.Get(&emptyStoreCount, "SELECT COUNT(*) FROM "+quotedTable+" WHERE TRIM(vc_store_id) = ''"); err != nil {
+		return fmt.Errorf("db.ValidateVCOrdersStoreScope: 查 %s 空店铺失败: %w", table, err)
+	}
+	if emptyStoreCount > 0 {
+		return fmt.Errorf("表 %s 存在 %d 条空 vc_store_id，禁止同步", table, emptyStoreCount)
+	}
+	return nil
+}
+
 // VCPOCandidate carries the exact source identity needed by the PO detail call.
 // Both values remain strings so 18-digit Lingxing IDs never pass through float64.
 type VCPOCandidate struct {
