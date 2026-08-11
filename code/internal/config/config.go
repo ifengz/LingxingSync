@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -173,6 +174,9 @@ type Endpoint struct {
 	// 与 IterateByStore 互斥；AdAccountType 必须明确广告域，避免混用。
 	IterateByAdAccount bool   `yaml:"iterate_by_ad_account"`
 	AdAccountType      string `yaml:"ad_account_type"`
+	// IterateByVCOrders reads recent local_po_number + vc_store_id candidates from
+	// the same account's ls_vc_orders rows. The detail request itself is not paged.
+	IterateByVCOrders bool `yaml:"iterate_by_vc_orders"`
 
 	// ---- 行整形（落库前把领星返回的行"摆正"，两个机制都是通用的、配置驱动的）----
 	//
@@ -337,6 +341,28 @@ func (c *Config) validate() error {
 		}
 		if e.IterateByStore && e.IterateByAdAccount {
 			return fmt.Errorf("endpoint %s 不能同时启用 iterate_by_store 与 iterate_by_ad_account", e.Name)
+		}
+		if e.IterateByVCOrders && (e.IterateByStore || e.IterateByAdAccount) {
+			return fmt.Errorf("endpoint %s 不能同时启用 iterate_by_vc_orders 与其他迭代模式", e.Name)
+		}
+		if e.IterateByVCOrders {
+			if !strings.EqualFold(e.Method, "POST") {
+				return fmt.Errorf("endpoint %s 的 iterate_by_vc_orders 必须使用 POST", e.Name)
+			}
+			if responseShape != "object" {
+				return fmt.Errorf("endpoint %s 的 iterate_by_vc_orders 必须使用 response_shape=object", e.Name)
+			}
+			if e.WindowDays <= 0 {
+				return fmt.Errorf("endpoint %s 的 iterate_by_vc_orders 必须配置 window_days > 0", e.Name)
+			}
+			if len(e.ExtraParams) > 0 || e.DateField != "" {
+				return fmt.Errorf("endpoint %s 的 iterate_by_vc_orders 请求不得配置 extra_params/date_field", e.Name)
+			}
+			for _, required := range []string{"vc_store_id", "local_po_number"} {
+				if !slices.Contains(e.ForceInjectParams, required) {
+					return fmt.Errorf("endpoint %s 的 iterate_by_vc_orders 必须 force_inject_params=%q", e.Name, required)
+				}
+			}
 		}
 		if e.IterateByAdAccount && e.AdAccountType != "seller" {
 			return fmt.Errorf("endpoint %s 的 ad_account_type=%q 非法：当前仅支持已验证的 seller", e.Name, e.AdAccountType)

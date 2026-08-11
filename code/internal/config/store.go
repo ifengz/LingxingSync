@@ -172,6 +172,7 @@ func ClassifyChange(oldCfg, newCfg *Config) ChangeKind {
 			!reflect.DeepEqual(oldE.RecordIDFields, newE.RecordIDFields) ||
 			oldE.IsStoreSource != newE.IsStoreSource ||
 			oldE.IterateByStore != newE.IterateByStore ||
+			oldE.IterateByVCOrders != newE.IterateByVCOrders ||
 			oldE.StoreParamName != newE.StoreParamName {
 			return ChangeRestart
 		}

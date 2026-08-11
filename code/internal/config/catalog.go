@@ -21,15 +21,16 @@ import (
 // CatalogEntry 是一个「接口模板」：一条领星接口的完整接入合同，
 // 除了「账号」这一个变量外，其余字段都已定死。字段语义与 Endpoint 对应字段一致。
 type CatalogEntry struct {
-	Key         string // 模板唯一标识（英文小写下划线），启用时拼进 Endpoint.Name
-	Display     string // UI 展示名（中文）
-	Summary     string // 一句话说明这个接口拉的是什么，给用户在清单里看
-	Path        string // 领星 API Path
-	Method      string // GET / POST
-	Table       string // 目标表（必须已由 migrations 建好）
-	RecordIDs   []string
-	Rate        Rate
-	DefaultCron string
+	Key           string // 模板唯一标识（英文小写下划线），启用时拼进 Endpoint.Name
+	Display       string // UI 展示名（中文）
+	Summary       string // 一句话说明这个接口拉的是什么，给用户在清单里看
+	Path          string // 领星 API Path
+	Method        string // GET / POST
+	Table         string // 目标表（必须已由 migrations 建好）
+	RecordIDs     []string
+	Rate          Rate
+	DefaultCron   string
+	ResponseShape string
 
 	// 参数形态（三选一或组合，与 Endpoint 语义一致）
 	WindowDays       int            // >0：注入 start_date/end_date 范围
@@ -41,10 +42,11 @@ type CatalogEntry struct {
 	RequestHeaders   map[string]string
 
 	// 多店铺
-	IsStoreSource  bool
-	IterateByStore bool
-	StoreParamName string
-	StoreType      string
+	IsStoreSource     bool
+	IterateByStore    bool
+	StoreParamName    string
+	StoreType         string
+	IterateByVCOrders bool
 
 	// 广告账号迭代与落库前行整形。
 	IterateByAdAccount bool
@@ -68,6 +70,7 @@ func (e CatalogEntry) ToEndpoint(accountID string) Endpoint {
 		Method:             e.Method,
 		Table:              e.Table,
 		RecordIDFields:     slices.Clone(e.RecordIDs),
+		ResponseShape:      e.ResponseShape,
 		Rate:               e.Rate,
 		Cron:               e.DefaultCron,
 		Enabled:            true,
@@ -82,6 +85,7 @@ func (e CatalogEntry) ToEndpoint(accountID string) Endpoint {
 		IterateByStore:     e.IterateByStore,
 		StoreParamName:     e.StoreParamName,
 		StoreType:          e.StoreType,
+		IterateByVCOrders:  e.IterateByVCOrders,
 		IterateByAdAccount: e.IterateByAdAccount,
 		AdAccountType:      e.AdAccountType,
 		FieldPaths:         maps.Clone(e.FieldPaths),
@@ -211,6 +215,21 @@ var catalogEntries = []CatalogEntry{
 			"search_field_time":   "3",
 			"purchase_order_type": []string{"1"},
 		},
+	},
+	{
+		Key:               "vc_po_details",
+		Display:           "VC PO 订单详情",
+		Summary:           "从同账号 VC PO 列表读取近 7 天订单号，逐单保存详情头与 items 原始 JSON。",
+		Path:              "/basicOpen/platformOrder/vcOrderPo/detail",
+		Method:            "POST",
+		Table:             "ls_vc_po_details",
+		RecordIDs:         []string{"vc_store_id", "local_po_number"},
+		Rate:              Rate{Bucket: 1, IntervalMs: 1000, MultiIntervalMs: 0, Dimension: "account+path"},
+		DefaultCron:       "*/30 * * * *",
+		ResponseShape:     "object",
+		WindowDays:        7,
+		IterateByVCOrders: true,
+		ForceInjectParams: []string{"vc_store_id", "local_po_number"},
 	},
 	{
 		Key:              "vc_sales_report",

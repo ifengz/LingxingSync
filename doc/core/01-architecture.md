@@ -398,7 +398,7 @@ MySQL `Exec` 遇到类型不兼容（如字符串插入 INT 列）会返回 erro
 
 ---
 
-## 10. 多店铺迭代机制
+## 10. 候选迭代机制
 
 ### 10.1 设计
 
@@ -460,7 +460,13 @@ func (w *EndpointWorker) runIterateByStore(ctx context.Context) error {
 }
 ```
 
-### 10.4 config.yaml 新增字段
+### 10.4 VC PO detail 的单一例外
+
+`/basicOpen/platformOrder/vcOrderPo/detail` 每次只接受一个 `local_po_number`，且响应不返回店铺身份。已验证线路使用 `iterate_by_vc_orders: true`：同一账号从 `ls_vc_orders` 按 `gmt_modified` 窗口读取 `(vc_store_id, local_po_number)`，请求体只发送 `local_po_number`，落库前强制写回两个身份字段。
+
+该模式仍是一个 endpoint Worker、一张 `ls_vc_po_details` raw 表和一条 `sync_tasks` 任务；首个请求、解析或 Upsert 错误立即终止本 endpoint。禁止把它扩展成队列、父子任务、staging 或任意跨表工作流。
+
+### 10.5 config.yaml 新增字段
 
 ```yaml
 # 店铺来源接口（每个账号配一个，优先启动）
