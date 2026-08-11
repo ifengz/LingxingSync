@@ -5,6 +5,8 @@
 > 生产踩坑记录来自 `doc/LINGXING_API_INTEGRATION.md`（polabel2 生产验证）。
 >
 > LingxingSync **只接 OpenAPI**，ERP 报表接口（auth-token 那套）和页面 token 一律不碰。
+>
+> 此处引用 polabel2 仅用于学习已验证的 method/path/body、候选上下文、字段处理和错误处理；两个项目完全独立，不连接数据库、不投影数据、不修改 polabel2 页面或事实表。
 
 ---
 

@@ -1,6 +1,6 @@
 # 领星同步机（LingxingSync）
 
-> 把领星 OpenAPI 数据定时拉下来落库，给 polabel2 等项目当只读数据底座。
+> 独立把领星 OpenAPI 数据定时拉入本项目 `ls_*` 原始表。
 
 ---
 
@@ -8,8 +8,8 @@
 
 | 是什么 | 不是什么 |
 |---|---|
-| 领星数据的唯一同步入口 | 不是 polabel2 的替代品 |
-| 给其他项目提供只读 MySQL 表 | 不提供业务逻辑和聚合计算 |
+| 领星 OpenAPI 原始数据同步机 | 不连接或改造 polabel2 |
+| 每接口独立落一张 `ls_*` 原始表 | 不做跨项目投影、拼接或页面适配 |
 | 轻量、单进程、宝塔部署 | 不用 Docker，不用 BullMQ，不用队列 |
 | 每接口独立 goroutine，一个挂不影响其他 | 不是分布式系统 |
 
@@ -23,9 +23,9 @@
 
 | 文档 | 内容 |
 |---|---|
-| [00-overview.md](00-overview.md) | 本文件：项目定位、文档索引、快速启动、polabel2 接入方式 |
+| [00-overview.md](00-overview.md) | 本文件：项目定位、文档索引、快速启动、项目边界 |
 | [01-architecture.md](01-architecture.md) | 架构设计、Go 选型理由、Worker 核心循环、**禁止引入清单（§8）** |
-| [02-database.md](02-database.md) | 所有表 DDL（系统表 + 数据表）、polabel2 消费契约 |
+| [02-database.md](02-database.md) | 所有表 DDL（系统表 + 原始数据表）、表结构约定 |
 | [03-config.md](03-config.md) | config.yaml 完整格式、所有字段说明、账号 ID 规范 |
 | [04-api.md](04-api.md) | HTTP REST API 规范（前端调用） |
 | [05-ui.md](05-ui.md) | UI 设计规范，极细到每个按钮（Tailwind + Alpine.js）|
@@ -83,28 +83,13 @@ make migrate && make build
 2. **单写者**：只有 EndpointWorker 写自己的 `sync_tasks` 行；外部只能发信号或 INSERT。
 3. **进程内限流**：`rate.Limiter` 键 = `(quota_group, path)`，不入 DB；`bucket=1` 时强制串行。
 4. **fail-loud**：API 返回格式异常 → 抛错记日志，不静默兜底。
-5. **表结构与领星一致**：字段名不翻译，polabel2 直连只读账号读。
+5. **表结构与领星一致**：字段名不翻译，不在同步层做跨项目映射。
 6. **加接口 = 加配置 + 建表 + 重启**，零代码改动，见 [07-add-endpoint.md](07-add-endpoint.md)。
 
 ---
 
-## polabel2 接入方式
+## polabel2 参考边界
 
-polabel2 配置只读 MySQL 账号直连 `lingsync` 库，砍掉自身同步逻辑，从 `ls_*` 表取数：
+LingxingSync 与 polabel2 完全独立。polabel2 只作为已经跑通的领星接口证据来源，用于核对 method/path/body、候选账号与店铺上下文、字段处理和错误处理；不连接其数据库，不向其投影数据，不修改其页面或事实表。
 
-```sql
--- polabel2 只读账号权限（在 lingsync 服务器执行一次）
-CREATE USER 'lingsync_ro'@'%' IDENTIFIED BY 'readonly_password';
-GRANT SELECT ON lingsync.* TO 'lingsync_ro'@'%';
-FLUSH PRIVILEGES;
-```
-
-```yaml
-# polabel2 .env 或 config
-LINGSYNC_DB_HOST=sync-server-ip
-LINGSYNC_DB_USER=lingsync_ro
-LINGSYNC_DB_PASSWORD=readonly_password
-LINGSYNC_DB_NAME=lingsync
-```
-
-字段契约见 [02-database.md §4](02-database.md)。
+LingxingSync 的接口与落库合同仍须在本项目用真实响应独立验证，见 [09-endpoint-contract.md](09-endpoint-contract.md)。
