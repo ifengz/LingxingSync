@@ -160,6 +160,7 @@ type endpointDTO struct {
 	StoreType          string            `json:"store_type"`
 	IterateByAdAccount bool              `json:"iterate_by_ad_account"`
 	AdAccountType      string            `json:"ad_account_type"`
+	IterateByVCOrders  bool              `json:"iterate_by_vc_orders"`
 	FieldPaths         map[string]string `json:"field_paths"`
 	InjectParams       []string          `json:"inject_params"`
 	ForceInjectParams  []string          `json:"force_inject_params"`
@@ -204,6 +205,7 @@ func endpointToDTO(e config.Endpoint) endpointDTO {
 		StoreType:          e.StoreType,
 		IterateByAdAccount: e.IterateByAdAccount,
 		AdAccountType:      e.AdAccountType,
+		IterateByVCOrders:  e.IterateByVCOrders,
 		FieldPaths:         e.FieldPaths,
 		InjectParams:       e.InjectParams,
 		ForceInjectParams:  e.ForceInjectParams,
@@ -246,6 +248,7 @@ func dtoToEndpoint(d endpointDTO) config.Endpoint {
 		StoreType:          d.StoreType,
 		IterateByAdAccount: d.IterateByAdAccount,
 		AdAccountType:      d.AdAccountType,
+		IterateByVCOrders:  d.IterateByVCOrders,
 		FieldPaths:         d.FieldPaths,
 		InjectParams:       d.InjectParams,
 		ForceInjectParams:  d.ForceInjectParams,

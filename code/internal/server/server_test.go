@@ -137,6 +137,14 @@ func TestEndpointDTORoundTripPreservesAdvancedSyncContract(t *testing.T) {
 	}
 }
 
+func TestEndpointDTORoundTripPreservesVCPOOrderIteration(t *testing.T) {
+	want := config.Endpoint{IterateByVCOrders: true}
+	got := dtoToEndpoint(endpointToDTO(want))
+	if !got.IterateByVCOrders {
+		t.Fatal("endpoint DTO round trip lost iterate_by_vc_orders")
+	}
+}
+
 func TestCreateProbeEndpointDoesNotRequireTableOrRecordIDs(t *testing.T) {
 	cfg := &config.Config{
 		Database: config.Database{Host: "127.0.0.1", User: "test", DB: "test"},

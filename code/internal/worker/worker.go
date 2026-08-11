@@ -430,6 +430,21 @@ func (w *EndpointWorker) doSync(ctx context.Context, req triggerReq) {
 	}()
 
 	// 4. 单店铺 or 多店铺
+	if w.Endpoint.IterateByVCOrders {
+		records, pages, syncErr := w.syncVCPODetails(syncCtx, taskID, req)
+		totalRecords = records
+		totalPages = pages
+		if syncErr == nil {
+			return
+		}
+		if syncCtx.Err() != nil {
+			status = "cancelled"
+			return
+		}
+		status = "error"
+		return
+	}
+
 	if w.Endpoint.IterateByAdAccount {
 		accounts, qerr := db.QueryEnabledAdAccountsForAccount(w.DB, w.Account.ID, w.Endpoint.AdAccountType)
 		if qerr != nil {

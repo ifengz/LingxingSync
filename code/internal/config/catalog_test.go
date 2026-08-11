@@ -280,6 +280,26 @@ func TestCatalogIncludesVerifiedReportTemplates(t *testing.T) {
 	}
 }
 
+func TestCatalogVCPODetailsContract(t *testing.T) {
+	e, err := FindCatalogEntry("vc_po_details")
+	if err != nil {
+		t.Fatalf("FindCatalogEntry(vc_po_details): %v", err)
+	}
+	ep := e.ToEndpoint("sc_us_1")
+	if ep.Path != "/basicOpen/platformOrder/vcOrderPo/detail" || ep.Method != "POST" || ep.Table != "ls_vc_po_details" {
+		t.Fatalf("VC PO detail path/method/table contract = %#v", ep)
+	}
+	if !reflect.DeepEqual(ep.RecordIDFields, []string{"vc_store_id", "local_po_number"}) {
+		t.Fatalf("record_id_fields = %v, want [vc_store_id local_po_number]", ep.RecordIDFields)
+	}
+	if ep.ResponseShape != "object" || ep.WindowDays != 7 || !ep.IterateByVCOrders {
+		t.Fatalf("VC PO detail request contract = %#v", ep)
+	}
+	if !reflect.DeepEqual(ep.ForceInjectParams, []string{"vc_store_id", "local_po_number"}) {
+		t.Fatalf("force_inject_params = %v", ep.ForceInjectParams)
+	}
+}
+
 func TestCatalogSalesQuantityAndRevenueVariantsCoexist(t *testing.T) {
 	quantity, err := FindCatalogEntry("sc_sales_report")
 	if err != nil {

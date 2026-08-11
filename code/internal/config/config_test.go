@@ -299,6 +299,40 @@ func TestValidateAdAccountIteration(t *testing.T) {
 	}
 }
 
+func TestValidateVCPOOrderIterationContract(t *testing.T) {
+	endpoint := Endpoint{
+		Name: "vc_po_details", Account: "sc_us_1", Path: "/basicOpen/platformOrder/vcOrderPo/detail",
+		Method: "POST", Table: "ls_vc_po_details", RecordIDFields: []string{"vc_store_id", "local_po_number"},
+		ResponseShape: "object", Cron: "*/30 * * * *", WindowDays: 7,
+		Rate:              Rate{Bucket: 1, IntervalMs: 1000, Dimension: "account+path"},
+		IterateByVCOrders: true, ForceInjectParams: []string{"vc_store_id", "local_po_number"},
+	}
+	mk := func(ep Endpoint) *Config {
+		return &Config{
+			Database:  Database{Host: "h", User: "u", DB: "d"},
+			Accounts:  []Account{{ID: "sc_us_1", AppKey: "k", AppSecret: "s"}},
+			Endpoints: []Endpoint{ep},
+		}
+	}
+	if err := mk(endpoint).validate(); err != nil {
+		t.Fatalf("valid VC PO detail iteration rejected: %v", err)
+	}
+	for name, mutate := range map[string]func(*Endpoint){
+		"GET":                 func(ep *Endpoint) { ep.Method = "GET" },
+		"list response":       func(ep *Endpoint) { ep.ResponseShape = "list" },
+		"missing store force": func(ep *Endpoint) { ep.ForceInjectParams = []string{"local_po_number"} },
+		"extra body params":   func(ep *Endpoint) { ep.ExtraParams = map[string]any{"sid": "x"} },
+	} {
+		t.Run(name, func(t *testing.T) {
+			candidate := endpoint
+			mutate(&candidate)
+			if err := mk(candidate).validate(); err == nil {
+				t.Fatal("invalid VC PO detail iteration contract was accepted")
+			}
+		})
+	}
+}
+
 func TestResponseShapeOrDefault(t *testing.T) {
 	if got := (Endpoint{}).ResponseShapeOrDefault(); got != "list" {
 		t.Fatalf("空 response_shape 默认值 = %q, want list", got)

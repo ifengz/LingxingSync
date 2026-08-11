@@ -166,3 +166,38 @@ func TestStockAndAddressMigrationsPreserveVerifiedBusinessKeys(t *testing.T) {
 		})
 	}
 }
+
+func TestVCPODetailsMigrationPreservesObjectAndStoreScopedKey(t *testing.T) {
+	raw, err := os.ReadFile("../../migrations/030_add_ls_vc_po_details.sql")
+	if err != nil {
+		t.Fatalf("读取 VC PO detail 迁移失败: %v", err)
+	}
+	sql := strings.ToUpper(string(raw))
+	for _, want := range []string{
+		"CREATE TABLE IF NOT EXISTS LS_VC_PO_DETAILS",
+		"VC_STORE_ID",
+		"LOCAL_PO_NUMBER",
+		"PURCHASE_ORDER_NUMBER",
+		"PURCHASE_ORDER_DATE",
+		"PURCHASE_ORDER_STATE",
+		"PAYMENT_METHOD",
+		"TOTAL_PRICE",
+		"CURRENCY_CODE",
+		"ITEM_AMOUNT",
+		"SHIP_WINDOW_START",
+		"SHIP_WINDOW_END",
+		"DELIVERY_WINDOW_START",
+		"DELIVERY_WINDOW_END",
+		"ITEMS JSON",
+		"PRIMARY KEY (ACCOUNT_ID, VC_STORE_ID, LOCAL_PO_NUMBER)",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("VC PO detail 迁移缺少 %q", want)
+		}
+	}
+	for _, destructive := range []string{"DROP TABLE", "DELETE FROM", "TRUNCATE"} {
+		if strings.Contains(sql, destructive) {
+			t.Fatalf("新增 VC PO detail 原始表迁移不得使用破坏性语句 %s", destructive)
+		}
+	}
+}
