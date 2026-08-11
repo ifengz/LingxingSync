@@ -222,7 +222,11 @@ func Load(path string) (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("读配置 %s: %w", path, err)
 	}
-	var c Config
+	c := Config{Retention: Retention{
+		TaskLogsDays: 90,
+		TasksDays:    365,
+		CleanupCron:  "0 3 * * *",
+	}}
 	if err := yaml.Unmarshal(raw, &c); err != nil {
 		return nil, fmt.Errorf("解析 YAML: %w", err)
 	}
@@ -242,19 +246,19 @@ func Load(path string) (*Config, error) {
 	if c.Database.ConnTimeoutSec == 0 {
 		c.Database.ConnTimeoutSec = 10
 	}
-	if c.Retention.TaskLogsDays == 0 {
-		c.Retention.TaskLogsDays = 90
-	}
-	if c.Retention.TasksDays == 0 {
-		c.Retention.TasksDays = 365
-	}
-	if c.Retention.CleanupCron == "" {
-		c.Retention.CleanupCron = "0 3 * * *"
-	}
 	for i := range c.Accounts {
 		if c.Accounts[i].ConnectionCheck.Cron == "" {
 			c.Accounts[i].ConnectionCheck = DefaultConnectionCheck()
 		}
+	}
+	if c.Retention.TaskLogsDays <= 0 {
+		return nil, fmt.Errorf("retention.task_logs_days 必须 > 0")
+	}
+	if c.Retention.TasksDays <= 0 {
+		return nil, fmt.Errorf("retention.tasks_days 必须 > 0")
+	}
+	if c.Retention.CleanupCron == "" {
+		c.Retention.CleanupCron = "0 3 * * *"
 	}
 	if err := c.validate(); err != nil {
 		return nil, err

@@ -538,30 +538,66 @@ ON DUPLICATE KEY UPDATE profile_id = VALUES(profile_id)`
 	return nil
 }
 
-// CleanupOld 按留存策略删旧记录（retention 定时任务调用）。
-//
-//   - taskLogsDays: sync_task_logs 按 created_at 删 N 天前
-//   - tasksDays:    sync_tasks        按 created_at 删 N 天前
-//
-// 任一 <=0 跳过该表（不删）。失败 fail-loud。
-func CleanupOld(db *sqlx.DB, taskLogsDays, tasksDays int) error {
-	if taskLogsDays > 0 {
-		if _, err := db.Exec(
-			"DELETE FROM sync_task_logs WHERE created_at < DATE_SUB(NOW(), INTERVAL ? DAY)",
-			taskLogsDays,
-		); err != nil {
-			return fmt.Errorf("db.CleanupOld: 清 sync_task_logs (%d 天) 失败: %w", taskLogsDays, err)
+const (
+	cleanupBatchSize  = 1000
+	cleanupMaxBatches = 100
+
+	cleanupTaskLogsSQL = "DELETE FROM sync_task_logs WHERE created_at < DATE_SUB(NOW(), INTERVAL ? DAY) ORDER BY created_at, id LIMIT ?"
+	cleanupTasksSQL    = "DELETE FROM sync_tasks WHERE created_at < DATE_SUB(NOW(), INTERVAL ? DAY) AND status IN ('success','error','cancelled') ORDER BY created_at, id LIMIT ?"
+)
+
+// CleanupResult 是一次 retention 清理的有界执行摘要。
+type CleanupResult struct {
+	TaskLogsDeleted int64
+	TaskLogsBatches int
+	TasksDeleted    int64
+	TasksBatches    int
+}
+
+// CleanupOld 按留存策略分批删除旧记录。每条 DELETE 独立提交；达到固定批次上限
+// 仍未收尾时显式报错，留待下一次 cron 继续，避免一次清理形成无界长事务。
+func CleanupOld(db *sqlx.DB, taskLogsDays, tasksDays int) (CleanupResult, error) {
+	var result CleanupResult
+	if taskLogsDays <= 0 {
+		return result, fmt.Errorf("db.CleanupOld: taskLogsDays 必须 > 0，得到 %d", taskLogsDays)
+	}
+	if tasksDays <= 0 {
+		return result, fmt.Errorf("db.CleanupOld: tasksDays 必须 > 0，得到 %d", tasksDays)
+	}
+
+	var err error
+	result.TaskLogsDeleted, result.TaskLogsBatches, err = deleteOldRows(db.Exec, cleanupTaskLogsSQL, taskLogsDays)
+	if err != nil {
+		return result, fmt.Errorf("db.CleanupOld: 清 sync_task_logs (%d 天) 失败: %w", taskLogsDays, err)
+	}
+	result.TasksDeleted, result.TasksBatches, err = deleteOldRows(db.Exec, cleanupTasksSQL, tasksDays)
+	if err != nil {
+		return result, fmt.Errorf("db.CleanupOld: 清 sync_tasks (%d 天) 失败: %w", tasksDays, err)
+	}
+	return result, nil
+}
+
+func deleteOldRows(exec func(string, ...any) (sql.Result, error), query string, days int) (int64, int, error) {
+	var deleted int64
+	batches := 0
+	for attempt := 0; attempt < cleanupMaxBatches; attempt++ {
+		result, err := exec(query, days, cleanupBatchSize)
+		if err != nil {
+			return deleted, batches, err
+		}
+		rows, err := result.RowsAffected()
+		if err != nil {
+			return deleted, batches, fmt.Errorf("读取删除行数失败: %w", err)
+		}
+		deleted += rows
+		if rows > 0 {
+			batches++
+		}
+		if rows < cleanupBatchSize {
+			return deleted, batches, nil
 		}
 	}
-	if tasksDays > 0 {
-		if _, err := db.Exec(
-			"DELETE FROM sync_tasks WHERE created_at < DATE_SUB(NOW(), INTERVAL ? DAY) AND status IN ('success','error','cancelled')",
-			tasksDays,
-		); err != nil {
-			return fmt.Errorf("db.CleanupOld: 清 sync_tasks (%d 天) 失败: %w", tasksDays, err)
-		}
-	}
-	return nil
+	return deleted, batches, fmt.Errorf("达到每日批次上限 %d（每批 %d 行）", cleanupMaxBatches, cleanupBatchSize)
 }
 
 // TableRowCount 返回某数据表当前行数（给 /api/datasources 用）。
