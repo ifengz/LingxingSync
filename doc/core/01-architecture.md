@@ -1,6 +1,6 @@
 # 领星同步机 — 架构设计（宪法层）
 
-> 一句话：一个独立 Go 服务，按桶令牌把领星 OpenAPI 数据定时拉入本项目原始表。
+> 一句话：一个独立 Go 服务，按桶令牌把领星 OpenAPI 数据定时拉入本项目原始表，并在同一进程与 MySQL 内承载已授权的正式报告证据、唯一日维事实集和固定 HTTPS 只读发布。
 
 ---
 
@@ -13,9 +13,9 @@
 | 1 | 各接口独立，互不影响 | 每个「账号+接口」一个独立 goroutine；panic 只 recover 自身，不传播 |
 | 2 | 根据令牌桶控速 | 每个 `(quota_group, path)` 一个 `rate.Limiter`，进程内；桶容量=1 时串行，>1 时可并发翻页 |
 | 3 | 加新接口极简单 | 配置文件加一段 YAML + 建一张表 + 重启，零代码改动 |
-| 4 | 报表数据校验 | 独立 ReconciliationWorker；上传 CSV → 比对 DB → 输出差异 |
+| 4 | 报表数据校验 | 独立 ReconciliationWorker；上传 CSV → 比对 DB → 输出差异；正式 Amazon 报告导出只走 OpenAPI 线路 |
 | 5 | 轻量，不吃死服务器 | 单进程，goroutine 2KB 栈，10 Worker < 50 MB；无外部队列 |
-| 6 | 结构化原始表 | 每接口一张结构化表，列名 = 领星字段名；不做跨项目投影或拼接 |
+| 6 | 结构化原始表 | 每接口/报告合同一张结构化 `ls_*` 表，列名 = 领星字段名；除唯一 `listing_daily_metrics` 外不做派生或拼接 |
 
 ---
 
@@ -53,13 +53,28 @@ Rust 的性能优势只在 CPU 密集型场景。同步领星是 IO 密集型（
 │  └─ 主循环：等触发 → 限流 → 分页拉 → 写表 → 更新状态               │
 │                                                                       │
 │  ReconciliationWorker（独立 goroutine，可选）                        │
-│  └─ 接收 CSV 上传 → 比对 DB → 返回差异                              │
+│  └─ OpenAPI 正式报告导出/导入或 CSV 上传 → 独立证据表 → 比对差异     │
+│                                                                       │
+│  Dataset Publisher（同一进程内的固定只读 handler）                   │
+│  └─ HTTPS snapshot / changes → token scope → keyset 分页             │
 │                                                                       │
 └───────────────────────────────────────────────────────────────────────┘
          │
          ▼
-   MySQL：系统表 + 每接口一张 ls_* 原始表
+   MySQL：系统表 + 每接口/报告一张 ls_* 原始表
+           + 唯一 listing_daily_metrics 日维事实集
 ```
+
+图中的正式报告、日维事实集和 Dataset Publisher 是**已授权架构边界，不是当前实现声明**。落地任务必须分别提供迁移、代码、凭证隔离和运行证据；本次宪法更新不证明它们已经运行。
+
+### 3.1 四项能力的硬边界
+
+- **原始同步**：一个 Lingxing endpoint 或正式报告合同只写自己的一张 `ls_*` 表；endpoint-local goroutine 的失败隔离不变。
+- **正式报告证据**：接口响应和正式报告行分表保留，互不覆盖。报告解析与对账成功后，同字段在有效日维结果中优先；没有报告值时才暂用 API 值。
+- **唯一事实集**：只允许 `listing_daily_metrics`，粒度固定为 store/channel/ASIN/SKU/business-date；可使用一对一 listing 维度键压缩索引。PO 等不同粒度域不得进入该表。未知覆盖保留 `NULL`，无 ASIN/SKU 的 HSA 只可作为店铺级或明确标记的分摊数据。
+- **固定发布**：只允许版本化 HTTPS `snapshot` / `changes`，按项目 token、dataset/store scope 和 keyset cursor 分页；不接受任意表、路径或 SQL。字段 allowlist 只裁剪 API 响应，不改变数据库 schema。
+
+这些能力都属于当前单进程：不增加第二服务、外部队列、对象存储或独立前端运行时。`changes` 只反映已经写入本库的变化，上游历史修正仍由重叠同步或正式报表对账发现。
 
 ---
 
@@ -285,7 +300,7 @@ syscall.Exec(exe, os.Args, os.Environ())
 | watchdog goroutine 回收资源 | 进程内资源进程死自动归零，watchdog 是多写者（polabel2 60s 死循环教训） |
 | 父子任务 / partial 状态 | 聚合状态导致状态机爆炸（polabel2 `ADMISSIBLE_INTENT_STATUSES` 6 处渗漏） |
 | BullMQ / 外部任务队列 | 多进程竞争同队列（polabel2 `6cbdefa8` 死锁教训） |
-| staging → canonical 三层 | 本系统不服务高一致性场景，一张结构化表够 |
+| 通用 staging → canonical 三层或多张 canonical 宽表 | 原始接口/报告各自直落 `ls_*`；仅允许一个固定 `listing_daily_metrics` |
 | Docker | 宝塔直接跑 Go 二进制 + Supervisor 守护，Docker 反而增加复杂度 |
 | Redis / 任何常驻第三方服务 | 部署形态是「单二进制 + MySQL」，多一个常驻件就多一处用户看不懂的故障点 |
 | 多进程 / 多实例 | 令牌器是进程内的；多实例即失去限流语义，且必然引出跨进程协调 = 锁 |
@@ -293,8 +308,11 @@ syscall.Exec(exe, os.Args, os.Environ())
 | 对象存储 | 本项目不存文件，只落结构化行 |
 | 外部调度器（crontab / Airflow 等） | 已有进程内 robfig/cron，外部调度会和它抢触发权 |
 | 连接池以外的 DB 中间件 | 直连 MySQL 即可，中间件会掩盖真实错误、破坏 fail-loud |
+| 动态 schema builder / 任意表 API | dataset 与字段必须在代码或配置中固定 allowlist，UI 不得执行 DDL |
+| 远程 SQL / 消费方直连数据库 | 内部消费者只能走版本化 HTTPS 只读数据集 API |
+| ERP 内部页面浏览器自动化 | 正式 Amazon 报告导出只走 OpenAPI，不依赖 Cookie 或页面脚本 |
 
-**默认答案是「不做」，举证责任在提议加东西的一方。** 领星 OpenAPI 的全部难度是：AES 签名 → 换 token → GET/POST 翻页 → Upsert 落库；GitHub 上多个同类项目都用最朴素的方式跑通，没有一个需要上面这些。任何「必须引入 X 才能解决」的说法，**先怀疑方案写错了，不是规模到了**。
+**默认答案是「不做」，举证责任在提议加东西的一方。** 原始同步主链仍是：AES 签名 → 换 token → GET/POST 翻页 → Upsert 落库；新增的报告证据、日维事实集和只读发布不得改变这个 Worker 模型。任何「必须引入 X 才能解决」的说法，**先怀疑方案写错了，不是规模到了**。
 
 **同样禁止在代码里自造复杂度**（不引入任何外部依赖也能违规）：分布式锁、租约、状态机、事件总线、插件系统、多层抽象、泛型框架、为「将来可扩展」预留的接口层。polabel2 的 admission 表和父子任务状态机就是这么长出来的，一个第三方服务都没装。宁可代码笨一点、重复一点，也不要让用户看不懂自己的系统。
 

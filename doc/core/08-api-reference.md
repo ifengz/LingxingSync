@@ -4,9 +4,9 @@
 > SDK（`QQiot/lingxing`、`PerfectWorld233/lingxingapi-httpx`）仅作签名算法交叉验证，不作为接口规格的权威来源。  
 > 生产踩坑记录来自 `doc/LINGXING_API_INTEGRATION.md`（polabel2 生产验证）。
 >
-> LingxingSync **只接 OpenAPI**，ERP 报表接口（auth-token 那套）和页面 token 一律不碰。
+> LingxingSync **只接 OpenAPI**。正式 Amazon 报告导出也必须走 OpenAPI 的创建任务、异步状态查询和下载链接续期线路；ERP 报表接口（`auth-token` 那套）和页面 token 一律不碰。
 >
-> 此处引用 polabel2 仅用于学习已验证的 method/path/body、候选上下文、字段处理和错误处理；两个项目完全独立，不连接数据库、不投影数据、不修改 polabel2 页面或事实表。
+> 此处引用 polabel2 仅用于学习已验证的 method/path/body、候选上下文、字段处理和错误处理；两个项目完全独立，不连接 polabel2 数据库、不向其表写投影、不修改 polabel2 页面或事实表。后续消费只能走固定 HTTPS 数据集 API。
 
 ---
 
@@ -19,6 +19,8 @@
 | 页面登录态 | `erp.lingxing.com` | 浏览器 Cookie | ❌ 不用 |
 
 **OpenAPI 的 `access_token` 不能拿去打 ERP 报表接口，反之亦然。** polabel2 已踩过这个坑。
+
+ERP 内部页面的 Cookie、抓包 token 或浏览器自动化都不是报告导出合同。即使页面能导出同名文件，也不得作为 OpenAPI 失败后的降级线路。
 
 ---
 
@@ -290,6 +292,15 @@ type PageParams struct {
 |---|---|---|---|
 | 结算报告 | POST | `/basicOpen/finance/settlement/pageList`（待验证） | `ls_finance_settlement` |
 
+### 6.7 正式 Amazon 报告导出
+
+正式导出按官方 OpenAPI 合同执行三步：创建导出任务 → 查询异步状态 → 获取或续期下载链接。它按 `seller_id + report_type` 工作，不表示一份报告覆盖全部 `ls_*` 接口。
+
+- 每个已验证的正式报告合同使用自己的 `ls_*` 原始证据表，与 API 原始表分开。
+- 下载、解析、对账全部成功后，报告值才可优先进入 `listing_daily_metrics`；不得 UPDATE API 原始行。
+- 广告、评价、VC 等来源必须逐接口/逐报告验证覆盖和粒度，禁止用一份 Amazon 报告推定全部覆盖。
+- 具体 path、参数、返回字段和唯一键未经官方文档与真实响应验证前，不得写入 config 或 migration。
+
 ---
 
 ## 7. Go SDK 使用（QQiot/lingxing）
@@ -312,7 +323,8 @@ SDK 处理了：token 获取、签名、基础 HTTP 封装。
 
 | 坑 | 怎么避免 |
 |---|---|
-| 用 `access_token` 打 ERP 报表接口 | LingxingSync 根本不接 ERP，彻底绕过 |
+| 用 `access_token` 打 ERP 报表接口 | 正式报告也走 OpenAPI；LingxingSync 根本不接 ERP，彻底绕过 |
+| 用 ERP 页面自动化代替正式导出 | 禁止 Cookie/页面脚本降级，只接受已验证 OpenAPI 报告合同 |
 | 并发多个 goroutine 取同一 token | singleflight，一个 goroutine 取完，其他等结果 |
 | `sid` 和 `profile_id` 混用 | 建表时分开存：`sid` 归 SC 店铺，`profile_id` 归广告账号 |
 | 分页没判断 `has_more` 就退出 | Worker 循环必须检查终止条件，不提前 break |

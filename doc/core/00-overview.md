@@ -1,6 +1,6 @@
 # 领星同步机（LingxingSync）
 
-> 独立把领星 OpenAPI 数据定时拉入本项目 `ls_*` 原始表。
+> 核心是独立把领星 OpenAPI 数据定时拉入本项目 `ls_*` 原始表；授权边界还包括正式报告证据、唯一 listing 日维事实集和固定 HTTPS 只读数据集 API。授权不代表运行时已经实现。
 
 ---
 
@@ -9,7 +9,9 @@
 | 是什么 | 不是什么 |
 |---|---|
 | 领星 OpenAPI 原始数据同步机 | 不连接或改造 polabel2 |
-| 每接口独立落一张 `ls_*` 原始表 | 不做跨项目投影、拼接或页面适配 |
+| 每接口/正式报告合同独立落一张 `ls_*` 原始表 | 不让接口原始行和报告原始行互相覆盖 |
+| 正式报告证据 + 唯一 `listing_daily_metrics` | 不做第二张 canonical 宽表或不同粒度混装 |
+| 固定版本 HTTPS `snapshot` / `changes` API | 不开放任意表、路径、SQL 或消费者直连数据库 |
 | 轻量、单进程、宝塔部署 | 不用 Docker，不用 BullMQ，不用队列 |
 | 每接口独立 goroutine，一个挂不影响其他 | 不是分布式系统 |
 
@@ -85,11 +87,14 @@ make migrate && make build
 4. **fail-loud**：API 返回格式异常 → 抛错记日志，不静默兜底。
 5. **表结构与领星一致**：字段名不翻译，不在同步层做跨项目映射。
 6. **加接口 = 加配置 + 建表 + 重启**，零代码改动，见 [07-add-endpoint.md](07-add-endpoint.md)。
+7. **证据不互改**：API 与正式报告分别落自己的 `ls_*` 原始表；正式报告只在解析、对账成功后优先进入有效日维结果。
+8. **只准一个日维事实集**：`listing_daily_metrics` 固定为 store/channel/ASIN/SKU/business-date 粒度；未知覆盖保持 `NULL`，PO 等不同粒度域独立。
+9. **发布边界固定**：内部消费者只走版本化 HTTPS `snapshot` / `changes`，按项目 token 和 dataset/store scope 授权；禁止远程 SQL、任意表名和数据库直连。
 
 ---
 
 ## polabel2 参考边界
 
-LingxingSync 与 polabel2 完全独立。polabel2 只作为已经跑通的领星接口证据来源，用于核对 method/path/body、候选账号与店铺上下文、字段处理和错误处理；不连接其数据库，不向其投影数据，不修改其页面或事实表。
+LingxingSync 与 polabel2 完全独立。polabel2 只作为已经跑通的领星接口证据来源，用于核对 method/path/body、候选账号与店铺上下文、字段处理和错误处理；不连接其数据库，不修改其页面或事实表。后续如需消费 LingxingSync 数据，只能走固定 HTTPS 数据集 API，不能直连数据库或要求 LingxingSync 适配 polabel2 页面。
 
 LingxingSync 的接口与落库合同仍须在本项目用真实响应独立验证，见 [09-endpoint-contract.md](09-endpoint-contract.md)。

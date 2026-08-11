@@ -1,6 +1,6 @@
 # 领星同步机 — HTTP API 规范（宪法层）
 
-> 后端 Go 服务提供 REST API，供前端 Alpine.js 调用。所有接口返回 JSON，路径前缀 `/api`。
+> 后端 Go 服务提供 REST API，供前端 Alpine.js 调用；已授权的数据集发布也由同一 Go 进程提供。所有接口返回 JSON，路径前缀 `/api`。面向内部消费者的数据集端点必须经 Nginx HTTPS 暴露。
 
 ---
 
@@ -343,3 +343,47 @@ HTTP 状态码：`200` = ok；`400` = 参数错误；`500` = 内部错误。
   }
 }
 ```
+
+## 版本化只读数据集 API（已授权，未声明已实现）
+
+只允许以下两种固定读端点；当前唯一允许的数据集标识是 `listing-daily-metrics`：
+
+```text
+GET /api/v1/datasets/listing-daily-metrics/snapshot
+GET /api/v1/datasets/listing-daily-metrics/changes
+```
+
+不得实现 `/:table`、自定义 path、SQL、排序表达式或任意字段表达式入口。新增数据集必须先修改宪法 allowlist，不能仅靠数据库中出现一张表自动暴露。
+
+### 认证与 scope
+
+- 使用 `Authorization: Bearer <project-token>`，每个内部项目独立 token；不得复用领星 OpenAPI token、ERP `auth-token` 或 UI 的 `X-Sync-Secret`。
+- token 必须同时校验 dataset scope 与 store scope；请求超出任一 scope 返回 `403`，不能静默裁剪为部分结果。
+- 消费者只经 HTTPS 调用；不得直连 MySQL、提交远程 SQL 或从 7799 明文公网访问。
+
+### `snapshot`
+
+返回某数据集当前有效快照。只接受固定查询参数：`store`、`limit`、`after`；`after` 是服务端生成的不透明 keyset cursor，禁止 offset 分页。响应字段受该 dataset 的字段 allowlist 限制。
+
+### `changes`
+
+返回 cursor 之后 LingxingSync **已经写入**的变化。只接受固定查询参数：`store`、`limit`、`cursor`；cursor 是服务端生成的不透明 keyset cursor。它不能发现上游尚未重拉的历史修正，也不能替代重叠同步或正式报告对账。
+
+### 值语义
+
+- `listing_daily_metrics` 粒度固定为 store/channel/ASIN/SKU/business-date。
+- 成功解析、对账后的正式报告字段值优先；没有报告覆盖时可返回 API 暂定值，且两份原始证据都不被修改。
+- 来源覆盖未知时返回 `null`/未验证状态，不得填 `0`。
+- 无 ASIN/SKU 的 HSA 只可返回店铺级记录，或返回带明确 `allocated` 标识的分摊记录。
+- PO 等不同粒度域不从这两个 listing 端点返回。
+
+## 数据集字段 allowlist 管理（已授权，未声明已实现）
+
+现有 `/datasources` 页面可使用以下固定管理端点，仍受 `X-Sync-Secret` 中间件保护：
+
+```text
+GET /api/datasources/datasets/listing-daily-metrics/fields
+PUT /api/datasources/datasets/listing-daily-metrics/fields
+```
+
+`GET` 返回服务端登记的可选字段与当前已选字段；`PUT` 只接受 `{ "fields": ["..."] }`，并拒绝不在登记清单中的字段。该设置只裁剪 dataset API 的响应字段，绝不能创建、修改、删除 MySQL 表或列，也不能接受表名和 SQL。

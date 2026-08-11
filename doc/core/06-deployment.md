@@ -124,7 +124,7 @@ supervisorctl status lingxing-sync
 
 **方式一：宝塔面板**
 1. 宝塔 → 网站 → 添加站点
-2. 域名：`sync.yourdomain.com`（或用 IP 直接访问跳过）
+2. 域名：`sync.yourdomain.com`。仅本机运维检查可直接访问 IP/7799；内部项目的数据集 API 不允许跳过域名与 HTTPS。
 3. 站点创建后 → 设置 → 反向代理 → 添加：
    - 代理名称：lingxing-sync
    - 目标 URL：`http://127.0.0.1:7799`
@@ -149,6 +149,8 @@ server {
     }
 }
 ```
+
+**HTTPS 硬边界**：若启用版本化 dataset `snapshot` / `changes`，必须在宝塔为该域名配置有效 TLS 证书并将 HTTP 301 跳转 HTTPS。项目 token 只允许经 HTTPS 传输；Nginx 后端仍代理到本机 `127.0.0.1:7799`，不得把 7799 直接开放给消费者。
 
 ---
 
@@ -210,7 +212,7 @@ curl http://127.0.0.1:7799/api/status
 
 ## 12. 防火墙
 
-端口 7799 **不对外开放**，只通过 Nginx 反代访问。
+端口 7799 **不对外开放**，只通过 Nginx 反代访问。内部项目消费固定数据集时也必须走域名 HTTPS，不能以 `IP:7799`、远程 SQL 或数据库直连代替。
 宝塔 → 安全 → 防火墙：确保 7799 **不在开放列表**中。
 
 ---

@@ -1,6 +1,6 @@
 # 领星同步机 — 数据库设计（宪法层）
 
-> 规则：系统表（sync_tasks / sync_task_logs）由框架维护；原始数据表（ls_*）每个接口一张，列名与领星 API 字段一一对应。
+> 规则：系统表（sync_tasks / sync_task_logs）由框架维护；每个接口或正式报告合同各有一张 `ls_*` 原始证据表，列名与其领星来源字段一一对应。只额外允许一张 `listing_daily_metrics` 有效日维事实表。
 
 ---
 
@@ -51,7 +51,7 @@ CREATE TABLE sync_task_logs (
 
 ## 2. 数据表规范（ls_* 系列）
 
-每个领星接口一张表，命名 `ls_{endpoint}`，遵守以下规范：
+每个领星接口或正式报告合同一张表，命名 `ls_{endpoint}` 或明确的 `ls_{report}`，遵守以下规范：
 
 ```sql
 -- 模板（替换 {table}、{columns}、{unique_key_cols}）
@@ -172,8 +172,36 @@ CREATE TABLE ls_ads_daily (
 
 | 约定 | 内容 |
 |---|---|
-| 项目边界 | 不连接 polabel2 数据库，不向其他项目投影或适配页面 |
+| 项目边界 | 不连接消费者数据库、不适配消费者页面；只通过固定 HTTPS 数据集 API 发布允许的日维字段 |
 | 主键稳定 | 主键按真实接口合同确定；变更前必须先验证冲突并设计数据迁移 |
 | 字段追加 | 新增列可随时追加，不删、不改已有列名和类型 |
 | JSON 不兜底 | 不用单个 `data` JSON 代替已验证的顶层结构化字段 |
 | 时区 | 所有 DATETIME 存 UTC；展示转换不属于同步落库职责 |
+
+## 5. 正式报告原始证据合同（已授权，未声明已实现）
+
+- Amazon 正式报告导出必须使用领星 OpenAPI 凭证和任务链路；ERP `auth-token`、页面 Cookie 与浏览器自动化都不得进入本项目。
+- 每个正式报告合同写入自己的一张 `ls_*` 原始表，不与 API 原始表共表，也不 UPDATE API 原始行。
+- 报告下载、解析或对账任一步失败时，本批报告不得进入有效日维结果；错误必须可追溯，不能静默采用部分文件。
+- 只有成功解析并完成对账的正式报告值，才在 `listing_daily_metrics` 同字段上优先于 API 值；没有报告覆盖时可暂用 API 原始值。
+
+## 6. `listing_daily_metrics` 唯一日维事实合同（已授权，未声明已实现）
+
+这是项目唯一允许的跨来源有效数据集，固定粒度为：
+
+```text
+store + channel + asin + sku + business_date
+```
+
+可以增加一对一的 `listing_dimension_id` 作为紧凑索引键，但必须能无歧义还原上述完整粒度，不能借维度键合并不同 listing。字段和索引由独立迁移显式声明，禁止 UI 或请求参数动态创建 schema。
+
+| 约束 | 内容 |
+|---|---|
+| 唯一性 | 同一 store/channel/ASIN/SKU/business-date 只能有一条有效行 |
+| 来源优先级 | 成功解析、对账的正式报告值 > API 原始值；两份原始证据均保持不变 |
+| 未覆盖值 | 保持 `NULL` 并标记未验证，不得把未知来源覆盖伪造成 `0` |
+| HSA | 缺 ASIN/SKU 时只进入店铺级独立数据，或以明确 `allocated` 标识进入分摊结果；不得伪装成原始 listing 值 |
+| 不同粒度 | PO、订单明细等域留在各自数据集，禁止塞入 `listing_daily_metrics` |
+| 派生上限 | 禁止第二张 canonical 宽表、通用 staging 层或消费者专用投影表 |
+
+该表只通过版本化 HTTPS 数据集 API 对外读取；消费者不得直连 MySQL、提交远程 SQL 或指定任意表名。
