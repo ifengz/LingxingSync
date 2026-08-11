@@ -4,6 +4,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/jmoiron/sqlx"
 )
 
 func TestRenameAccountMigrationPreservesConflicts(t *testing.T) {
@@ -200,4 +202,118 @@ func TestVCPODetailsMigrationPreservesObjectAndStoreScopedKey(t *testing.T) {
 			t.Fatalf("新增 VC PO detail 原始表迁移不得使用破坏性语句 %s", destructive)
 		}
 	}
+}
+
+func TestVCOrdersStoreScopeMigrationIsEndpointSafe(t *testing.T) {
+	raw, err := os.ReadFile("../../migrations/031_scope_ls_vc_orders_by_store.sql")
+	if err != nil {
+		t.Fatalf("读取 VC PO 列表店铺键迁移失败: %v", err)
+	}
+	sql := strings.ToUpper(string(raw))
+	for _, forbidden := range []string{
+		"__MIGRATION_031_BLOCKED",
+		"DELETE FROM",
+		"TRUNCATE",
+	} {
+		if strings.Contains(sql, forbidden) {
+			t.Fatalf("迁移不得通过 %s 让全站退出或删除原始数据", forbidden)
+		}
+	}
+	for _, want := range []string{
+		"DATA_TYPE",
+		"CHARACTER_MAXIMUM_LENGTH",
+		"@VC_ORDERS_EMPTY_STORE_COUNT = 0",
+		"PRIMARY KEY (ACCOUNT_ID, VC_STORE_ID, LOCAL_PO_NUMBER)",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("迁移缺少安全门禁 %q", want)
+		}
+	}
+}
+
+func TestVCOrdersStoreScopeMigrationAgainstLocalMySQL(t *testing.T) {
+	dsn := os.Getenv("LINGXING_MIGRATION_TEST_DSN")
+	if dsn == "" {
+		t.Skip("set LINGXING_MIGRATION_TEST_DSN to run the local VC PO migration integration test")
+	}
+	dbx, err := sqlx.Connect("mysql", dsn)
+	if err != nil {
+		t.Fatalf("连接迁移测试数据库失败: %v", err)
+	}
+	defer dbx.Close()
+
+	const table = "ls_vc_orders_scope_031_test"
+	defer func() { _, _ = dbx.Exec("DROP TABLE IF EXISTS " + table) }()
+	raw, err := os.ReadFile("../../migrations/031_scope_ls_vc_orders_by_store.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	migrationSQL := strings.ReplaceAll(string(raw), "ls_vc_orders", table)
+
+	createOld := func(storeDefinition string) {
+		t.Helper()
+		if _, err := dbx.Exec("DROP TABLE IF EXISTS " + table); err != nil {
+			t.Fatal(err)
+		}
+		stmt := "CREATE TABLE " + table + " (" +
+			"account_id VARCHAR(64) NOT NULL," +
+			"local_po_number VARCHAR(64) NOT NULL," +
+			"vc_store_id " + storeDefinition + "," +
+			"PRIMARY KEY (account_id, local_po_number))"
+		if _, err := dbx.Exec(stmt); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	t.Run("upgrades once and preserves two stores", func(t *testing.T) {
+		createOld("VARCHAR(32) NULL")
+		if _, err := dbx.Exec("INSERT INTO " + table + " VALUES ('a','po-1','store-1')"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := dbx.Exec(migrationSQL); err != nil {
+			t.Fatalf("首次迁移失败: %v", err)
+		}
+		if _, err := dbx.Exec(migrationSQL); err != nil {
+			t.Fatalf("重复迁移失败: %v", err)
+		}
+		if err := ValidateVCOrdersStoreScope(dbx, table); err != nil {
+			t.Fatalf("迁移后结构不合格: %v", err)
+		}
+		if _, err := dbx.Exec("INSERT INTO " + table + " VALUES ('a','po-1','store-2')"); err != nil {
+			t.Fatalf("同账号同 PO 的第二店铺无法共存: %v", err)
+		}
+		var count int
+		if err := dbx.Get(&count, "SELECT COUNT(*) FROM "+table+" WHERE account_id='a' AND local_po_number='po-1'"); err != nil {
+			t.Fatal(err)
+		}
+		if count != 2 {
+			t.Fatalf("同 PO 店铺行数=%d, want 2", count)
+		}
+	})
+
+	t.Run("leaves null store schema untouched for endpoint failure", func(t *testing.T) {
+		createOld("VARCHAR(32) NULL")
+		if _, err := dbx.Exec("INSERT INTO " + table + " VALUES ('a','po-1',NULL)"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := dbx.Exec(migrationSQL); err != nil {
+			t.Fatalf("脏数据不得拖垮全站迁移: %v", err)
+		}
+		if err := ValidateVCOrdersStoreScope(dbx, table); err == nil {
+			t.Fatal("空店铺必须让该 endpoint 不可同步")
+		}
+	})
+
+	t.Run("rejects unexpected store type", func(t *testing.T) {
+		createOld("VARCHAR(64) NULL")
+		if _, err := dbx.Exec("INSERT INTO " + table + " VALUES ('a','po-1','store-1')"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := dbx.Exec(migrationSQL); err != nil {
+			t.Fatalf("漂移结构不得拖垮全站迁移: %v", err)
+		}
+		if err := ValidateVCOrdersStoreScope(dbx, table); err == nil {
+			t.Fatal("漂移的 vc_store_id 类型必须让该 endpoint 不可同步")
+		}
+	})
 }

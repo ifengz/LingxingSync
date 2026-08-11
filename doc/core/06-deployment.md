@@ -43,9 +43,6 @@ mysql -u root -p
 CREATE DATABASE lingsync CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 CREATE USER 'lingsync_rw'@'127.0.0.1' IDENTIFIED BY 'your_password';
 GRANT ALL PRIVILEGES ON lingsync.* TO 'lingsync_rw'@'127.0.0.1';
--- 只读账号（给 polabel2 等项目用）
-CREATE USER 'lingsync_ro'@'%' IDENTIFIED BY 'readonly_password';
-GRANT SELECT ON lingsync.* TO 'lingsync_ro'@'%';
 FLUSH PRIVILEGES;
 ```
 

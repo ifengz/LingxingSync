@@ -84,3 +84,12 @@ func TestForEachVCPODetailCandidateStopsOnFirstError(t *testing.T) {
 		t.Fatalf("completed=%d visited=%v, want one completed and stop at second", completed, visited)
 	}
 }
+
+func TestVCOrdersRecordIDsRequireStoreScope(t *testing.T) {
+	if vcOrdersRecordIDsValid([]string{"local_po_number"}) {
+		t.Fatal("VC PO 列表不能继续使用缺少店铺的旧 record_id_fields")
+	}
+	if !vcOrdersRecordIDsValid([]string{"vc_store_id", "local_po_number"}) {
+		t.Fatal("VC PO 列表必须接受店铺+PO 号业务键")
+	}
+}

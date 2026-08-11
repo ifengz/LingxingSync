@@ -1,6 +1,6 @@
 # 领星同步机 — 数据库设计（宪法层）
 
-> 规则：系统表（sync_tasks / sync_task_logs）由框架维护；数据表（ls_*）每个接口一张，列名与领星 API 字段一一对应，polabel2 直读。
+> 规则：系统表（sync_tasks / sync_task_logs）由框架维护；原始数据表（ls_*）每个接口一张，列名与领星 API 字段一一对应。
 
 ---
 
@@ -166,15 +166,14 @@ CREATE TABLE ls_ads_daily (
 
 ---
 
-## 4. polabel2 消费契约
+## 4. 原始数据表合同
 
-polabel2 直连只读账号，遵守以下约定：
+`ls_*` 表只保存本项目已验证的领星原始字段，遵守以下约定：
 
 | 约定 | 内容 |
 |---|---|
-| 只读 | polabel2 使用独立只读 MySQL 账号，`GRANT SELECT ON lingsync.*` |
-| 主键稳定 | `(account_id, {record_id_field})` 不改，polabel2 可以 JOIN |
+| 项目边界 | 不连接 polabel2 数据库，不向其他项目投影或适配页面 |
+| 主键稳定 | 主键按真实接口合同确定；变更前必须先验证冲突并设计数据迁移 |
 | 字段追加 | 新增列可随时追加，不删、不改已有列名和类型 |
-| 不暴露系统表 | `sync_tasks` / `sync_task_logs` 不在只读账号权限内 |
-| JSON 不兜底 | 无 data JSON 大列；polabel2 直接用结构化列，无需解析 |
-| 时区 | 所有 DATETIME 存 UTC；polabel2 自行转换展示 |
+| JSON 不兜底 | 不用单个 `data` JSON 代替已验证的顶层结构化字段 |
+| 时区 | 所有 DATETIME 存 UTC；展示转换不属于同步落库职责 |

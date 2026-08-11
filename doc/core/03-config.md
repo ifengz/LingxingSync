@@ -136,7 +136,7 @@ retention:
 
 ## 账号 ID 规范（slug + 大小写不敏感唯一，参考 GitHub）
 
-`accounts[].id` 是写入每张表 `account_id` 列的机器标识符，消费方（polabel2 等）按它筛数据，因此有硬约束：
+`accounts[].id` 是写入每张原始表 `account_id` 列的机器标识符，用于隔离不同领星账号的数据，因此有硬约束：
 
 1. **字符集（slug）**：只允许 `[A-Za-z0-9_-]`，首尾必须是字母或数字，长度 1–32（对齐 `account_id VARCHAR(32)` 列宽）。校验正则见 `internal/config/config.go` 的 `accountIDPattern`。
 2. **大小写不敏感全局唯一**：判重以 `NormID(id) = ToLower(TrimSpace(id))` 为准（参考 GitHub username 规则）。`sc_us` 与 `Sc_us` 归一化后相同，视为撞名，`validate()` 直接 fail-loud。DB `account_id` 列排序规则本就是 `*_ci`，此口径与存储层一致。

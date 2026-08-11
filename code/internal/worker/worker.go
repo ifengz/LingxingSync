@@ -139,6 +139,15 @@ func New(ep config.Endpoint, acc config.Account, client *api.Client, dbx *sqlx.D
 		}
 	}
 	if fatalErr == nil && !ep.Probe {
+		if ep.Table == "ls_vc_orders" {
+			if !vcOrdersRecordIDsValid(ep.RecordIDFields) {
+				fatalErr = fmt.Errorf("表 %s 的 record_id_fields 必须是 [vc_store_id local_po_number]", ep.Table)
+			} else if err := db.ValidateVCOrdersStoreScope(dbx, ep.Table); err != nil {
+				fatalErr = err
+			}
+		}
+	}
+	if fatalErr == nil && !ep.Probe {
 		conflict, err := db.AccountMigrationConflict(dbx, ep.Table, ep.Account)
 		if err != nil {
 			// 冲突记录表只由 015 创建；旧库尚未完成该迁移时不把查询失败扩大成全站故障。
@@ -175,6 +184,10 @@ func New(ep config.Endpoint, acc config.Account, client *api.Client, dbx *sqlx.D
 		today:    time.Now().Format("2006-01-02"),
 	}
 	return w, nil
+}
+
+func vcOrdersRecordIDsValid(fields []string) bool {
+	return len(fields) == 2 && fields[0] == "vc_store_id" && fields[1] == "local_po_number"
 }
 
 // FatalError 返回启动断言失败的原因，nil = 该接口可正常同步。

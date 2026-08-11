@@ -207,7 +207,7 @@ var catalogEntries = []CatalogEntry{
 		Path:        "/basicOpen/platformOrder/vcOrder/pageList",
 		Method:      "POST",
 		Table:       "ls_vc_orders",
-		RecordIDs:   []string{"local_po_number"},
+		RecordIDs:   []string{"vc_store_id", "local_po_number"},
 		Rate:        Rate{Bucket: 1, IntervalMs: 1000, MultiIntervalMs: 1000, Dimension: "account+path"},
 		DefaultCron: "*/30 * * * *",
 		WindowDays:  7,
