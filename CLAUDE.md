@@ -61,6 +61,8 @@
 
     `doc/core/` 下的其余文件**不是宪法**，随业务改动一起提即可：`progress.md`（过程记录）、`findings.md`（调查结论）、`lessons.md`、`task_plan.md`、`10-frontend-rework-flow.md`（执行规格，含已废弃条目）、`sync-field-source-map.md`、`otherlingxinggithub.md`、`LINGXING_API_INTEGRATION.md`。把过程文件当宪法保护只会让「记一笔进展」也要单独 commit，纯属自我设障。
 
+**已授权的唯一候选迭代例外**：VC PO detail 必须先从同账号 `ls_vc_orders` 取得 `local_po_number` 与 `vc_store_id`。它只使用 `iterate_by_vc_orders` 在本 endpoint 内串行逐单请求并直接写唯一的 `ls_vc_po_details`，不引入队列、父子任务、staging 或通用工作流引擎；其他接口不得借此扩展跨表编排。
+
 ### 与 polabel2 的关系（边界）
 
 - 同步机是领星数据的**唯一同步入口**和**唯一数据源**。

@@ -126,6 +126,7 @@ retention:
 | `endpoints[].enabled` | bool | 否 | false 时暂停调度（不删数据） |
 | `endpoints[].is_store_source` | bool | 否 | true = 店铺来源接口，启动时优先同步 |
 | `endpoints[].iterate_by_store` | bool | 否 | true = Worker 对每个 sid 循环一次（需配合 `is_store_source` 接口） |
+| `endpoints[].iterate_by_vc_orders` | bool | 否 | 仅用于已验证的 VC PO detail：按同账号 `ls_vc_orders.gmt_modified` 窗口读取 `vc_store_id/local_po_number`，逐单请求；必须为 POST、`response_shape: object`、`window_days > 0`，并强制回注两个身份字段。不得与其他迭代模式同时启用 |
 | `endpoints[].store_param_name` | string | 否 | 迭代时注入店铺ID 的参数名，默认 `sid` |
 | `endpoints[].store_type` | string | 否 | 限定 `iterate_by_store` 只迭代该类型店铺：`SC` / `VC` / 空（不过滤）。对齐 `ls_stores.store_type`。SC 接口喂 VC 店铺 sid 会拉到错数据，故 SC 迭代接口应填 `SC` |
 | `endpoints[].store_sids` | array | 否 | 店铺白名单；空 = 同步该账号全部 sid，非空 = 只同步列出的 sid。仅对 `iterate_by_store: true` 生效 |
