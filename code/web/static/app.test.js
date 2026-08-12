@@ -33,6 +33,26 @@ const entryManage = sandbox.window.syncManage();
 assert.equal(entryManage.tab, 'manual');
 assert.equal(entryManage.advancedAdd, false);
 
+// 数据集字段配置固定走 listing-daily-v1 的字段合同，不接受表名或 SQL 输入。
+{
+  const template = fs.readFileSync(__dirname + '/../templates/datasources.html', 'utf8');
+  assert.match(template, /API 数据集返回字段/);
+  assert.match(template, /listing-daily-v1/);
+  assert.match(template, /x-data="dataSources\(\)"/);
+  assert.match(template, /x-init="load\(\)"/);
+  assert.match(template, /@click="saveDatasetFields\(\)"/);
+  assert.match(template, /可选字段/);
+  assert.match(template, /已获准字段/);
+  assert.match(template, /未保存修改/);
+  assert.match(template, /项目 \/ Token ID/);
+  assert.match(template, /selectedProjectKey/);
+  assert.match(template, /selectProject/);
+  assert.match(template, /!fieldsError && fieldGroups.length>0/);
+  assert.doesNotMatch(template, /<input[^>]*(?:table|sql)/i);
+  assert.doesNotMatch(template, /type=["']password/i);
+  assert.doesNotMatch(template, /CREATE|ALTER|DROP|SQL/i);
+}
+
 // 接口清单启用状态必须在下拉和按钮上可见、可禁用。
 {
   const m = sandbox.window.syncManage();
@@ -382,6 +402,201 @@ void (async () => {
   assert.equal(cronSave.body.rate.bucket, 2);
   assert.equal(cronSave.body.window_days, 7);
   assert.equal(cronSave.body.date_offset_days, 0);
+
+  // 数据集字段双栏：项目与 token ID 共同标识字段清单；不接触明文 bearer。
+  const fieldCalls = [];
+  const fieldLoad = {
+    dataset_id: 'listing-daily-v1',
+    project_id: 'project-a',
+    token_id: 'token-a',
+    available_fields: ['store', 'sales', 'impressions'],
+    fields: ['store'],
+  };
+  const projectBLoad = {
+    dataset_id: 'listing-daily-v1',
+    project_id: 'project-b',
+    token_id: 'token-b',
+    available_fields: ['store', 'sales', 'impressions'],
+    fields: ['impressions'],
+  };
+  let projectResponse = { projects: [
+    { project_id: 'project-a', token_id: 'token-a', fields: ['store'] },
+    { project_id: 'project-b', token_id: 'token-b', fields: ['impressions'] },
+  ] };
+  sandbox.window.apiGet = async (url) => {
+    fieldCalls.push({ method: 'GET', url });
+    if (url === '/api/datasources/datasets/listing-daily-v1/fields') return projectResponse;
+    if (url === '/api/datasources/datasets/listing-daily-v1/fields?project_id=project-a&token_id=token-a') return fieldLoad;
+    if (url === '/api/datasources/datasets/listing-daily-v1/fields?project_id=project-b&token_id=token-b') return projectBLoad;
+    throw new Error('unexpected dataset GET ' + url);
+  };
+  sandbox.window.apiPut = async (url, body) => {
+    fieldCalls.push({ method: 'PUT', url, body });
+    return { message: '已保存' };
+  };
+  const fields = sandbox.window.dataSources();
+  await fields.loadDatasetProjects();
+  assert.equal(JSON.stringify(fieldCalls.slice(0, 2).map(call => call.url)), JSON.stringify([
+    '/api/datasources/datasets/listing-daily-v1/fields',
+    '/api/datasources/datasets/listing-daily-v1/fields?project_id=project-a&token_id=token-a',
+  ]));
+  assert.equal(fields.selectedProjectId, 'project-a');
+  assert.equal(fields.selectedTokenId, 'token-a');
+  assert.ok(fields.fieldStateByProject[JSON.stringify(['project-a', 'token-a'])]);
+  assert.equal(fields.fieldStateByProject['project-a'], undefined);
+  assert.equal(fields.fieldGroups.length, 1);
+  assert.equal(JSON.stringify(fields.selectedFields), JSON.stringify(['store']));
+  assert.equal(fields.fieldsDirty, false);
+  assert.equal(JSON.stringify(fields.availableFields(fields.fieldGroups[0]).map(f => f.name)), JSON.stringify(['sales', 'impressions']));
+  fields.addField('sales');
+  assert.equal(JSON.stringify(fields.selectedFields), JSON.stringify(['store', 'sales']));
+  assert.equal(fields.fieldsDirty, true);
+  fields.removeField('store');
+  assert.equal(JSON.stringify(fields.selectedFields), JSON.stringify(['sales']));
+  await fields.saveDatasetFields();
+  assert.equal(JSON.stringify(fieldCalls.at(-1)), JSON.stringify({
+    method: 'PUT',
+    url: '/api/datasources/datasets/listing-daily-v1/fields?project_id=project-a&token_id=token-a',
+    body: { project_id: 'project-a', token_id: 'token-a', fields: ['sales'] },
+  }));
+  assert.equal(fields.fieldsDirty, false);
+
+  await fields.selectProject(JSON.stringify(['project-b', 'token-b']));
+  assert.equal(JSON.stringify(fields.selectedFields), JSON.stringify(['impressions']));
+  fields.removeField('impressions');
+  assert.equal(fields.fieldsDirty, true);
+  await fields.selectProject(JSON.stringify(['project-a', 'token-a']));
+  assert.equal(JSON.stringify(fields.selectedFields), JSON.stringify(['sales']));
+  assert.equal(fields.fieldsDirty, false);
+
+  // 项目详情读取失败时不得继续展示上一项目字段，也不能误保存到新项目。
+  const putCount = fieldCalls.filter(call => call.method === 'PUT').length;
+  delete fields.fieldStateByProject[JSON.stringify(['project-b', 'token-b'])];
+  sandbox.window.apiGet = async (url) => {
+    if (url.endsWith('project_id=project-b&token_id=token-b')) throw new Error('项目字段不可用');
+    throw new Error('unexpected dataset GET ' + url);
+  };
+  await fields.selectProject(JSON.stringify(['project-b', 'token-b']));
+  assert.equal(fields.fieldsError, '项目字段不可用');
+  assert.equal(fields.fieldGroups.length, 0);
+  assert.equal(fields.fieldsDirty, false);
+  assert.equal(fields.fieldStateByProject[JSON.stringify(['project-b', 'token-b'])], undefined);
+  await fields.saveDatasetFields();
+  assert.equal(fieldCalls.filter(call => call.method === 'PUT').length, putCount);
+  await fields.selectProject(JSON.stringify(['project-a', 'token-a']));
+
+  // 快速切换项目时，迟到的旧请求不能覆盖当前项目的字段状态。
+  const concurrent = sandbox.window.dataSources();
+  concurrent.datasetProjects = [
+    { project_id: 'project-a', token_id: 'token-a', key: JSON.stringify(['project-a', 'token-a']), label: 'project-a / token-a' },
+    { project_id: 'project-b', token_id: 'token-b', key: JSON.stringify(['project-b', 'token-b']), label: 'project-b / token-b' },
+  ];
+  concurrent.selectedProjectKey = JSON.stringify(['project-a', 'token-a']);
+  concurrent.selectedProjectId = 'project-a';
+  concurrent.selectedTokenId = 'token-a';
+  const pending = {};
+  sandbox.window.apiGet = (url) => new Promise((resolve) => { pending[url] = resolve; });
+  const slowA = concurrent.loadDatasetFields();
+  const fastB = concurrent.selectProject(JSON.stringify(['project-b', 'token-b']));
+  pending['/api/datasources/datasets/listing-daily-v1/fields?project_id=project-b&token_id=token-b'](projectBLoad);
+  await fastB;
+  pending['/api/datasources/datasets/listing-daily-v1/fields?project_id=project-a&token_id=token-a'](fieldLoad);
+  await slowA;
+  assert.equal(concurrent.selectedProjectId, 'project-b');
+  assert.equal(JSON.stringify(concurrent.selectedFields), JSON.stringify(['impressions']));
+
+  // 响应身份和分组键必须固定，错误数据不能替换当前清单。
+  sandbox.window.apiGet = async () => ({ ...fieldLoad, dataset_id: 'other-dataset' });
+  await fields.loadDatasetFields();
+  assert.equal(fields.fieldsError, '数据集字段响应格式错误');
+  assert.equal(fields.fieldGroups.length, 1);
+  sandbox.window.apiGet = async () => ({
+    dataset_id: 'listing-daily-v1',
+    project_id: 'project-a',
+    token_id: 'token-a',
+    available_fields: ['sales', 'sales'],
+    fields: [],
+  });
+  await fields.loadDatasetFields();
+  assert.equal(fields.fieldsError, '数据集字段重复: sales');
+  assert.equal(fields.fieldGroups.length, 1);
+
+  // 加载失败不能把已有选择静默清空；保存失败也必须保留待保存选择。
+  fields.selectedFields = ['sales'];
+  fields.savedFields = ['sales'];
+  fields.fieldsError = '';
+  sandbox.window.apiGet = async () => { throw new Error('字段服务不可用'); };
+  await fields.loadDatasetFields();
+  assert.equal(fields.fieldsError, '字段服务不可用');
+  assert.equal(JSON.stringify(fields.selectedFields), JSON.stringify(['sales']));
+  assert.equal(fields.fieldGroups.length, 1, '加载失败时应保留旧字段分组以继续显示当前选择');
+  fields.addField('impressions');
+  fields.fieldsError = '';
+  sandbox.window.apiPut = async () => { throw new Error('保存被拒绝'); };
+  await fields.saveDatasetFields();
+  assert.equal(fields.fieldsSaveError, '保存被拒绝');
+  assert.equal(JSON.stringify(fields.selectedFields), JSON.stringify(['sales', 'impressions']));
+  assert.equal(fields.fieldsDirty, true);
+
+  // 服务端返回空字段组是合法空态，不应被当成加载错误。
+  sandbox.window.apiGet = async () => ({ dataset_id: 'listing-daily-v1', project_id: 'project-a', token_id: 'token-a', available_fields: [], fields: [] });
+  fields.selectedProjectKey = JSON.stringify(['project-a', 'token-a']);
+  fields.selectedProjectId = 'project-a';
+  fields.selectedTokenId = 'token-a';
+  await fields.loadDatasetFields();
+  assert.equal(fields.fieldsError, '');
+  assert.equal(fields.availableFieldCount, 0);
+  assert.equal(fields.selectedFieldCount, 0);
+
+  // 只有单项目详情时，首次 GET 的响应也可直接作为当前项目清单。
+  const single = sandbox.window.dataSources();
+  const singleCalls = [];
+  sandbox.window.apiGet = async (url) => {
+    singleCalls.push(url);
+    if (url === '/api/datasources/datasets/listing-daily-v1/fields') {
+      return { projects: [{ project_id: 'project-a', token_id: 'token-a', fields: ['store'] }] };
+    }
+    return { ...fieldLoad, project_id: 'project-a', token_id: 'token-a' };
+  };
+  await single.loadDatasetProjects();
+  assert.equal(single.selectedProjectId, 'project-a');
+  assert.equal(JSON.stringify(singleCalls), JSON.stringify([
+    '/api/datasources/datasets/listing-daily-v1/fields',
+    '/api/datasources/datasets/listing-daily-v1/fields?project_id=project-a&token_id=token-a',
+  ]));
+
+  // 日维字段只做固定展示分组，不改变 API 字段名或选择结果。
+  const grouped = sandbox.window.dataSources();
+  sandbox.window.apiGet = async () => ({
+    dataset_id: 'listing-daily-v1',
+    project_id: 'project-a',
+    token_id: 'token-a',
+    available_fields: [
+      'sales_units', 'sales_amount', 'returns_qty',
+      'inventory_sellable', 'inventory_sellable_source',
+      'sessions_desktop', 'review_count', 'rating',
+      'sp_spend', 'sp_spend_source', 'sd_sales', 'hsa_orders', 'sb_spend',
+      'is_provisional',
+    ],
+    fields: ['sales_units', 'inventory_sellable', 'sessions_desktop', 'sp_spend', 'sd_sales', 'hsa_orders', 'sb_spend'],
+  });
+  grouped.selectedProjectKey = JSON.stringify(['project-a', 'token-a']);
+  grouped.selectedProjectId = 'project-a';
+  grouped.selectedTokenId = 'token-a';
+  await grouped.loadDatasetFields();
+  assert.equal(JSON.stringify(grouped.fieldGroups.map(group => group.source)), JSON.stringify([
+    '销量', '库存', 'Performance', 'SP', 'SD', 'HSA', 'SB', '状态',
+  ]));
+  assert.equal(JSON.stringify(grouped.fieldGroups.map(group => group.fields.map(field => field.name))), JSON.stringify([
+    ['sales_units', 'sales_amount', 'returns_qty'],
+    ['inventory_sellable', 'inventory_sellable_source'],
+    ['sessions_desktop', 'review_count', 'rating'],
+    ['sp_spend', 'sp_spend_source'],
+    ['sd_sales'],
+    ['hsa_orders'],
+    ['sb_spend'],
+    ['is_provisional'],
+  ]));
 })().catch((error) => {
   process.nextTick(() => { throw error; });
 });

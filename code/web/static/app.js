@@ -967,6 +967,97 @@ window.taskDetail = function () {
 /* ------------------------------------------------------------------ *
  * 3e. dataSources — 数据源（/datasources）
  * ------------------------------------------------------------------ */
+// 数据集字段路径集中在这一处，避免页面拼接任意表名或动态路由。
+function datasetProjectKey(projectId, tokenId) {
+  return JSON.stringify([projectId, tokenId]);
+}
+
+function listingDailyFieldsPath(projectId, tokenId) {
+  const path = '/api/datasources/datasets/listing-daily-v1/fields';
+  if (!projectId && !tokenId) return path;
+  return path + '?' + new URLSearchParams({ project_id: projectId, token_id: tokenId }).toString();
+}
+
+function normalizeDatasetProjects(data) {
+  if (data && typeof data.project_id === 'string' && typeof data.token_id === 'string' &&
+      Array.isArray(data.available_fields) && Array.isArray(data.fields)) {
+    const projectId = data.project_id.trim();
+    const tokenId = data.token_id.trim();
+    if (!projectId || !tokenId) throw new Error('项目或令牌 ID 选项格式错误');
+    const key = datasetProjectKey(projectId, tokenId);
+    return {
+      projects: [{ project_id: projectId, token_id: tokenId, key, label: projectId + ' / ' + tokenId }],
+      detail: { ...data, project_id: projectId, token_id: tokenId },
+    };
+  }
+  const raw = data && data.projects;
+  if (!Array.isArray(raw)) throw new Error('项目与令牌 ID 响应格式错误');
+  const seen = new Set();
+  const projects = raw.map((item) => {
+    if (!item || typeof item.project_id !== 'string' || typeof item.token_id !== 'string') {
+      throw new Error('项目或令牌 ID 选项格式错误');
+    }
+    const projectId = item.project_id.trim();
+    const tokenId = item.token_id.trim();
+    if (!projectId || !tokenId) throw new Error('项目或令牌 ID 选项格式错误');
+    const key = datasetProjectKey(projectId, tokenId);
+    if (seen.has(key)) throw new Error('项目与令牌 ID 选项重复');
+    seen.add(key);
+    return {
+      project_id: projectId,
+      token_id: tokenId,
+      key,
+      label: typeof item.label === 'string' && item.label.trim() ? item.label.trim() : projectId + ' / ' + tokenId,
+    };
+  });
+  return { projects, detail: null };
+}
+
+function normalizeListingDailyFields(data, projectId, tokenId) {
+  if (!data || data.dataset_id !== 'listing-daily-v1' || data.project_id !== projectId || data.token_id !== tokenId ||
+      !Array.isArray(data.available_fields) || !Array.isArray(data.fields)) {
+    throw new Error('数据集字段响应格式错误');
+  }
+  const names = new Set();
+  const fields = data.available_fields.map((name) => {
+    if (typeof name !== 'string' || !name.trim()) throw new Error('数据集字段项格式错误');
+    const normalized = name.trim();
+    if (names.has(normalized)) throw new Error('数据集字段重复: ' + normalized);
+    names.add(normalized);
+    return { name: normalized, label: normalized };
+  });
+  const selectedFields = data.fields.map((name) => {
+    if (typeof name !== 'string' || !names.has(name)) {
+      throw new Error('数据集已选字段不在登记清单中');
+    }
+    return name;
+  });
+  if (new Set(selectedFields).size !== selectedFields.length) {
+    throw new Error('数据集已选字段重复');
+  }
+  const groupPrefixes = [
+    { source: '销量', prefixes: ['sales_', 'returns_'] },
+    { source: '库存', prefixes: ['inventory_'] },
+    { source: 'Performance', prefixes: ['sessions_', 'review_count', 'rating'] },
+    { source: 'SP', prefixes: ['sp_'] },
+    { source: 'SD', prefixes: ['sd_'] },
+    { source: 'HSA', prefixes: ['hsa_'] },
+    { source: 'SB', prefixes: ['sb_'] },
+  ];
+  const groups = groupPrefixes.map((group) => ({
+    source: group.source,
+    fields: fields.filter((field) => group.prefixes.some((prefix) => field.name === prefix || field.name.startsWith(prefix))),
+  }));
+  const groupedNames = new Set(groups.flatMap((group) => group.fields.map((field) => field.name)));
+  const remaining = fields.filter((field) => !groupedNames.has(field.name));
+  if (remaining.length > 0) groups.push({ source: '状态', fields: remaining });
+  return { groups: groups.filter((group) => group.fields.length > 0), selectedFields };
+}
+
+function errorMessage(error, fallback) {
+  return error && error.message ? error.message : (String(error || '') || fallback);
+}
+
 window.dataSources = function () {
   return {
     endpoints: [],
@@ -975,17 +1066,45 @@ window.dataSources = function () {
     columns: [],
     colError: '',       // 读字段失败时的提示（不静默空白）
     refreshing: false,  // 刷新主表工作态（只重拉 /api/endpoints，不动整页）
+    fieldGroups: [],
+    selectedFields: [],
+    savedFields: [],
+    datasetProjects: [],
+    selectedProjectKey: '',
+    selectedProjectId: '',
+    selectedTokenId: '',
+    fieldStateByProject: {},
+    fieldsLoading: false,
+    fieldsSaving: false,
+    fieldsError: '',
+    fieldsSaveError: '',
+    fieldsRequestVersion: 0,
+
+    get fieldsDirty() {
+      return JSON.stringify(this.selectedFields) !== JSON.stringify(this.savedFields);
+    },
+    get availableFieldCount() {
+      return this.fieldGroups.reduce((count, group) => count + this.availableFields(group).length, 0);
+    },
+    get selectedFieldCount() { return this.selectedFields.length; },
+    get hasDatasetSelection() { return Boolean(this.selectedProjectKey && this.selectedProjectId && this.selectedTokenId); },
+    get projectOptions() { return this.datasetProjects; },
 
     async load() {
+      await this.loadEndpoints();
+      await this.loadDatasetProjects();
+    },
+    async loadEndpoints() {
       const eps = await window.apiGet('/api/endpoints').catch(window.toastError);
       this.endpoints = eps || [];
+      return eps;
     },
     // 只刷新主表（数据源列表），不重载页面、不影响已展开字段外的状态。
     async refresh() {
       if (this.refreshing) return;
       this.refreshing = true;
       try {
-        const eps = await window.apiGet('/api/endpoints').catch(window.toastError);
+        const eps = await this.loadEndpoints();
         if (eps) {
           this.endpoints = eps;
           this.expanded = null; // 列表刷新后收起展开行，避免 idx 错位
@@ -1010,6 +1129,134 @@ window.dataSources = function () {
       this.metaLoading = false;
       if (!d || !d.columns) { this.colError = '未能读取字段结构'; return; }
       this.columns = d.columns; // [{name,type,is_primary}]
+    },
+    rememberCurrentFields() {
+      if (!this.hasDatasetSelection) return;
+      this.fieldStateByProject[this.selectedProjectKey] = {
+        groups: this.fieldGroups.map((group) => ({ ...group, fields: [...group.fields] })),
+        selected: [...this.selectedFields],
+        saved: [...this.savedFields],
+      };
+    },
+    async selectProject(projectKey) {
+      const next = this.datasetProjects.find((target) => target.key === projectKey);
+      if (!next) throw new Error('项目与令牌 ID 不在可选清单中');
+      this.rememberCurrentFields();
+      this.fieldsRequestVersion += 1;
+      this.selectedProjectKey = next.key;
+      this.selectedProjectId = next.project_id;
+      this.selectedTokenId = next.token_id;
+      const saved = this.fieldStateByProject[next.key];
+      if (saved) {
+        this.fieldGroups = saved.groups.map((group) => ({ ...group, fields: [...group.fields] }));
+        this.selectedFields = [...saved.selected];
+        this.savedFields = [...saved.saved];
+        this.fieldsError = '';
+        this.fieldsSaveError = '';
+        return;
+      }
+      this.fieldGroups = [];
+      this.selectedFields = [];
+      this.savedFields = [];
+      this.fieldsError = '';
+      await this.loadDatasetFields();
+    },
+    async loadDatasetProjects() {
+      const requestVersion = ++this.fieldsRequestVersion;
+      this.fieldsLoading = true;
+      this.fieldsError = '';
+      try {
+        const data = await window.apiGet(listingDailyFieldsPath());
+        if (requestVersion !== this.fieldsRequestVersion) return;
+        const normalized = normalizeDatasetProjects(data);
+        this.datasetProjects = normalized.projects;
+        const first = normalized.projects[0];
+        if (!first) throw new Error('未配置可管理的数据集项目');
+        this.selectedProjectKey = first.key;
+        this.selectedProjectId = first.project_id;
+        this.selectedTokenId = first.token_id;
+        if (normalized.detail) {
+          const fields = normalizeListingDailyFields(normalized.detail, first.project_id, first.token_id);
+          this.applyDatasetFields(fields);
+        } else {
+          await this.loadDatasetFields();
+        }
+      } catch (error) {
+        if (requestVersion === this.fieldsRequestVersion) this.fieldsError = errorMessage(error, '未能读取项目 ID');
+      } finally {
+        if (requestVersion === this.fieldsRequestVersion) this.fieldsLoading = false;
+      }
+    },
+    applyDatasetFields(normalized) {
+      this.fieldGroups = normalized.groups;
+      this.selectedFields = [...normalized.selectedFields];
+      this.savedFields = [...normalized.selectedFields];
+      this.rememberCurrentFields();
+      this.fieldsSaveError = '';
+    },
+    async loadDatasetFields() {
+      if (!this.hasDatasetSelection) {
+        this.fieldsError = '请选择项目 ID';
+        return;
+      }
+      const requestVersion = ++this.fieldsRequestVersion;
+      const projectKey = this.selectedProjectKey;
+      const projectId = this.selectedProjectId;
+      const tokenId = this.selectedTokenId;
+      this.fieldsLoading = true;
+      this.fieldsError = '';
+      try {
+        const data = await window.apiGet(listingDailyFieldsPath(projectId, tokenId));
+        if (requestVersion !== this.fieldsRequestVersion || projectKey !== this.selectedProjectKey) return;
+        const normalized = normalizeListingDailyFields(data, projectId, tokenId);
+        this.applyDatasetFields(normalized);
+      } catch (error) {
+        if (requestVersion === this.fieldsRequestVersion && projectKey === this.selectedProjectKey) {
+          this.fieldsError = errorMessage(error, '未能读取数据集字段');
+        }
+      } finally {
+        if (requestVersion === this.fieldsRequestVersion) this.fieldsLoading = false;
+      }
+    },
+    isSelected(name) { return this.selectedFields.includes(name); },
+    availableFields(group) {
+      return (group && Array.isArray(group.fields)) ? group.fields.filter((field) => !this.isSelected(field.name)) : [];
+    },
+    fieldMeta(name) {
+      for (const group of this.fieldGroups) {
+        const field = group.fields.find((item) => item.name === name);
+        if (field) return field;
+      }
+      return null;
+    },
+    addField(name) {
+      if (!this.isSelected(name) && this.fieldMeta(name)) {
+        this.selectedFields.push(name);
+        this.rememberCurrentFields();
+      }
+    },
+    removeField(name) {
+      this.selectedFields = this.selectedFields.filter((field) => field !== name);
+      this.rememberCurrentFields();
+    },
+    async saveDatasetFields() {
+      if (this.fieldsSaving || this.fieldsError || !this.hasDatasetSelection || !this.fieldsDirty) return;
+      this.fieldsSaving = true;
+      this.fieldsSaveError = '';
+      const fields = [...this.selectedFields];
+      try {
+        await window.apiPut(listingDailyFieldsPath(this.selectedProjectId, this.selectedTokenId), {
+          project_id: this.selectedProjectId,
+          token_id: this.selectedTokenId,
+          fields,
+        });
+        this.savedFields = [...fields];
+        this.rememberCurrentFields();
+      } catch (error) {
+        this.fieldsSaveError = errorMessage(error, '保存数据集字段失败');
+      } finally {
+        this.fieldsSaving = false;
+      }
     },
   };
 };
