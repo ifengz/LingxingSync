@@ -6,7 +6,7 @@
 //
 // 字段规则（宪法 §9）：
 //   - account_id 由本系统注入，不在领星返回里
-//   - synced_at 由 MySQL ON UPDATE CURRENT_TIMESTAMP 管理，绝不写入
+//   - synced_at 只使用 MySQL 当前时间，绝不接受上游值
 //   - 主键 = (account_id, 业务唯一键)；冲突时 ON DUPLICATE KEY UPDATE 覆盖非主键列
 //   - account_id 不进 UPDATE 子句（它是主键的一部分，UPDATE 它没意义且会破坏索引）
 package db
@@ -95,36 +95,15 @@ func UpsertRows(db *sqlx.DB, table string, rows []map[string]any, allowedCols []
 		return fmt.Errorf("db.UpsertRows: 表 %s 没有可写的业务列（allowedCols=%v）", table, allowedCols)
 	}
 
-	// 2. 构造 SQL。
-	//    VALUES 占位：每行 len(cols) 个 ?，行之间用逗号。
-	placeRow := "(" + strings.Repeat("?,", len(cols)-1) + "?)"
-	valuePlaceholders := strings.Repeat(placeRow+",", len(rows)-1) + placeRow
-
-	//    ON DUPLICATE KEY UPDATE：更新除 account_id 外的所有列。
-	//    account_id 是主键的一部分，不参与 UPDATE。
-	updates := make([]string, 0, len(cols)-1)
-	for _, c := range cols[1:] { // 跳过 account_id
-		updates = append(updates, fmt.Sprintf("`%s` = VALUES(`%s`)", c, c))
-	}
-
-	quotedCols := make([]string, len(cols))
-	for i, c := range cols {
-		quotedCols[i] = "`" + c + "`"
-	}
-
-	stmt := fmt.Sprintf(
-		"INSERT INTO `%s` (%s) VALUES %s ON DUPLICATE KEY UPDATE %s",
-		table,
-		strings.Join(quotedCols, ", "),
-		valuePlaceholders,
-		strings.Join(updates, ", "),
-	)
+	// 2. 构造 SQL。只 touch 实际拥有 synced_at 的 raw 表；这样完整快照
+	// 中本次仍返回但数值未变的行也属于今天，未再返回的旧行不会被触碰。
+	stmt := fmt.Sprintf("INSERT INTO `%s` %s", table, buildUpsertStatement(cols, shouldTouchSnapshot(table, allowedCols), len(rows)))
 
 	// 3. 按 [accountID, row[c0], row[c1], ...] 顺序铺 vals。
 	//    缺失字段写 nil（→ SQL NULL）。
 	vals := make([]any, 0, len(rows)*len(cols))
 	bizCols := cols[1:] // 对应每行 accountID 之后的部分
-	for i, row := range rows {
+	for _, row := range rows {
 		vals = append(vals, accountID)
 		for _, c := range bizCols {
 			v, ok := row[c]
@@ -138,7 +117,6 @@ func UpsertRows(db *sqlx.DB, table string, rows []map[string]any, allowedCols []
 			// 须先 JSON 序列化为字符串，driver 才能写入 JSON 列，否则报 unsupported type。
 			vals = append(vals, normalizeUpsertValue(v, jsonCols[c]))
 		}
-		_ = i // 仅占位，避免 unused 警告
 	}
 
 	if _, err := db.Exec(stmt, vals...); err != nil {
@@ -146,6 +124,36 @@ func UpsertRows(db *sqlx.DB, table string, rows []map[string]any, allowedCols []
 			table, len(rows), len(cols), err)
 	}
 	return nil
+}
+
+func containsColumn(columns []string, target string) bool {
+	for _, column := range columns {
+		if column == target {
+			return true
+		}
+	}
+	return false
+}
+
+func shouldTouchSnapshot(table string, columns []string) bool {
+	return table == "ls_fba_inventory" && containsColumn(columns, "synced_at")
+}
+
+func buildUpsertStatement(cols []string, touchSyncedAt bool, rowCount int) string {
+	placeRow := "(" + strings.Repeat("?,", len(cols)-1) + "?)"
+	valuePlaceholders := strings.Repeat(placeRow+",", rowCount-1) + placeRow
+	updates := make([]string, 0, len(cols))
+	for _, column := range cols[1:] {
+		updates = append(updates, fmt.Sprintf("`%s` = VALUES(`%s`)", column, column))
+	}
+	if touchSyncedAt {
+		updates = append(updates, "`synced_at` = CURRENT_TIMESTAMP")
+	}
+	quotedCols := make([]string, len(cols))
+	for i, column := range cols {
+		quotedCols[i] = "`" + column + "`"
+	}
+	return fmt.Sprintf("(%s) VALUES %s ON DUPLICATE KEY UPDATE %s", strings.Join(quotedCols, ", "), valuePlaceholders, strings.Join(updates, ", "))
 }
 
 // normalizeUpsertValue 处理领星返回值到 driver 可写入的形态。
