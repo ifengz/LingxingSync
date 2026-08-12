@@ -30,6 +30,59 @@ accounts:
       cron: "*/20 * * * *"       # 真实获取 OpenAPI Token 并主动续租
       enabled: true
 
+# ===== 正式 Amazon 报表 =====
+# 默认禁用。启用后由本进程现有 Scheduler 定时运行最近 N 个完整日；CLI 仍可手工补跑。
+report_exports:
+  - type: "fba_customer_returns"
+    enabled: false
+    account: ""                  # 启用时填写上方 account id
+    seller_id: ""
+    store_id: ""                 # 本地归属店铺，不传给领星
+    region: ""                   # na / eu / fe
+    marketplace_ids: []
+    cron: ""                     # 例如 "0 4 * * *"
+    window_days: 0               # 启用时填写 1..31
+
+# ===== 对外日维数据集 =====
+# 可选：未配置时 /datasources 显示空态，snapshot/changes 不对外开放。
+# 同一 project_id 可以配置多个 token；id 必须唯一，字段清单按 project_id + id 隔离。
+# token_hash 是 Bearer 明文的 SHA-256；配置和日志中都不保存明文 Token。
+dataset_api:
+  cursor_secret: "replace_with_at_least_16_random_chars"
+  max_date_span_days: 31
+  max_page_size: 500
+  field_allowlist:
+    - sales_units
+    - sales_amount
+    - returns_qty
+    - inventory_sellable
+    - sessions_desktop
+    - sessions_mobile
+    - sessions_total
+    - review_count
+    - rating
+    - sp_spend
+    - sd_spend
+    - hsa_spend
+    - sb_spend
+  tokens:
+    - id: "project_a_reader_1"
+      project_id: "project_a"
+      token_hash: "a5b0206a12cb76ec413bba7b49dc40a14e66051727cd523c294075f2d270dee7" # 示例明文占位符的 SHA-256；真实使用时替换
+      dataset_scopes: ["listing-daily-v1"]
+      store_scopes: ["replace_with_store_id"]
+      fields: ["sales_units", "sales_amount"]
+      expires_at: ""
+      revoked: false
+    - id: "project_a_reader_2"
+      project_id: "project_a"
+      token_hash: "5847267cd65ddf9d70a148db0f93c02d52b174dfe5c5c02e8a0bb2deed27b022" # 第二个示例占位符的 SHA-256；真实使用时替换
+      dataset_scopes: ["listing-daily-v1"]
+      store_scopes: ["replace_with_store_id"]
+      fields: ["inventory_sellable"]
+      expires_at: ""
+      revoked: false
+
 # ===== 接口同步任务 =====
 # rate 字段从领星官方接口文档 Rate Limit 区块原样抄写，不猜测
 #
@@ -117,6 +170,34 @@ endpoints:
     cron: "*/30 * * * *"
     enabled: true
     window_days: 0
+
+  - name: sc_performance
+    display: "SC 产品表现（ASIN）"
+    account: "sc_us"
+    path: "/bd/productPerformance/openApi/asinList"
+    method: "POST"
+    table: "ls_sc_performance_daily"
+    record_id_fields: ["sid", "asin", "business_date"]
+    rate:
+      bucket: 1
+      interval_ms: 1000
+      multi_interval_ms: 10000
+      dimension: "account+path"
+    cron: "0 5 * * *"
+    enabled: true
+    window_days: 7
+    single_day_window: true       # T-0..T-6 逐日请求，每次 start_date=end_date
+    row_date_field: "business_date" # 从实际请求日期写入 raw row，不传给领星
+    extra_params:
+      summary_field: "asin"
+      sort_field: "amount"
+      sort_type: "desc"
+    iterate_by_store: true
+    store_param_name: "sid"
+    store_type: "SC"
+    field_paths:
+      asin: "asins[0].asin"
+    inject_params: ["sid"]
 
   # 「SC 广告日报」示例已删除，不是遗漏。原来那段的
   #   path: "/openapi/erp/sc/ads/daily"   record_id_fields: ["report_id"]

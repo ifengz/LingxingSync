@@ -33,7 +33,9 @@ type CatalogEntry struct {
 	ResponseShape string
 
 	// 参数形态（三选一或组合，与 Endpoint 语义一致）
-	WindowDays       int            // >0：注入 start_date/end_date 范围
+	WindowDays       int            // >0：窗口天数；single-day 时为逐日补偿天数
+	SingleDayWindow  bool           // true：配置窗口或手工范围逐日拆成起止同日请求
+	RowDateField     string         // 从实际起始参数注入 raw row
 	WindowStartField string         // 空时默认 start_date
 	WindowEndField   string         // 空时默认 end_date
 	DateField        string         // 非空：注入单日期（如 event_date）
@@ -75,6 +77,8 @@ func (e CatalogEntry) ToEndpoint(accountID string) Endpoint {
 		Cron:               e.DefaultCron,
 		Enabled:            true,
 		WindowDays:         e.WindowDays,
+		SingleDayWindow:    e.SingleDayWindow,
+		RowDateField:       e.RowDateField,
 		WindowStartField:   e.WindowStartField,
 		WindowEndField:     e.WindowEndField,
 		DateField:          e.DateField,
@@ -306,22 +310,24 @@ var catalogEntries = []CatalogEntry{
 		ForceInjectParams: []string{"sid"},
 	},
 	{
-		Key:            "sc_performance",
-		Display:        "SC 产品表现（ASIN）",
-		Summary:        "按 SC 店铺覆盖最近 7 天的产品表现快照。",
-		Path:           "/bd/productPerformance/openApi/asinList",
-		Method:         "POST",
-		Table:          "ls_sc_performance",
-		RecordIDs:      []string{"sid", "asin"},
-		Rate:           Rate{Bucket: 1, IntervalMs: 1000, MultiIntervalMs: 10000, Dimension: "account+path"},
-		DefaultCron:    "0 5 * * *",
-		WindowDays:     7,
-		ExtraParams:    map[string]any{"summary_field": "asin", "sort_field": "amount", "sort_type": "desc"},
-		IterateByStore: true,
-		StoreParamName: "sid",
-		StoreType:      "SC",
-		FieldPaths:     map[string]string{"asin": "asins[0].asin"},
-		InjectParams:   []string{"sid"},
+		Key:             "sc_performance",
+		Display:         "SC 产品表现（ASIN）",
+		Summary:         "按 SC 店铺逐日补偿最近 7 天的 ASIN 日维产品表现。",
+		Path:            "/bd/productPerformance/openApi/asinList",
+		Method:          "POST",
+		Table:           "ls_sc_performance_daily",
+		RecordIDs:       []string{"sid", "asin", "business_date"},
+		Rate:            Rate{Bucket: 1, IntervalMs: 1000, MultiIntervalMs: 10000, Dimension: "account+path"},
+		DefaultCron:     "0 5 * * *",
+		WindowDays:      7,
+		SingleDayWindow: true,
+		RowDateField:    "business_date",
+		ExtraParams:     map[string]any{"summary_field": "asin", "sort_field": "amount", "sort_type": "desc"},
+		IterateByStore:  true,
+		StoreParamName:  "sid",
+		StoreType:       "SC",
+		FieldPaths:      map[string]string{"asin": "asins[0].asin"},
+		InjectParams:    []string{"sid"},
 	},
 	{
 		Key:               "vc_margin",

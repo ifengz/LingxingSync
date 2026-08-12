@@ -363,6 +363,20 @@ func validateSyncDateRange(dateFrom, dateTo string) error {
 	return nil
 }
 
+const maxSingleDayManualRangeDays = 92
+
+func validateSingleDaySyncDateRange(dateFrom, dateTo string) error {
+	if err := validateSyncDateRange(dateFrom, dateTo); err != nil {
+		return err
+	}
+	from, _ := time.Parse("2006-01-02", dateFrom)
+	to, _ := time.Parse("2006-01-02", dateTo)
+	if to.After(from.AddDate(0, 0, maxSingleDayManualRangeDays-1)) {
+		return fmt.Errorf("single-day 接口手动同步范围不能超过 %d 个自然日", maxSingleDayManualRangeDays)
+	}
+	return nil
+}
+
 // apiSyncTrigger 立即触发某 endpoint 的同步。
 // task id 是 worker 异步产生，这里返回 ok+message 即可；前端在 /logs 页通过 /api/tasks 观察结果。
 // body 可选携带 store_sids[]：仅对 iterate_by_store 的接口生效，按次覆盖店铺范围，
@@ -390,13 +404,23 @@ func (s *Server) apiSyncTrigger(w http.ResponseWriter, r *http.Request) {
 	}
 	in.DateFrom = strings.TrimSpace(in.DateFrom)
 	in.DateTo = strings.TrimSpace(in.DateTo)
+	if w0.Endpoint.SingleDayWindow && (in.DateFrom == "" || in.DateTo == "") {
+		errJSON(w, http.StatusBadRequest, "该接口手动同步必须明确填写开始和结束日期")
+		return
+	}
 	if in.DateFrom != "" || in.DateTo != "" {
-		if err := validateSyncDateRange(in.DateFrom, in.DateTo); err != nil {
+		validateRange := validateSyncDateRange
+		if w0.Endpoint.SingleDayWindow {
+			validateRange = validateSingleDaySyncDateRange
+		}
+		if err := validateRange(in.DateFrom, in.DateTo); err != nil {
 			errJSON(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		if w0.Endpoint.DateField != "" && in.DateFrom == in.DateTo {
 			// Single-date endpoints use the same day for their verified DateField.
+		} else if w0.Endpoint.SingleDayWindow {
+			// Worker 将范围拆成逐日的 start_date=end_date 请求。
 		} else if !w0.Endpoint.DateRangeCapable() {
 			errJSON(w, http.StatusBadRequest, "该接口不支持日期范围：快照接口同步当前全量，单日接口按自身日期配置执行")
 			return

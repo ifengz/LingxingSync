@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -45,6 +46,151 @@ func TestClassifyChangeTreatsConnectionCheckAsHot(t *testing.T) {
 	}
 }
 
+func TestLoadValidatesEnabledReportExport(t *testing.T) {
+	valid := `database:
+  host: 127.0.0.1
+  user: test
+  db: lingsync
+accounts:
+  - id: sc_us
+    app_key: key
+    app_secret: secret
+report_exports:
+  - type: fba_customer_returns
+    enabled: true
+    account: sc_us
+    seller_id: SELLER-1
+    store_id: STORE-1
+    region: na
+    marketplace_ids: [ATVPDKIKX0DER]
+    cron: "0 4 * * *"
+    window_days: 3
+`
+	tests := map[string]string{
+		"valid":                 valid,
+		"missing seller":        strings.Replace(valid, "    seller_id: SELLER-1\n", "", 1),
+		"blank seller":          strings.Replace(valid, "    seller_id: SELLER-1", `    seller_id: ""`, 1),
+		"spaced seller":         strings.Replace(valid, "    seller_id: SELLER-1", `    seller_id: " SELLER-1"`, 1),
+		"long seller":           strings.Replace(valid, "    seller_id: SELLER-1", "    seller_id: "+strings.Repeat("S", 65), 1),
+		"missing store":         strings.Replace(valid, "    store_id: STORE-1\n", "", 1),
+		"blank store":           strings.Replace(valid, "    store_id: STORE-1", `    store_id: ""`, 1),
+		"spaced store":          strings.Replace(valid, "    store_id: STORE-1", `    store_id: " STORE-1"`, 1),
+		"unknown account":       strings.Replace(valid, "    account: sc_us", "    account: missing", 1),
+		"bad region":            strings.Replace(valid, "    region: na", "    region: us", 1),
+		"missing marketplace":   strings.Replace(valid, "    marketplace_ids: [ATVPDKIKX0DER]", "    marketplace_ids: []", 1),
+		"blank marketplace":     strings.Replace(valid, "    marketplace_ids: [ATVPDKIKX0DER]", `    marketplace_ids: [""]`, 1),
+		"spaced marketplace":    strings.Replace(valid, "    marketplace_ids: [ATVPDKIKX0DER]", `    marketplace_ids: [" ATVPDKIKX0DER"]`, 1),
+		"long marketplace":      strings.Replace(valid, "    marketplace_ids: [ATVPDKIKX0DER]", "    marketplace_ids: ["+strings.Repeat("M", 65)+"]", 1),
+		"duplicate marketplace": strings.Replace(valid, "    marketplace_ids: [ATVPDKIKX0DER]", "    marketplace_ids: [ATVPDKIKX0DER, ATVPDKIKX0DER]", 1),
+		"bad cron":              strings.Replace(valid, `    cron: "0 4 * * *"`, `    cron: "bad"`, 1),
+		"missing window":        strings.Replace(valid, "    window_days: 3\n", "", 1),
+		"too many days":         strings.Replace(valid, "    window_days: 3", "    window_days: 32", 1),
+	}
+	for name, raw := range tests {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.yaml")
+			if err := os.WriteFile(path, []byte(raw), 0600); err != nil {
+				t.Fatal(err)
+			}
+			_, err := Load(path)
+			if name == "valid" && err != nil {
+				t.Fatalf("valid report export rejected: %v", err)
+			}
+			if name != "valid" && err == nil {
+				t.Fatal("invalid enabled report export accepted")
+			}
+		})
+	}
+}
+
+func TestLoadAllowsDisabledEmptyReportExport(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	raw := `database:
+  host: 127.0.0.1
+  user: test
+  db: lingsync
+accounts:
+  - id: sc_us
+    app_key: key
+    app_secret: secret
+report_exports:
+  - type: fba_customer_returns
+    enabled: false
+`
+	if err := os.WriteFile(path, []byte(raw), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path); err != nil {
+		t.Fatalf("disabled report export should not require runtime fields: %v", err)
+	}
+}
+
+func TestLoadRejectsUnknownDisabledReportExportType(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	raw := `database:
+  host: 127.0.0.1
+  user: test
+  db: lingsync
+accounts:
+  - id: sc_us
+    app_key: key
+    app_secret: secret
+report_exports:
+  - type: unknown_report
+    enabled: false
+`
+	if err := os.WriteFile(path, []byte(raw), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path); err == nil {
+		t.Fatal("unknown disabled report type was accepted")
+	}
+}
+
+func TestClassifyChangeTreatsReportExportsAsHot(t *testing.T) {
+	oldCfg := &Config{}
+	newCfg := &Config{ReportExports: []ReportExport{{Type: ReportExportCustomerReturns, Enabled: true}}}
+	if got := ClassifyChange(oldCfg, newCfg); got != ChangeHot {
+		t.Fatalf("report export change = %v, want ChangeHot", got)
+	}
+}
+
+func TestClassifyChangeKeepsRestartPriorityOverReportExportChange(t *testing.T) {
+	oldCfg := &Config{Database: Database{Host: "old"}}
+	newCfg := &Config{
+		Database:      Database{Host: "new"},
+		ReportExports: []ReportExport{{Type: ReportExportCustomerReturns, Enabled: true}},
+	}
+	if got := ClassifyChange(oldCfg, newCfg); got != ChangeRestart {
+		t.Fatalf("database plus report export change = %v, want ChangeRestart", got)
+	}
+}
+
+func TestClassifyChangeDoesNotHideEndpointRestartBehindReportExportChange(t *testing.T) {
+	oldCfg := &Config{Accounts: []Account{{ID: "sc_us"}}, Endpoints: []Endpoint{{Name: "sales", Path: "/old"}}}
+	newCfg := &Config{
+		Accounts:      []Account{{ID: "sc_us"}},
+		Endpoints:     []Endpoint{{Name: "sales", Path: "/new"}},
+		ReportExports: []ReportExport{{Type: ReportExportCustomerReturns, Enabled: true}},
+	}
+	if got := ClassifyChange(oldCfg, newCfg); got != ChangeRestart {
+		t.Fatalf("endpoint path plus report export change = %v, want ChangeRestart", got)
+	}
+}
+
+func TestClassifyChangeRequiresRestartForDatasetAPI(t *testing.T) {
+	oldCfg := &Config{DatasetAPI: DatasetAPIConfig{
+		CursorSecret:   "old-cursor-secret",
+		FieldAllowlist: []string{"sales_units"},
+	}}
+	newCfg := deepCopy(oldCfg)
+	newCfg.DatasetAPI.CursorSecret = "new-cursor-secret"
+
+	if got := ClassifyChange(oldCfg, newCfg); got != ChangeRestart {
+		t.Fatalf("dataset API change = %v, want ChangeRestart", got)
+	}
+}
+
 func TestLoadRejectsDuplicateLimiterKey(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	raw := `database:
@@ -80,6 +226,56 @@ endpoints:
 
 	if _, err := Load(path); err == nil {
 		t.Fatal("duplicate quota_group+path was accepted")
+	}
+}
+
+func TestLoadRejectsInvalidEndpointCronBeforeSchedulerRebuild(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	raw := `database:
+  host: 127.0.0.1
+  user: test
+  db: lingsync
+accounts:
+  - id: sc_us
+    app_key: key
+    app_secret: secret
+endpoints:
+  - name: orders
+    account: sc_us
+    path: /orders
+    method: POST
+    table: ls_orders
+    record_id_fields: [order_id]
+    rate: { bucket: 1, interval_ms: 1000, dimension: account+path }
+    cron: "not-a-cron"
+`
+	if err := os.WriteFile(path, []byte(raw), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "cron") {
+		t.Fatalf("invalid endpoint cron error = %v", err)
+	}
+}
+
+func TestLoadRejectsInvalidConnectionCheckCronBeforeSchedulerRebuild(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	raw := `database:
+  host: 127.0.0.1
+  user: test
+  db: lingsync
+accounts:
+  - id: sc_us
+    app_key: key
+    app_secret: secret
+    connection_check:
+      enabled: true
+      cron: "not-a-cron"
+`
+	if err := os.WriteFile(path, []byte(raw), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "cron") {
+		t.Fatalf("invalid connection check cron error = %v", err)
 	}
 }
 
@@ -180,6 +376,33 @@ func TestValidateAcceptsValidSlugAccountID(t *testing.T) {
 		if err := cfg.validate(); err != nil {
 			t.Fatalf("合法账号 ID %q 不应被拒: %v", id, err)
 		}
+	}
+}
+
+func TestValidateDatasetAPIAcceptsMultipleTokensForOneProject(t *testing.T) {
+	cfg := DatasetAPIConfig{
+		CursorSecret:   "cursor-secret-for-tests",
+		FieldAllowlist: []string{"sales_units"},
+		Tokens: []DatasetToken{
+			{ID: "token-a", ProjectID: "project-a", TokenHash: strings.Repeat("a", 64), Fields: []string{"sales_units"}},
+			{ID: "token-b", ProjectID: "project-a", TokenHash: strings.Repeat("b", 64), Fields: []string{"sales_units"}},
+		},
+	}
+	if err := validateDatasetAPI(cfg); err != nil {
+		t.Fatalf("same project with distinct token ids should be valid: %v", err)
+	}
+}
+
+func TestValidateDatasetAPIRejectsUppercaseTokenHash(t *testing.T) {
+	cfg := DatasetAPIConfig{
+		CursorSecret:   "cursor-secret-for-tests",
+		FieldAllowlist: []string{"sales_units"},
+		Tokens: []DatasetToken{{
+			ID: "token-a", TokenHash: strings.Repeat("A", 64), Fields: []string{"sales_units"},
+		}},
+	}
+	if err := validateDatasetAPI(cfg); err == nil {
+		t.Fatal("uppercase token hash was accepted but runtime authentication compares lowercase SHA-256")
 	}
 }
 
@@ -328,6 +551,54 @@ func TestValidateVCPOOrderIterationContract(t *testing.T) {
 			mutate(&candidate)
 			if err := mk(candidate).validate(); err == nil {
 				t.Fatal("invalid VC PO detail iteration contract was accepted")
+			}
+		})
+	}
+}
+
+func TestClassifyChangeTreatsSingleDayFieldsAsHot(t *testing.T) {
+	oldCfg := &Config{Endpoints: []Endpoint{{Name: "performance", WindowDays: 2}}}
+	newCfg := &Config{Endpoints: []Endpoint{{Name: "performance", WindowDays: 2, SingleDayWindow: true, RowDateField: "business_date"}}}
+	if got := ClassifyChange(oldCfg, newCfg); got != ChangeHot {
+		t.Fatalf("single-day fields change = %v, want hot reload", got)
+	}
+}
+
+func TestValidateSingleDayRowDateFieldConflicts(t *testing.T) {
+	endpoint := Endpoint{
+		Name: "performance", Account: "sc_us_1", Path: "/performance", Method: "POST", Table: "ls_performance",
+		RecordIDFields: []string{"sid", "asin", "business_date"}, Cron: "0 5 * * *", WindowDays: 7,
+		Rate:            Rate{Bucket: 1, IntervalMs: 1000, Dimension: "account+path"},
+		SingleDayWindow: true, RowDateField: "business_date",
+	}
+	validate := func(ep Endpoint) error {
+		return (&Config{
+			Database:  Database{Host: "h", User: "u", DB: "d"},
+			Accounts:  []Account{{ID: "sc_us_1", AppKey: "k", AppSecret: "s"}},
+			Endpoints: []Endpoint{ep},
+		}).validate()
+	}
+	if err := validate(endpoint); err != nil {
+		t.Fatalf("valid single-day row_date_field rejected: %v", err)
+	}
+
+	tests := map[string]func(*Endpoint){
+		"extra param": func(ep *Endpoint) { ep.ExtraParams = map[string]any{"business_date": "2026-08-01"} },
+		"start field": func(ep *Endpoint) {
+			ep.WindowStartField = "from"
+			ep.RowDateField = "from"
+		},
+		"end field": func(ep *Endpoint) {
+			ep.WindowEndField = "to"
+			ep.RowDateField = "to"
+		},
+	}
+	for name, mutate := range tests {
+		t.Run(name, func(t *testing.T) {
+			candidate := endpoint
+			mutate(&candidate)
+			if err := validate(candidate); err == nil {
+				t.Fatal("row_date_field conflict was accepted")
 			}
 		})
 	}

@@ -146,6 +146,8 @@ type endpointDTO struct {
 	Cron               string            `json:"cron"`
 	Enabled            bool              `json:"enabled"`
 	WindowDays         int               `json:"window_days"`
+	SingleDayWindow    bool              `json:"single_day_window"`
+	RowDateField       string            `json:"row_date_field"`
 	WindowStartField   string            `json:"window_start_field"`
 	WindowEndField     string            `json:"window_end_field"`
 	DateField          string            `json:"date_field"`
@@ -191,6 +193,8 @@ func endpointToDTO(e config.Endpoint) endpointDTO {
 		Cron:               e.Cron,
 		Enabled:            e.Enabled,
 		WindowDays:         e.WindowDays,
+		SingleDayWindow:    e.SingleDayWindow,
+		RowDateField:       e.RowDateField,
 		WindowStartField:   e.WindowStartField,
 		WindowEndField:     e.WindowEndField,
 		DateField:          e.DateField,
@@ -235,6 +239,8 @@ func dtoToEndpoint(d endpointDTO) config.Endpoint {
 		Cron:               d.Cron,
 		Enabled:            d.Enabled,
 		WindowDays:         d.WindowDays,
+		SingleDayWindow:    d.SingleDayWindow,
+		RowDateField:       d.RowDateField,
 		WindowStartField:   d.WindowStartField,
 		WindowEndField:     d.WindowEndField,
 		DateField:          d.DateField,
@@ -300,11 +306,18 @@ func (s *Server) applyConfigWrite(w http.ResponseWriter, old, snap *config.Confi
 	}
 	kind := config.ClassifyChange(old, snap)
 	if kind == config.ChangeHot {
-		s.reg.ApplyHotReload(snap)
-		if err := s.sched.Rebuild(snap); err != nil {
-			log.Printf("[server] 热加载 Rebuild 调度失败: %v", err)
+		if s.sched != nil {
+			if err := s.sched.Rebuild(snap); err != nil {
+				errJSON(w, http.StatusInternalServerError, "热加载 Rebuild 调度失败: "+err.Error())
+				return
+			}
 		}
-		s.refreshLimitersFromConfig(snap)
+		if s.reg != nil {
+			s.reg.ApplyHotReload(snap)
+		}
+		if s.limiters != nil {
+			s.refreshLimitersFromConfig(snap)
+		}
 	}
 	// 单管理员工具：接受良性的指针切换竞态（无锁快速刷新，供其它 handler 读到新配置）。
 	s.cfg = snap
@@ -979,11 +992,18 @@ func (s *Server) apiSettingsReload(w http.ResponseWriter, r *http.Request) {
 		errJSON(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	s.reg.ApplyHotReload(newCfg)
-	if err := s.sched.Rebuild(newCfg); err != nil {
-		log.Printf("[server] reload Rebuild 调度失败: %v", err)
+	if s.sched != nil {
+		if err := s.sched.Rebuild(newCfg); err != nil {
+			errJSON(w, http.StatusInternalServerError, "热加载 Rebuild 调度失败: "+err.Error())
+			return
+		}
 	}
-	s.refreshLimitersFromConfig(newCfg)
+	if s.reg != nil {
+		s.reg.ApplyHotReload(newCfg)
+	}
+	if s.limiters != nil {
+		s.refreshLimitersFromConfig(newCfg)
+	}
 	s.cfg = newCfg
 
 	okJSON(w, map[string]any{"message": "配置已热加载", "need_restart": false})

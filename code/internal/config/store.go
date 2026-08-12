@@ -139,7 +139,11 @@ func ClassifyChange(oldCfg, newCfg *Config) ChangeKind {
 	if !reflect.DeepEqual(oldCfg.Server, newCfg.Server) {
 		return ChangeRestart
 	}
-
+	if datasetAPIConfigured(oldCfg.DatasetAPI) || datasetAPIConfigured(newCfg.DatasetAPI) {
+		if !reflect.DeepEqual(oldCfg.DatasetAPI, newCfg.DatasetAPI) {
+			return ChangeRestart
+		}
+	}
 	oldAccounts := accountsByID(oldCfg.Accounts)
 	newAccounts := accountsByID(newCfg.Accounts)
 	if accountIDSetChanged(oldAccounts, newAccounts) {
@@ -177,27 +181,33 @@ func ClassifyChange(oldCfg, newCfg *Config) ChangeKind {
 			return ChangeRestart
 		}
 	}
+	hotChanged := !reflect.DeepEqual(oldCfg.ReportExports, newCfg.ReportExports)
 	for id, oldA := range oldAccounts {
-		if !reflect.DeepEqual(oldA.ConnectionCheck, newAccounts[id].ConnectionCheck) {
-			return ChangeHot
-		}
+		hotChanged = hotChanged || !reflect.DeepEqual(oldA.ConnectionCheck, newAccounts[id].ConnectionCheck)
 	}
-
 	for name, oldE := range oldEndpoints {
 		newE := newEndpoints[name]
 		if oldE.Enabled != newE.Enabled ||
 			oldE.Cron != newE.Cron ||
 			!reflect.DeepEqual(oldE.Rate, newE.Rate) ||
 			oldE.WindowDays != newE.WindowDays ||
+			oldE.SingleDayWindow != newE.SingleDayWindow ||
+			oldE.RowDateField != newE.RowDateField ||
 			oldE.DateField != newE.DateField ||
 			oldE.DateOffsetDays != newE.DateOffsetDays ||
 			!reflect.DeepEqual(oldE.ExtraParams, newE.ExtraParams) ||
 			!reflect.DeepEqual(oldE.StoreSids, newE.StoreSids) {
-			return ChangeHot
+			hotChanged = true
 		}
 	}
-
+	if hotChanged {
+		return ChangeHot
+	}
 	return ChangeNone
+}
+
+func datasetAPIConfigured(cfg DatasetAPIConfig) bool {
+	return cfg.CursorSecret != "" || len(cfg.FieldAllowlist) > 0 || len(cfg.Tokens) > 0
 }
 
 // accountsByID 把账号列表按归一化 ID 建索引，方便 ClassifyChange 做逐个比对。

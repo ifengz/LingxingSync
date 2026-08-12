@@ -26,16 +26,19 @@ import (
 
 	"lingxing-sync/internal/config"
 	"lingxing-sync/internal/db"
+	"lingxing-sync/internal/reportexport"
 )
 
 // Scheduler 包装 robfig/cron，负责按配置驱动 worker。
 type Scheduler struct {
-	cron            *cron.Cron
-	reg             *Registry
-	dbx             *sqlx.DB // retention 清理用（db.CleanupOld 需要 db 句柄）
-	cleanupOld      func(*sqlx.DB, int, int) (db.CleanupResult, error)
-	connectionCheck func(context.Context, string) error
-	ctx             context.Context
+	cron               *cron.Cron
+	reg                *Registry
+	dbx                *sqlx.DB // retention 清理用（db.CleanupOld 需要 db 句柄）
+	cleanupOld         func(*sqlx.DB, int, int) (db.CleanupResult, error)
+	connectionCheck    func(context.Context, string) error
+	customerReturnsRun func(context.Context, reportexport.Request) (reportexport.Result, error)
+	now                func() time.Time
+	ctx                context.Context
 
 	// mu 保护 cfg 与 entries：Start 时单线程写入本无需加锁，但 Rebuild（热加载）
 	// 之后 entries 可能被并发重建/回填，加锁避免并发读写 map。
@@ -45,6 +48,7 @@ type Scheduler struct {
 	// 无法反查 endpoint name，故自己维护映射）。
 	entries           map[cron.EntryID]*EndpointWorker
 	connectionEntries map[cron.EntryID]struct{}
+	reportEntries     map[cron.EntryID]struct{}
 }
 
 // NewScheduler 构造调度器。不立即启动 cron。
@@ -63,9 +67,17 @@ func NewScheduler(cfg *config.Config, reg *Registry, dbx *sqlx.DB, connectionChe
 		dbx:               dbx,
 		cleanupOld:        db.CleanupOld,
 		connectionCheck:   connectionCheck,
+		now:               time.Now,
 		entries:           make(map[cron.EntryID]*EndpointWorker),
 		connectionEntries: make(map[cron.EntryID]struct{}),
+		reportEntries:     make(map[cron.EntryID]struct{}),
 	}
+}
+
+// SetCustomerReturnsRunner injects the existing formal-report runner into this
+// scheduler. Disabled report exports do not require an injected runner.
+func (s *Scheduler) SetCustomerReturnsRunner(run func(context.Context, reportexport.Request) (reportexport.Result, error)) {
+	s.customerReturnsRun = run
 }
 
 // Start 注册所有 cron 任务并启动调度器。
@@ -79,6 +91,9 @@ func (s *Scheduler) Start(ctx context.Context) error {
 	err := s.registerEndpointJobsLocked(s.cfg)
 	if err == nil {
 		err = s.registerConnectionCheckJobsLocked(s.cfg)
+	}
+	if err == nil {
+		err = s.registerReportJobsLocked(s.cfg)
 	}
 	s.mu.Unlock()
 	if err != nil {
@@ -104,6 +119,56 @@ func (s *Scheduler) Start(ctx context.Context) error {
 	s.backfillNextRuns()
 
 	return nil
+}
+
+func (s *Scheduler) registerReportJobsLocked(cfg *config.Config) error {
+	for _, report := range cfg.ReportExports {
+		if !report.Enabled {
+			continue
+		}
+		if s.customerReturnsRun == nil {
+			return fmt.Errorf("启用了 Customer Returns 报表计划，但未注入执行器")
+		}
+		report := report
+		entryID, err := s.cron.AddFunc(report.Cron, func() {
+			now := time.Now
+			if s.now != nil {
+				now = s.now
+			}
+			request, requestErr := customerReturnsRequest(report, now())
+			if requestErr != nil {
+				log.Printf("[scheduler] Customer Returns 窗口无效: %v", requestErr)
+				return
+			}
+			result, runErr := s.customerReturnsRun(s.ctx, request)
+			if runErr != nil {
+				log.Printf("[scheduler] Customer Returns 报表失败 account=%s store=%s: %v", report.Account, report.StoreID, runErr)
+				return
+			}
+			log.Printf("[scheduler] Customer Returns 报表完成 account=%s store=%s audit=%d rows=%d", report.Account, report.StoreID, result.AuditID, result.Rows)
+		})
+		if err != nil {
+			return fmt.Errorf("注册 Customer Returns cron 失败 spec=%q: %w", report.Cron, err)
+		}
+		s.reportEntries[entryID] = struct{}{}
+	}
+	return nil
+}
+
+func customerReturnsRequest(report config.ReportExport, now time.Time) (reportexport.Request, error) {
+	if report.WindowDays <= 0 {
+		return reportexport.Request{}, fmt.Errorf("window_days 必须 > 0")
+	}
+	startOfToday := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	return reportexport.Request{
+		AccountID:      report.Account,
+		SellerID:       report.SellerID,
+		StoreID:        report.StoreID,
+		Region:         report.Region,
+		MarketplaceIDs: append([]string(nil), report.MarketplaceIDs...),
+		DateFrom:       startOfToday.AddDate(0, 0, -report.WindowDays).Format(time.RFC3339),
+		DateTo:         startOfToday.Add(-time.Second).Format(time.RFC3339),
+	}, nil
 }
 
 func (s *Scheduler) registerConnectionCheckJobsLocked(cfg *config.Config) error {
@@ -181,12 +246,19 @@ func (s *Scheduler) Rebuild(cfg *config.Config) error {
 	for entryID := range s.connectionEntries {
 		s.cron.Remove(entryID)
 	}
+	for entryID := range s.reportEntries {
+		s.cron.Remove(entryID)
+	}
 	s.entries = make(map[cron.EntryID]*EndpointWorker)
 	s.connectionEntries = make(map[cron.EntryID]struct{})
+	s.reportEntries = make(map[cron.EntryID]struct{})
 	s.cfg = cfg
 	err := s.registerEndpointJobsLocked(cfg)
 	if err == nil {
 		err = s.registerConnectionCheckJobsLocked(cfg)
+	}
+	if err == nil {
+		err = s.registerReportJobsLocked(cfg)
 	}
 	s.mu.Unlock()
 	if err != nil {

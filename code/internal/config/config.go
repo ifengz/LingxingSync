@@ -8,12 +8,16 @@
 package config
 
 import (
+	"encoding/hex"
 	"fmt"
 	"os"
 	"regexp"
 	"slices"
 	"strings"
+	"time"
+	"unicode"
 
+	"github.com/robfig/cron/v3"
 	"gopkg.in/yaml.v3"
 )
 
@@ -38,11 +42,51 @@ func ValidAccountID(s string) bool {
 
 // Config 是 config.yaml 的根结构。
 type Config struct {
-	Server    Server     `yaml:"server"`
-	Database  Database   `yaml:"database"`
-	Accounts  []Account  `yaml:"accounts"`
-	Endpoints []Endpoint `yaml:"endpoints"`
-	Retention Retention  `yaml:"retention"`
+	Server        Server           `yaml:"server"`
+	Database      Database         `yaml:"database"`
+	Accounts      []Account        `yaml:"accounts"`
+	Endpoints     []Endpoint       `yaml:"endpoints"`
+	Retention     Retention        `yaml:"retention"`
+	DatasetAPI    DatasetAPIConfig `yaml:"dataset_api"`
+	ReportExports []ReportExport   `yaml:"report_exports"`
+}
+
+const ReportExportCustomerReturns = "fba_customer_returns"
+
+// ReportExport is a fixed formal-report schedule. Disabled entries are kept
+// as examples and do not require runtime fields until enabled.
+type ReportExport struct {
+	Type           string   `yaml:"type"`
+	Enabled        bool     `yaml:"enabled"`
+	Account        string   `yaml:"account"`
+	SellerID       string   `yaml:"seller_id"`
+	StoreID        string   `yaml:"store_id"`
+	Region         string   `yaml:"region"`
+	MarketplaceIDs []string `yaml:"marketplace_ids"`
+	Cron           string   `yaml:"cron"`
+	WindowDays     int      `yaml:"window_days"`
+}
+
+// DatasetAPIConfig stores only the fixed listing dataset publication contract.
+// Project tokens are supplied as hashes; plaintext bearer tokens never belong
+// in config.yaml.
+type DatasetAPIConfig struct {
+	CursorSecret    string         `yaml:"cursor_secret"`
+	MaxDateSpanDays int            `yaml:"max_date_span_days"`
+	MaxPageSize     int            `yaml:"max_page_size"`
+	FieldAllowlist  []string       `yaml:"field_allowlist"`
+	Tokens          []DatasetToken `yaml:"tokens"`
+}
+
+type DatasetToken struct {
+	ID            string   `yaml:"id"`
+	ProjectID     string   `yaml:"project_id"`
+	TokenHash     string   `yaml:"token_hash"`
+	DatasetScopes []string `yaml:"dataset_scopes"`
+	StoreScopes   []string `yaml:"store_scopes"`
+	Fields        []string `yaml:"fields"`
+	ExpiresAt     string   `yaml:"expires_at"`
+	Revoked       bool     `yaml:"revoked"`
 }
 
 // Server 是 HTTP 服务配置。
@@ -128,19 +172,21 @@ type Rate struct {
 
 // Endpoint 是一个「账号+接口」的同步任务定义。
 type Endpoint struct {
-	Name           string         `yaml:"name"`             // 全局唯一任务标识
-	Display        string         `yaml:"display"`          // UI 展示名
-	Account        string         `yaml:"account"`          // 必须匹配某个 Account.ID
-	Path           string         `yaml:"path"`             // 领星 API Path（原样抄）
-	Method         string         `yaml:"method"`           // GET / POST
-	Table          string         `yaml:"table"`            // 目标数据表名
-	RecordIDFields []string       `yaml:"record_id_fields"` // 唯一键字段数组（复合主键用多元素）
-	ResponseShape  string         `yaml:"response_shape"`   // list（默认）或 object（data 单对象）
-	Rate           Rate           `yaml:"rate"`
-	Cron           string         `yaml:"cron"`
-	Enabled        bool           `yaml:"enabled"`
-	WindowDays     int            `yaml:"window_days"` // 0=全量；>0=滚动 N 天（注入窗口起止日期）
-	ExtraParams    map[string]any `yaml:"extra_params"`
+	Name            string         `yaml:"name"`             // 全局唯一任务标识
+	Display         string         `yaml:"display"`          // UI 展示名
+	Account         string         `yaml:"account"`          // 必须匹配某个 Account.ID
+	Path            string         `yaml:"path"`             // 领星 API Path（原样抄）
+	Method          string         `yaml:"method"`           // GET / POST
+	Table           string         `yaml:"table"`            // 目标数据表名
+	RecordIDFields  []string       `yaml:"record_id_fields"` // 唯一键字段数组（复合主键用多元素）
+	ResponseShape   string         `yaml:"response_shape"`   // list（默认）或 object（data 单对象）
+	Rate            Rate           `yaml:"rate"`
+	Cron            string         `yaml:"cron"`
+	Enabled         bool           `yaml:"enabled"`
+	WindowDays      int            `yaml:"window_days"`       // 0=全量；>0=窗口天数；single_day_window 时逐日补偿最近 N 天
+	SingleDayWindow bool           `yaml:"single_day_window"` // true=将配置窗口或手工范围拆成逐日的起止同日请求
+	RowDateField    string         `yaml:"row_date_field"`    // 从实际发送的窗口起始参数注入 raw row，不发送给上游
+	ExtraParams     map[string]any `yaml:"extra_params"`
 	// RequestHeaders 是接口协议要求的固定非敏感请求头（如 X-API-VERSION: "2"）。
 	// 公共认证仍由 Client 统一签名，禁止在这里放 Authorization/Cookie。
 	RequestHeaders map[string]string `yaml:"headers"`
@@ -264,10 +310,77 @@ func Load(path string) (*Config, error) {
 	if c.Retention.CleanupCron == "" {
 		c.Retention.CleanupCron = "0 3 * * *"
 	}
+	if err := validateDatasetAPI(c.DatasetAPI); err != nil {
+		return nil, err
+	}
 	if err := c.validate(); err != nil {
 		return nil, err
 	}
 	return &c, nil
+}
+
+func validateDatasetAPI(cfg DatasetAPIConfig) error {
+	if len(cfg.Tokens) == 0 && len(cfg.FieldAllowlist) == 0 && cfg.CursorSecret == "" {
+		return nil
+	}
+	if len(cfg.CursorSecret) < 16 {
+		return fmt.Errorf("dataset_api.cursor_secret 至少 16 字节")
+	}
+	if cfg.MaxDateSpanDays < 0 || cfg.MaxPageSize < 0 {
+		return fmt.Errorf("dataset_api limits 不能为负数")
+	}
+	available := make(map[string]struct{}, len(cfg.FieldAllowlist))
+	for _, field := range cfg.FieldAllowlist {
+		if field == "" || strings.ContainsAny(field, " .(),=;'") {
+			return fmt.Errorf("dataset_api.field_allowlist 包含非法字段 %q", field)
+		}
+		if _, exists := available[field]; exists {
+			return fmt.Errorf("dataset_api.field_allowlist 字段重复: %s", field)
+		}
+		available[field] = struct{}{}
+	}
+	seenTokens := make(map[string]struct{}, len(cfg.Tokens))
+	for _, token := range cfg.Tokens {
+		if token.ID == "" || len(token.TokenHash) != 64 {
+			return fmt.Errorf("dataset_api token %q 缺 id/token_hash", token.ID)
+		}
+		if _, err := hex.DecodeString(token.TokenHash); err != nil {
+			return fmt.Errorf("dataset_api token %q token_hash 非 SHA-256", token.ID)
+		}
+		if token.TokenHash != strings.ToLower(token.TokenHash) {
+			return fmt.Errorf("dataset_api token %q token_hash 必须为小写 SHA-256", token.ID)
+		}
+		if _, exists := seenTokens[token.ID]; exists {
+			return fmt.Errorf("dataset_api token id 重复: %s", token.ID)
+		}
+		seenTokens[token.ID] = struct{}{}
+		projectID := token.ProjectID
+		if projectID == "" {
+			projectID = token.ID
+		}
+		if strings.TrimSpace(projectID) == "" {
+			return fmt.Errorf("dataset_api token %q 缺 project_id", token.ID)
+		}
+		if len(token.Fields) == 0 {
+			return fmt.Errorf("dataset_api token %q 未配置 fields", token.ID)
+		}
+		seenFields := make(map[string]struct{}, len(token.Fields))
+		for _, field := range token.Fields {
+			if _, ok := available[field]; !ok {
+				return fmt.Errorf("dataset_api token %q field %q 不在 allowlist", token.ID, field)
+			}
+			if _, exists := seenFields[field]; exists {
+				return fmt.Errorf("dataset_api token %q field 重复: %s", token.ID, field)
+			}
+			seenFields[field] = struct{}{}
+		}
+		if token.ExpiresAt != "" {
+			if _, err := time.Parse(time.RFC3339, token.ExpiresAt); err != nil {
+				return fmt.Errorf("dataset_api token %q expires_at 必须为 RFC3339", token.ID)
+			}
+		}
+	}
+	return nil
 }
 
 // ResponseShapeOrDefault 返回 endpoint 的响应形态，空值保持既有分页列表行为。
@@ -303,6 +416,47 @@ func (c *Config) validate() error {
 		seen[norm] = a.ID
 		if a.AppKey == "" || a.AppSecret == "" {
 			return fmt.Errorf("account %s 缺 app_key/app_secret", a.ID)
+		}
+		if a.ConnectionCheck.Enabled || a.ConnectionCheck.Cron != "" {
+			if _, err := cron.ParseStandard(a.ConnectionCheck.Cron); err != nil {
+				return fmt.Errorf("account %s 的 connection_check.cron=%q 非法: %w", a.ID, a.ConnectionCheck.Cron, err)
+			}
+		}
+	}
+	for i, report := range c.ReportExports {
+		if report.Type != ReportExportCustomerReturns {
+			return fmt.Errorf("report_exports[%d].type=%q 非法", i, report.Type)
+		}
+		if !report.Enabled {
+			continue
+		}
+		if _, ok := seen[NormID(report.Account)]; !ok {
+			return fmt.Errorf("report_exports[%d] 的 account=%q 在 accounts 里找不到", i, report.Account)
+		}
+		if !validReportIdentifier(report.SellerID, 64) || !validReportIdentifier(report.StoreID, 64) {
+			return fmt.Errorf("report_exports[%d] 缺 seller_id/store_id", i)
+		}
+		if report.Region != "na" && report.Region != "eu" && report.Region != "fe" {
+			return fmt.Errorf("report_exports[%d].region 必须为 na/eu/fe", i)
+		}
+		if len(report.MarketplaceIDs) == 0 {
+			return fmt.Errorf("report_exports[%d] 缺 marketplace_ids", i)
+		}
+		marketplaces := make(map[string]struct{}, len(report.MarketplaceIDs))
+		for _, marketplaceID := range report.MarketplaceIDs {
+			if !validReportIdentifier(marketplaceID, 64) {
+				return fmt.Errorf("report_exports[%d].marketplace_ids 包含空值", i)
+			}
+			if _, exists := marketplaces[marketplaceID]; exists {
+				return fmt.Errorf("report_exports[%d].marketplace_ids 包含重复值 %q", i, marketplaceID)
+			}
+			marketplaces[marketplaceID] = struct{}{}
+		}
+		if report.WindowDays < 1 || report.WindowDays > 31 {
+			return fmt.Errorf("report_exports[%d].window_days 必须为 1..31", i)
+		}
+		if _, err := cron.ParseStandard(report.Cron); err != nil {
+			return fmt.Errorf("report_exports[%d].cron=%q 非法: %w", i, report.Cron, err)
 		}
 	}
 	// endpoint：account 必须存在；name 全局唯一；必填字段齐全
@@ -341,6 +495,20 @@ func (c *Config) validate() error {
 		}
 		if e.IterateByStore && e.IterateByAdAccount {
 			return fmt.Errorf("endpoint %s 不能同时启用 iterate_by_store 与 iterate_by_ad_account", e.Name)
+		}
+		if e.SingleDayWindow && (e.WindowDays <= 0 || e.DateField != "") {
+			return fmt.Errorf("endpoint %s 的 single_day_window 必须配置 window_days > 0 且不能同时配置 date_field", e.Name)
+		}
+		if e.RowDateField != "" && !e.SingleDayWindow {
+			return fmt.Errorf("endpoint %s 的 row_date_field 必须与 single_day_window 一起配置", e.Name)
+		}
+		if e.RowDateField != "" {
+			if _, exists := e.ExtraParams[e.RowDateField]; exists {
+				return fmt.Errorf("endpoint %s 的 row_date_field=%q 不能出现在 extra_params", e.Name, e.RowDateField)
+			}
+			if e.RowDateField == e.WindowStartFieldOrDefault() || e.RowDateField == e.WindowEndFieldOrDefault() {
+				return fmt.Errorf("endpoint %s 的 row_date_field=%q 不能与窗口起止参数同名", e.Name, e.RowDateField)
+			}
 		}
 		if e.IterateByVCOrders && (e.IterateByStore || e.IterateByAdAccount) {
 			return fmt.Errorf("endpoint %s 不能同时启用 iterate_by_vc_orders 与其他迭代模式", e.Name)
@@ -384,6 +552,9 @@ func (c *Config) validate() error {
 		if e.Cron == "" {
 			return fmt.Errorf("endpoint %s 缺 cron", e.Name)
 		}
+		if _, err := cron.ParseStandard(e.Cron); err != nil {
+			return fmt.Errorf("endpoint %s 的 cron=%q 非法: %w", e.Name, e.Cron, err)
+		}
 		key := c.limiterKey(e)
 		for _, owner := range limiterKeyOwners[key] {
 			if separatedFixedParamVariants(owner, e) {
@@ -395,6 +566,13 @@ func (c *Config) validate() error {
 		limiterKeyOwners[key] = append(limiterKeyOwners[key], e)
 	}
 	return nil
+}
+
+// validReportIdentifier mirrors reportexport.Runner's request contract so an
+// enabled schedule cannot pass config validation and fail only when it runs.
+func validReportIdentifier(value string, maxLength int) bool {
+	trimmed := strings.TrimSpace(value)
+	return trimmed != "" && trimmed == value && len(value) <= maxLength && strings.IndexFunc(value, unicode.IsSpace) < 0
 }
 
 // QuotaGroupOf 返回某 endpoint 账号生效的限流分组：账号存在则取其 QuotaGroupOrID，

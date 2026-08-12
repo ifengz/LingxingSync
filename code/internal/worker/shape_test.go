@@ -51,6 +51,17 @@ func TestShapeRowsInjectParams(t *testing.T) {
 	}
 }
 
+func TestShapeRowsInjectsBusinessDateFromSentStartDate(t *testing.T) {
+	rows := []map[string]any{{"asin": "B01"}}
+	err := injectRowDate(rows, "business_date", "start_date", map[string]any{"start_date": "2026-08-10", "end_date": "2026-08-10"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rows[0]["business_date"] != "2026-08-10" {
+		t.Fatalf("business_date = %#v", rows[0]["business_date"])
+	}
+}
+
 // TestShapeRowsInjectDoesNotOverwrite 领星真回显了该字段时，以领星的值为准。
 // 防止「请求参数悄悄覆盖真实响应」这类静默改数据。
 func TestShapeRowsInjectDoesNotOverwrite(t *testing.T) {
