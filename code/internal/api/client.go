@@ -143,6 +143,92 @@ func (c *Client) Fetch(ctx context.Context, method, path string, params map[stri
 	return c.FetchWithShapeAndHeaders(ctx, method, path, params, "list", nil)
 }
 
+// DoSignedJSON sends one signed OpenAPI JSON request and returns the untouched
+// response envelope. It is for asynchronous contracts such as report exports;
+// paged endpoint workers must continue using Fetch.
+func (c *Client) DoSignedJSON(ctx context.Context, method, path string, body map[string]any) ([]byte, int, int, error) {
+	raw, httpStatus, apiCode, err := c.doSignedJSONOnce(ctx, method, path, body)
+	if err == nil || !isTokenExpiredErr(err) {
+		return raw, httpStatus, apiCode, err
+	}
+	if refreshErr := c.holder.ForceRefresh(ctx); refreshErr != nil {
+		return nil, httpStatus, apiCode, fmt.Errorf("lingxing json request: token refresh failed after expired (refresh err: %v): %w", refreshErr, err)
+	}
+	return c.doSignedJSONOnce(ctx, method, path, body)
+}
+
+func (c *Client) doSignedJSONOnce(ctx context.Context, method, path string, body map[string]any) ([]byte, int, int, error) {
+	if c == nil || c.account == nil || c.holder == nil || c.http == nil {
+		return nil, 0, 0, fmt.Errorf("lingxing json request: client is not configured")
+	}
+	if strings.ToUpper(strings.TrimSpace(method)) != http.MethodPost {
+		return nil, 0, 0, fmt.Errorf("lingxing json request: only POST is supported, got %q", method)
+	}
+	token, err := c.holder.Get(ctx)
+	if err != nil {
+		return nil, 0, 0, fmt.Errorf("lingxing json request: get token: %w", err)
+	}
+	ts := strconv.FormatInt(time.Now().Unix(), 10)
+	params := make(map[string]string, len(body)+3)
+	for key, value := range body {
+		params[key] = anyToString(value)
+	}
+	params["app_key"] = c.account.AppKey
+	params["access_token"] = token
+	params["timestamp"] = ts
+
+	q := url.Values{}
+	q.Set("app_key", c.account.AppKey)
+	q.Set("access_token", token)
+	q.Set("timestamp", ts)
+	q.Set("sign", Sign(params, c.account.AppKey, c.account.AppSecret))
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return nil, 0, 0, fmt.Errorf("lingxing json request: marshal body: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+path+"?"+q.Encode(), bytes.NewReader(payload))
+	if err != nil {
+		return nil, 0, 0, fmt.Errorf("lingxing json request: new request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		fetchErr := NewFetchError(0, 0, fmt.Sprintf("http do %s %s: %v", http.MethodPost, path, err), 0, transportMayHaveReachedUpstream(err))
+		fetchErr.Cause = err
+		return nil, 0, 0, fetchErr
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, resp.StatusCode, 0, fmt.Errorf("lingxing json request: read body: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, resp.StatusCode, 0, NewFetchError(resp.StatusCode, 0,
+			fmt.Sprintf("http status %d for %s %s, body=%s", resp.StatusCode, http.MethodPost, path, truncateForLog(raw)),
+			parseRetryAfterHeader(resp), true)
+	}
+	var envelope apiResponse
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		return nil, resp.StatusCode, 0, fmt.Errorf("lingxing json request: unmarshal response: %w, body=%s", err, truncateForLog(raw))
+	}
+	code := envelope.Code.asInt()
+	if envelope.Code.isSuccess() {
+		return raw, resp.StatusCode, code, nil
+	}
+	message := envelope.Message
+	if message == "" {
+		message = envelope.Msg
+	}
+	if isTokenExpiredCode(code, message) {
+		fetchErr := NewFetchError(resp.StatusCode, code, message, parseRetryAfterHeader(resp), true)
+		fetchErr.Cause = errTokenExpired
+		return nil, resp.StatusCode, code, fetchErr
+	}
+	return nil, resp.StatusCode, code, NewFetchError(resp.StatusCode, code,
+		fmt.Sprintf("api error code=%s msg=%q path=%s", envelope.Code, message, path), parseRetryAfterHeader(resp), true)
+}
+
 // FetchWithShape 拉取一页，并按 endpoint 声明的响应形态解析 data。
 // responseShape 为空时按 list 处理；object 仅用于 data 是单个业务对象的接口。
 func (c *Client) FetchWithShape(ctx context.Context, method, path string, params map[string]any, responseShape string) (*FetchResult, int, int, error) {
@@ -509,7 +595,7 @@ func anyToString(v any) string {
 		return ""
 	case []byte:
 		return string(x)
-	case []any, map[string]any:
+	case []any, []string, map[string]any:
 		// 数组/对象参数参与签名时按紧凑 JSON 编码（领星官方 SDK 对非标量值 json_encode），
 		// 与 POST body 的 json.Marshal 形态一致，保证「签名串」和「实际 body」对得上；
 		// 否则 %v 会得到 "[1]"，签名与领星侧算出的不一致 → 签名错。
