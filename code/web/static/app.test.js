@@ -33,6 +33,15 @@ const entryManage = sandbox.window.syncManage();
 assert.equal(entryManage.tab, 'manual');
 assert.equal(entryManage.advancedAdd, false);
 
+// 同步配置标题提示必须支持键盘聚焦，并把“修改时间增量”和“业务日期重拉”说清楚。
+{
+  const template = fs.readFileSync(__dirname + '/../templates/sync_manage.html', 'utf8');
+  assert.match(template, /aria-describedby="sync-modified-time-tip"/);
+  assert.match(template, /id="sync-modified-time-tip"[^>]*role="tooltip"/);
+  assert.match(template, /订单、Listing、FBA 退货、VC PO/);
+  assert.match(template, /销量、Performance、SP、SD、HSA、VC 销量\/库存/);
+}
+
 // 数据集字段配置固定走 listing-daily-v1 的字段合同，不接受表名或 SQL 输入。
 {
   const template = fs.readFileSync(__dirname + '/../templates/datasources.html', 'utf8');
@@ -51,6 +60,9 @@ assert.equal(entryManage.advancedAdd, false);
   assert.doesNotMatch(template, /<input[^>]*(?:table|sql)/i);
   assert.doesNotMatch(template, /type=["']password/i);
   assert.doesNotMatch(template, /CREATE|ALTER|DROP|SQL/i);
+  assert.match(template, /日维数据预览/);
+  assert.match(template, /applyDailyPreviewFilters\(\)/);
+  assert.match(template, /dailyPreviewValue/);
 }
 
 // 接口清单启用状态必须在下拉和按钮上可见、可禁用。
@@ -211,6 +223,91 @@ void (async () => {
     request = { url, body };
     return { message: '已请求取消' };
   };
+
+  // 正式报表卡片固定读取配置和状态端点；保存只提交当前固定报告合同。
+  {
+    const template = fs.readFileSync(__dirname + '/../templates/sync_manage.html', 'utf8');
+    assert.match(template, /正式报表校验/);
+    assert.match(template, /saveReportExportConfig\(\)/);
+    assert.match(template, /reportExportStatus/);
+
+    const reportCalls = [];
+    sandbox.window.apiGet = async (url) => {
+      reportCalls.push({ method: 'GET', url });
+      if (url === '/api/config') return { accounts: [], endpoints: [] };
+      if (url === '/api/catalog') return { templates: [], accounts: [] };
+      if (url === '/api/tasks?page=1&page_size=50') return { items: [] };
+      if (url === '/api/report-exports/config') return {
+        report_exports: [{
+          type: 'fba_customer_returns', enabled: true, account: 'sc_us', seller_id: 'SELLER-1',
+          store_id: 'STORE-1', region: 'na', marketplace_ids: ['ATVPDKIKX0DER'], cron: '0 4 * * *', window_days: 3,
+        }],
+      };
+      if (url === '/api/report-exports/status') return {
+        configured: true,
+        latest_task: { status: 'success', rows: 18, finished_at: '2026-08-13T04:00:00Z' },
+        differences: { database_missing: 1, report_missing: 2, value_mismatch: 3 },
+      };
+      throw new Error('unexpected GET ' + url);
+    };
+    sandbox.window.apiPut = async (url, body) => {
+      reportCalls.push({ method: 'PUT', url, body });
+      return { message: '已保存' };
+    };
+    const report = sandbox.window.syncManage();
+    await report.load();
+    assert.equal(report.reportExportForm.type, 'fba_customer_returns');
+    assert.equal(report.reportExportStatus.latest_task.status, 'success');
+    assert.equal(report.reportExportStatusText(), '已完成');
+    assert.equal(report.reportDifference('database_missing'), 1);
+    report.reportExportMarketplaceText = 'ATVPDKIKX0DER, A2EUQ1WTGCTBG2';
+    report.reportExportForm.window_days = 7;
+    await report.saveReportExportConfig();
+    assert.equal(JSON.stringify(reportCalls.find(call => call.method === 'PUT')), JSON.stringify({
+      method: 'PUT', url: '/api/report-exports/config', body: { report_exports: [{
+        type: 'fba_customer_returns', enabled: true, account: 'sc_us', seller_id: 'SELLER-1',
+        store_id: 'STORE-1', region: 'na', marketplace_ids: ['ATVPDKIKX0DER', 'A2EUQ1WTGCTBG2'], cron: '0 4 * * *', window_days: 7,
+      }] },
+    }));
+  }
+
+  // 日维预览固定使用筛选和分页合同，NULL 显示短横线，错误和空结果分别留在组件状态。
+  {
+    const previewCalls = [];
+    sandbox.window.apiGet = async (url) => {
+      previewCalls.push(url);
+      if (url.startsWith('/api/datasets/listing-daily-v1/preview?')) {
+        return {
+          items: [{ business_date: '2026-08-12', store: 'US', asin: 'B001', sku: 'SKU-1', sales_units: null }],
+          page: 2, page_size: 20, total: 41,
+        };
+      }
+      throw new Error('unexpected GET ' + url);
+    };
+    const preview = sandbox.window.dataSources();
+    preview.dailyPreviewFilters = {
+      date_from: '2026-08-01', date_to: '2026-08-12', store: 'US & West', asin: 'B001', sku: 'SKU/1', page: 2, page_size: 20,
+    };
+    await preview.loadDailyPreview();
+    assert.equal(previewCalls[0], '/api/datasets/listing-daily-v1/preview?date_from=2026-08-01&date_to=2026-08-12&store=US+%26+West&asin=B001&sku=SKU%2F1&page=2&page_size=20');
+    assert.equal(preview.dailyPreviewValue(preview.dailyPreviewItems[0].sales_units), '—');
+    assert.equal(preview.dailyPreviewIdentity({ store: null, store_id: 'US' }, 'store', 'store_id'), 'US');
+  assert.equal(preview.dailyPreviewPages, 3);
+  assert.equal(preview.dailyPreviewError, '');
+    assert.equal(preview.dailyPreviewStatusText({ is_provisional: true, is_verified: false }), '未验证');
+    assert.equal(preview.dailyPreviewStatusText({ is_provisional: false, is_verified: true }), '已验证');
+
+    preview.dailyPreviewFilters.page = 1;
+    await preview.changeDailyPreviewPage(2);
+    assert.equal(preview.dailyPreviewFilters.page, 2);
+    assert.equal(previewCalls[1], '/api/datasets/listing-daily-v1/preview?date_from=2026-08-01&date_to=2026-08-12&store=US+%26+West&asin=B001&sku=SKU%2F1&page=2&page_size=20');
+
+    sandbox.window.apiGet = async () => { throw new Error('日维查询失败'); };
+    await preview.loadDailyPreview();
+    assert.equal(preview.dailyPreviewError, '日维查询失败');
+    assert.equal(preview.dailyPreviewItems.length, 0);
+  }
+
   // 批量启用必须按所选顺序复用单接口 API，并在任一项成功后提示重启。
   const batch = sandbox.window.syncManage();
   batch.catalog = { accounts: [{ id: 'sc_us_1', name: '自营领星' }], templates: [

@@ -219,6 +219,15 @@ window.syncManage = function () {
     catalog: { templates: [], accounts: [] },
     catalogBatchAccount: '',
     catalogBatchKeys: [],
+    reportExportForm: {
+      type: 'fba_customer_returns', enabled: false, account: '', seller_id: '', store_id: '',
+      region: 'na', marketplace_ids: [], cron: '0 4 * * *', window_days: 3
+    },
+    reportExportMarketplaceText: '',
+    reportExportStatus: { configured: false, latest_task: null, differences: {} },
+    reportExportLoading: false,
+    reportExportSaving: false,
+    reportExportError: '',
     // 保守限流默认：桶 1 / 间隔 1000ms（对齐 otherlingxinggithub.md §3「业务 API ≥0.6s」留足余量）。
     // extra_params_text 是 JSON 文本输入，保存时解析成对象；解析失败拦截不发请求。
     addForm: { name: '', display: '', account: '', path: '', method: 'GET', table: '', record_id_fields: '', cron: '', bucket: 1, interval_ms: 1000, multi_interval_ms: 0, window_days: 0, iterate_by_store: false, store_param_name: '', extra_params_text: '' },
@@ -281,6 +290,86 @@ window.syncManage = function () {
       }
       await this.loadCatalog();
       await this.loadRecentTasks();
+      await this.loadReportExport();
+    },
+    async loadReportExport() {
+      this.reportExportLoading = true;
+      this.reportExportError = '';
+      try {
+        const results = await Promise.all([
+          window.apiGet('/api/report-exports/config'),
+          window.apiGet('/api/report-exports/status'),
+        ]);
+        const response = results[0] || {};
+        const cfg = Array.isArray(response.report_exports) ? (response.report_exports[0] || {}) : response;
+        this.reportExportForm = {
+          type: 'fba_customer_returns', enabled: !!cfg.enabled, account: cfg.account || '',
+          seller_id: cfg.seller_id || '', store_id: cfg.store_id || '', region: cfg.region || 'na',
+          marketplace_ids: Array.isArray(cfg.marketplace_ids) ? cfg.marketplace_ids.slice() : [],
+          cron: cfg.cron || '0 4 * * *', window_days: Number(cfg.window_days) || 3,
+        };
+        this.reportExportMarketplaceText = this.reportExportForm.marketplace_ids.join(',');
+        this.reportExportStatus = results[1] || { configured: false, latest_task: null, differences: {} };
+      } catch (error) {
+        this.reportExportError = errorMessage(error, '未能读取正式报表');
+      } finally {
+        this.reportExportLoading = false;
+      }
+    },
+    async saveReportExportConfig() {
+      if (this.reportExportSaving) return;
+      const body = {
+        type: 'fba_customer_returns', enabled: !!this.reportExportForm.enabled,
+        account: (this.reportExportForm.account || '').trim(),
+        seller_id: (this.reportExportForm.seller_id || '').trim(),
+        store_id: (this.reportExportForm.store_id || '').trim(),
+        region: this.reportExportForm.region || 'na',
+        marketplace_ids: (this.reportExportMarketplaceText || this.reportExportForm.marketplace_ids.join(','))
+          .split(',').map(value => value.trim()).filter(Boolean),
+        cron: (this.reportExportForm.cron || '').trim(),
+        window_days: Number(this.reportExportForm.window_days),
+      };
+      this.reportExportSaving = true;
+      this.reportExportError = '';
+      try {
+        const result = await window.apiPut('/api/report-exports/config', { report_exports: [body] });
+        this.reportExportForm = Object.assign({}, body, { marketplace_ids: body.marketplace_ids.slice() });
+        this.reportExportMarketplaceText = body.marketplace_ids.join(',');
+        window.toast('success', (result && result.message) || '正式报表配置已保存');
+        await this.loadReportExport();
+      } catch (error) {
+        this.reportExportError = errorMessage(error, '保存正式报表配置失败');
+      } finally {
+        this.reportExportSaving = false;
+      }
+    },
+    reportExportStatusText() {
+      const task = this.reportExportStatus.latest_task;
+      if (!task) return this.reportExportForm.enabled ? '等待运行' : '未启用';
+      const labels = { success: '已完成', done: '已完成', completed: '已完成', error: '失败', failed: '失败', running: '运行中', pending: '等待中' };
+      return labels[task.status] || task.status || '未知';
+    },
+    reportExportStatusClass() {
+      const status = this.reportExportStatus.latest_task && this.reportExportStatus.latest_task.status;
+      if (status === 'success' || status === 'done' || status === 'completed') return 'bg-emerald-50 text-emerald-700';
+      if (status === 'error' || status === 'failed') return 'bg-red-50 text-red-700';
+      if (status === 'running' || status === 'pending') return 'bg-blue-50 text-blue-700';
+      return 'bg-slate-200 text-slate-600';
+    },
+    reportExportTaskTime() {
+      const task = this.reportExportStatus.latest_task;
+      return task ? (task.finished_at ? window.fmtTime(task.finished_at) : (task.created_at ? window.fmtTime(task.created_at) : '—')) : '—';
+    },
+    reportExportTaskRows() {
+      const task = this.reportExportStatus.latest_task;
+      if (!task) return '—';
+      const value = task.rows ?? task.row_count ?? task.records_count;
+      return value === null || value === undefined ? '—' : String(value);
+    },
+    reportDifference(name) {
+      const differences = this.reportExportStatus.differences || {};
+      if (differences.error) return '—';
+      return differences[name] === null || differences[name] === undefined ? 0 : differences[name];
     },
     // 接口清单（从清单添加的主路径数据）。失败静默：清单拉不到不影响调度表。
     async loadCatalog() {
@@ -1079,6 +1168,12 @@ window.dataSources = function () {
     fieldsError: '',
     fieldsSaveError: '',
     fieldsRequestVersion: 0,
+    dailyPreviewFilters: { date_from: '', date_to: '', store: '', asin: '', sku: '', page: 1, page_size: 20 },
+    dailyPreviewItems: [],
+    dailyPreviewTotal: 0,
+    dailyPreviewLoading: false,
+    dailyPreviewLoaded: false,
+    dailyPreviewError: '',
 
     get fieldsDirty() {
       return JSON.stringify(this.selectedFields) !== JSON.stringify(this.savedFields);
@@ -1089,6 +1184,9 @@ window.dataSources = function () {
     get selectedFieldCount() { return this.selectedFields.length; },
     get hasDatasetSelection() { return Boolean(this.selectedProjectKey && this.selectedProjectId && this.selectedTokenId); },
     get projectOptions() { return this.datasetProjects; },
+    get dailyPreviewPages() {
+      return Math.max(1, Math.ceil(this.dailyPreviewTotal / this.dailyPreviewFilters.page_size));
+    },
 
     async load() {
       await this.loadEndpoints();
@@ -1098,6 +1196,59 @@ window.dataSources = function () {
       const eps = await window.apiGet('/api/endpoints').catch(window.toastError);
       this.endpoints = eps || [];
       return eps;
+    },
+    async loadDailyPreview() {
+      if (this.dailyPreviewLoading) return;
+      const filters = this.dailyPreviewFilters;
+      const params = new URLSearchParams({
+        date_from: filters.date_from || '', date_to: filters.date_to || '', store: filters.store || '',
+        asin: filters.asin || '', sku: filters.sku || '', page: String(filters.page), page_size: String(filters.page_size),
+      });
+      this.dailyPreviewLoading = true;
+      this.dailyPreviewError = '';
+      try {
+        const data = await window.apiGet('/api/datasets/listing-daily-v1/preview?' + params.toString());
+        if (!data || !Array.isArray(data.items)) throw new Error('日维预览响应格式错误');
+        this.dailyPreviewItems = data.items;
+        this.dailyPreviewTotal = Number(data.total) || 0;
+        this.dailyPreviewFilters.page = Number(data.page) || filters.page;
+        this.dailyPreviewFilters.page_size = Number(data.page_size) || filters.page_size;
+      } catch (error) {
+        this.dailyPreviewItems = [];
+        this.dailyPreviewTotal = 0;
+        this.dailyPreviewError = errorMessage(error, '未能读取日维数据');
+      } finally {
+        this.dailyPreviewLoaded = true;
+        this.dailyPreviewLoading = false;
+      }
+    },
+    applyDailyPreviewFilters() {
+      this.dailyPreviewFilters.page = 1;
+      return this.loadDailyPreview();
+    },
+    changeDailyPreviewPage(page) {
+      if (page < 1 || page > this.dailyPreviewPages || page === this.dailyPreviewFilters.page) return;
+      this.dailyPreviewFilters.page = page;
+      return this.loadDailyPreview();
+    },
+    dailyPreviewValue(value) { return value === null || value === undefined || value === '' ? '—' : String(value); },
+    dailyPreviewIdentity(row, primary, fallback) {
+      const value = row[primary];
+      return value === null || value === undefined ? row[fallback] : value;
+    },
+    dailyPreviewRowKey(row) {
+      return [row.business_date, this.dailyPreviewIdentity(row, 'store', 'store_id'), row.asin, this.dailyPreviewIdentity(row, 'sku', 'listing_sku')].join('|');
+    },
+    dailyPreviewStatusText(row) {
+      if (row.is_provisional === true || row.is_verified === false) return '未验证';
+      if (row.is_verified === true || row.is_provisional === false) return '已验证';
+      return '未知';
+    },
+    dailyPreviewStatusClass(row) {
+      const status = this.dailyPreviewStatusText(row);
+      if (status === '已验证') return 'bg-emerald-50 text-emerald-700';
+      if (status === '未验证') return 'bg-amber-50 text-amber-700';
+      return 'bg-slate-100 text-slate-500';
     },
     // 只刷新主表（数据源列表），不重载页面、不影响已展开字段外的状态。
     async refresh() {

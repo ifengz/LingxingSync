@@ -116,6 +116,78 @@
     </div>
   </section>
 
+  <!-- 唯一日维事实集的只读预览；只使用固定查询合同。 -->
+  <section class="overflow-hidden rounded-lg border border-slate-200 bg-white">
+    <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-slate-50 px-4 py-3">
+      <div>
+        <h2 class="text-sm font-bold text-slate-700">日维数据预览</h2>
+        <p class="mt-0.5 text-xs text-slate-500">按店铺、ASIN、SKU 和业务日期查看 listing-daily-v1</p>
+      </div>
+      <button type="button" @click="applyDailyPreviewFilters()" :disabled="dailyPreviewLoading"
+              class="inline-flex items-center gap-1.5 rounded-md bg-brand-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50">
+        <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+        查询
+      </button>
+    </div>
+
+    <form @submit.prevent="applyDailyPreviewFilters()" class="grid gap-3 border-b border-slate-200 px-4 py-3 sm:grid-cols-2 lg:grid-cols-5">
+      <label class="text-xs font-medium text-slate-600"><span class="mb-1 block">开始日期</span><input type="date" x-model="dailyPreviewFilters.date_from" class="h-9 w-full rounded-md border border-slate-300 px-2.5 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"></label>
+      <label class="text-xs font-medium text-slate-600"><span class="mb-1 block">结束日期</span><input type="date" x-model="dailyPreviewFilters.date_to" class="h-9 w-full rounded-md border border-slate-300 px-2.5 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"></label>
+      <label class="text-xs font-medium text-slate-600"><span class="mb-1 block">店铺</span><input x-model="dailyPreviewFilters.store" placeholder="店铺 ID" class="h-9 w-full rounded-md border border-slate-300 px-2.5 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"></label>
+      <label class="text-xs font-medium text-slate-600"><span class="mb-1 block">ASIN</span><input x-model="dailyPreviewFilters.asin" placeholder="ASIN" class="h-9 w-full rounded-md border border-slate-300 px-2.5 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"></label>
+      <label class="text-xs font-medium text-slate-600"><span class="mb-1 block">SKU</span><input x-model="dailyPreviewFilters.sku" placeholder="SKU" class="h-9 w-full rounded-md border border-slate-300 px-2.5 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"></label>
+    </form>
+
+    <div x-show="dailyPreviewLoading" class="px-4 py-10 text-center text-xs text-slate-400">正在查询日维数据…</div>
+    <div x-show="!dailyPreviewLoading && dailyPreviewError" class="bg-red-50 px-4 py-8 text-center text-xs text-red-700">
+      查询失败：<span x-text="dailyPreviewError"></span>
+    </div>
+    <div x-show="!dailyPreviewLoading && !dailyPreviewError && dailyPreviewLoaded && dailyPreviewItems.length===0" class="px-4 py-10 text-center text-xs text-slate-400">
+      当前条件没有日维数据
+    </div>
+    <div x-show="!dailyPreviewLoading && !dailyPreviewError && dailyPreviewItems.length>0" class="overflow-x-auto">
+      <table class="w-full min-w-[1420px] text-xs">
+        <thead class="border-b border-slate-200 bg-slate-50 font-bold text-slate-500">
+          <tr>
+            <th class="px-3 py-2.5 text-left">业务日期</th><th class="px-3 py-2.5 text-left">店铺</th><th class="px-3 py-2.5 text-left">ASIN</th><th class="px-3 py-2.5 text-left">SKU</th>
+            <th class="px-3 py-2.5 text-right">销量</th><th class="px-3 py-2.5 text-right">销售额</th><th class="px-3 py-2.5 text-right">退货</th><th class="px-3 py-2.5 text-right">可售库存</th>
+            <th class="px-3 py-2.5 text-right">Desktop Session</th><th class="px-3 py-2.5 text-right">Mobile Session</th><th class="px-3 py-2.5 text-right">评价</th><th class="px-3 py-2.5 text-right">评分</th>
+            <th class="px-3 py-2.5 text-right">SP 花费</th><th class="px-3 py-2.5 text-right">SD 花费</th><th class="px-3 py-2.5 text-left">验证状态</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-100">
+          <template x-for="row in dailyPreviewItems" :key="dailyPreviewRowKey(row)">
+            <tr class="hover:bg-slate-50/70">
+              <td class="px-3 py-2.5 whitespace-nowrap text-slate-700" x-text="dailyPreviewValue(row.business_date)"></td>
+              <td class="px-3 py-2.5 text-slate-700" x-text="dailyPreviewValue(dailyPreviewIdentity(row, 'store', 'store_id'))"></td>
+              <td class="px-3 py-2.5 font-mono text-slate-700" x-text="dailyPreviewValue(row.asin)"></td>
+              <td class="px-3 py-2.5 font-mono text-slate-700" x-text="dailyPreviewValue(dailyPreviewIdentity(row, 'sku', 'listing_sku'))"></td>
+              <td class="px-3 py-2.5 text-right tabular-nums" x-text="dailyPreviewValue(row.sales_units)"></td>
+              <td class="px-3 py-2.5 text-right tabular-nums" x-text="dailyPreviewValue(row.sales_amount)"></td>
+              <td class="px-3 py-2.5 text-right tabular-nums" x-text="dailyPreviewValue(row.returns_qty)"></td>
+              <td class="px-3 py-2.5 text-right tabular-nums" x-text="dailyPreviewValue(row.inventory_sellable)"></td>
+              <td class="px-3 py-2.5 text-right tabular-nums" x-text="dailyPreviewValue(row.sessions_desktop)"></td>
+              <td class="px-3 py-2.5 text-right tabular-nums" x-text="dailyPreviewValue(row.sessions_mobile)"></td>
+              <td class="px-3 py-2.5 text-right tabular-nums" x-text="dailyPreviewValue(row.review_count)"></td>
+              <td class="px-3 py-2.5 text-right tabular-nums" x-text="dailyPreviewValue(row.rating)"></td>
+              <td class="px-3 py-2.5 text-right tabular-nums" x-text="dailyPreviewValue(row.sp_spend)"></td>
+              <td class="px-3 py-2.5 text-right tabular-nums" x-text="dailyPreviewValue(row.sd_spend)"></td>
+              <td class="px-3 py-2.5"><span class="rounded px-1.5 py-0.5 text-[10px] font-bold" :class="dailyPreviewStatusClass(row)" x-text="dailyPreviewStatusText(row)"></span></td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+    </div>
+    <div x-show="!dailyPreviewLoading && !dailyPreviewError && dailyPreviewLoaded" class="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 bg-slate-50 px-4 py-2.5 text-xs text-slate-500">
+      <span>共 <strong class="tabular-nums text-slate-700" x-text="dailyPreviewTotal"></strong> 条</span>
+      <div class="flex items-center gap-2">
+        <button type="button" @click="changeDailyPreviewPage(dailyPreviewFilters.page - 1)" :disabled="dailyPreviewFilters.page<=1" class="rounded border border-slate-300 bg-white px-2.5 py-1 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40">上一页</button>
+        <span>第 <strong x-text="dailyPreviewFilters.page"></strong> / <strong x-text="dailyPreviewPages"></strong> 页</span>
+        <button type="button" @click="changeDailyPreviewPage(dailyPreviewFilters.page + 1)" :disabled="dailyPreviewFilters.page>=dailyPreviewPages" class="rounded border border-slate-300 bg-white px-2.5 py-1 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40">下一页</button>
+      </div>
+    </div>
+  </section>
+
   <!-- 数据源表格 -->
   <div class="overflow-hidden rounded-lg border border-slate-200 bg-white">
     <div class="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-4 py-2.5">

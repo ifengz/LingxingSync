@@ -52,11 +52,13 @@ type Server struct {
 	assets    Assets // 注入的 web/ 静态资源（embed.FS）
 
 	// 配置读写 + 热加载/重启依赖（宪法 §7.5）
-	store      *config.ConfigStore     // config.yaml 线程安全读写 + 变更分类
-	sched      *worker.Scheduler       // 热加载时 Rebuild cron
-	limiters   *worker.LimiterRegistry // rate 变化时 UpdateOrCreate
-	configPath string                  // config.yaml 路径（消息展示用）
-	datasetAPI *datasetapi.Handler     // 固定 listing-daily-v1 发布合同
+	store        *config.ConfigStore     // config.yaml 线程安全读写 + 变更分类
+	sched        *worker.Scheduler       // 热加载时 Rebuild cron
+	limiters     *worker.LimiterRegistry // rate 变化时 UpdateOrCreate
+	configPath   string                  // config.yaml 路径（消息展示用）
+	datasetAPI   *datasetapi.Handler     // 固定 listing-daily-v1 发布合同
+	dailyPreview dailyPreviewReader      // 固定日维预览查询
+	reportStatus reportStatusReader      // 正式报表任务与对账状态
 
 	// pages: 页面名 → 该页专属的已解析模板树。
 	// 关键解耦：每页一棵独立模板树（layout + 该页 partial），这样各页的
@@ -90,6 +92,10 @@ func New(cfg *config.Config, dbx *sqlx.DB, reg *worker.Registry, clients *api.Cl
 		limiters:   limiters,
 		configPath: configPath,
 		pages:      map[string]*template.Template{},
+	}
+	if dbx != nil {
+		s.dailyPreview = sqlDailyPreviewReader{db: dbx}
+		s.reportStatus = sqlReportStatusReader{db: dbx}
 	}
 	datasetCfg := datasetapi.Config{
 		FieldAllowlist:  cfg.DatasetAPI.FieldAllowlist,
@@ -277,6 +283,7 @@ func (s *Server) Routes() *http.ServeMux {
 	mux.HandleFunc("POST /api/reconcile", s.apiReconcile)
 
 	// ---- API 路由：固定 listing 数据集 ----
+	s.registerDailyReportRoutes(mux)
 	if s.datasetAPI != nil {
 		mux.Handle("/api/v1/datasets/listing-daily-v1/", s.datasetAPI)
 		mux.Handle(datasetapi.FieldsPath, s.datasetAPI)

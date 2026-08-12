@@ -14,6 +14,17 @@
         <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3 4 7l4 4"/><path d="M4 7h16"/><path d="m16 21 4-4-4-4"/><path d="M20 17H4"/></svg>
       </span>
       <h1 class="text-lg font-semibold tracking-tight text-slate-800">同步配置</h1>
+      <span class="group relative inline-flex">
+        <button type="button" aria-label="查看同步日期说明" aria-describedby="sync-modified-time-tip"
+                @click.stop="$refs.modifiedTimeTipButton.focus()" x-ref="modifiedTimeTipButton"
+                class="grid h-6 w-6 place-items-center rounded-full border border-slate-300 text-xs font-bold text-slate-500 transition hover:border-brand-500 hover:text-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-500/30">
+          ?
+        </button>
+        <span id="sync-modified-time-tip" role="tooltip"
+              class="pointer-events-none invisible absolute left-1/2 top-full z-40 mt-2 w-80 -translate-x-1/2 rounded-md border border-slate-200 bg-slate-900 px-3 py-2 text-xs font-normal leading-5 text-white opacity-0 shadow-lg transition group-hover:visible group-hover:opacity-100 group-focus-within:visible group-focus-within:opacity-100">
+          支持按修改时间补拉：订单、Listing、FBA 退货、VC PO。销量、Performance、SP、SD、HSA、VC 销量/库存按业务日期重拉最近范围。
+        </span>
+      </span>
     </div>
     <nav class="flex items-center gap-1.5">
       <button @click="switchTab('manual')"
@@ -221,6 +232,99 @@
   </div>
   <!-- ══════════ 定时调度 Tab ══════════ -->
   <div x-show="tab==='schedule'" x-cloak class="space-y-4">
+
+    <!-- 正式报表与接口调度同属定时任务；只管理已落地的 FBA Customer Returns 合同。 -->
+    <section class="overflow-hidden rounded-lg border border-slate-200 bg-white">
+      <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-slate-50 px-4 py-3">
+        <div>
+          <div class="flex items-center gap-2">
+            <svg class="h-4 w-4 text-brand-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v16H4z"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>
+            <h2 class="text-sm font-bold text-slate-800">正式报表校验</h2>
+            <span class="rounded bg-blue-50 px-1.5 py-0.5 text-[10px] font-bold text-blue-700">FBA 退货</span>
+          </div>
+          <p class="mt-1 text-xs text-slate-500">定时下载 Customer Returns 报表，与 API 数据逐行对账，报表值优先修正日维结果。</p>
+        </div>
+        <button type="button" @click="saveReportExportConfig()" :disabled="reportExportSaving || reportExportLoading"
+                class="inline-flex items-center gap-1.5 rounded-md bg-brand-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50">
+          <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z"/><path d="M17 21v-8H7v8M7 3v5h8"/></svg>
+          <span x-text="reportExportSaving ? '保存中…' : '保存配置'"></span>
+        </button>
+      </div>
+
+      <div x-show="reportExportLoading" class="px-4 py-8 text-center text-xs text-slate-400">正在读取报表配置和最近状态…</div>
+      <div x-show="!reportExportLoading && reportExportError" class="border-b border-red-100 bg-red-50 px-4 py-3 text-xs text-red-700">
+        未能读取正式报表：<span x-text="reportExportError"></span>
+      </div>
+      <div x-show="!reportExportLoading && !reportExportError" class="grid gap-4 p-4 xl:grid-cols-[minmax(0,2fr)_minmax(18rem,1fr)]">
+        <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <label class="text-xs font-medium text-slate-600">
+            <span class="mb-1 block">运行状态</span>
+            <span class="flex h-9 items-center gap-2 rounded-md border border-slate-300 px-2.5">
+              <input type="checkbox" x-model="reportExportForm.enabled" class="h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500/30">
+              <span x-text="reportExportForm.enabled ? '已启用' : '未启用'"></span>
+            </span>
+          </label>
+          <label class="text-xs font-medium text-slate-600">
+            <span class="mb-1 block">账号</span>
+            <select x-model="reportExportForm.account" class="h-9 w-full rounded-md border border-slate-300 bg-white px-2.5 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500">
+              <option value="">选择账号</option>
+              <template x-for="acc in accounts" :key="acc"><option :value="acc" x-text="accountName(acc)"></option></template>
+            </select>
+          </label>
+          <label class="text-xs font-medium text-slate-600">
+            <span class="mb-1 block">Seller ID</span>
+            <input x-model="reportExportForm.seller_id" class="h-9 w-full rounded-md border border-slate-300 px-2.5 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500">
+          </label>
+          <label class="text-xs font-medium text-slate-600">
+            <span class="mb-1 block">店铺 ID</span>
+            <input x-model="reportExportForm.store_id" class="h-9 w-full rounded-md border border-slate-300 px-2.5 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500">
+          </label>
+          <label class="text-xs font-medium text-slate-600">
+            <span class="mb-1 block">区域</span>
+            <select x-model="reportExportForm.region" class="h-9 w-full rounded-md border border-slate-300 bg-white px-2.5 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500">
+              <option value="na">北美 na</option><option value="eu">欧洲 eu</option><option value="fe">远东 fe</option>
+            </select>
+          </label>
+          <label class="text-xs font-medium text-slate-600">
+            <span class="mb-1 block">Marketplace IDs</span>
+            <input x-model="reportExportMarketplaceText" placeholder="多个用逗号分隔" class="h-9 w-full rounded-md border border-slate-300 px-2.5 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500">
+          </label>
+          <label class="text-xs font-medium text-slate-600">
+            <span class="mb-1 block">Cron</span>
+            <input x-model="reportExportForm.cron" class="h-9 w-full rounded-md border border-slate-300 px-2.5 font-mono text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500">
+          </label>
+          <label class="text-xs font-medium text-slate-600">
+            <span class="mb-1 block">最近完整日窗口</span>
+            <span class="flex h-9 items-center gap-2 rounded-md border border-slate-300 px-2.5">
+              <input type="number" min="1" max="31" x-model.number="reportExportForm.window_days" class="min-w-0 flex-1 border-0 p-0 text-sm focus:outline-none focus:ring-0">
+              <span class="text-slate-400">天</span>
+            </span>
+          </label>
+        </div>
+
+        <aside class="rounded-md border border-slate-200 bg-slate-50 p-3">
+          <div class="flex items-center justify-between gap-2">
+            <h3 class="text-xs font-bold text-slate-600">最近运行</h3>
+            <span class="rounded px-1.5 py-0.5 text-[10px] font-bold" :class="reportExportStatusClass()" x-text="reportExportStatusText()"></span>
+          </div>
+          <div x-show="!reportExportStatus.latest_task" class="py-6 text-center text-xs text-slate-400">尚无报表运行记录</div>
+          <dl x-show="reportExportStatus.latest_task" class="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 text-xs">
+            <dt class="text-slate-400">完成时间</dt><dd class="text-right text-slate-700" x-text="reportExportTaskTime()"></dd>
+            <dt class="text-slate-400">下载行数</dt><dd class="text-right tabular-nums text-slate-700" x-text="reportExportTaskRows()"></dd>
+          </dl>
+          <p x-show="reportExportStatus.latest_task && reportExportStatus.latest_task.error" class="mt-3 rounded bg-red-50 px-2 py-1.5 text-xs text-red-700" x-text="reportExportStatus.latest_task.error"></p>
+          <div class="mt-3 border-t border-slate-200 pt-3">
+            <p class="mb-2 text-[11px] font-bold text-slate-500">最近对账差异</p>
+            <p x-show="reportExportStatus.differences && reportExportStatus.differences.error" class="mb-2 rounded bg-red-50 px-2 py-1.5 text-xs text-red-700" x-text="reportExportStatus.differences.error"></p>
+            <div class="grid grid-cols-3 gap-2 text-center text-xs">
+              <div class="rounded border border-slate-200 bg-white px-1 py-2"><strong class="block tabular-nums text-slate-800" x-text="reportDifference('database_missing')"></strong><span class="text-slate-400">数据库缺少</span></div>
+              <div class="rounded border border-slate-200 bg-white px-1 py-2"><strong class="block tabular-nums text-slate-800" x-text="reportDifference('report_missing')"></strong><span class="text-slate-400">报表缺少</span></div>
+              <div class="rounded border border-slate-200 bg-white px-1 py-2"><strong class="block tabular-nums text-slate-800" x-text="reportDifference('value_mismatch')"></strong><span class="text-slate-400">值不一致</span></div>
+            </div>
+          </div>
+        </aside>
+      </div>
+    </section>
 
     <!-- 调度表：字段直接内联编辑，无「编辑」按钮。改 cron/限流/店铺白名单或切换启用勾选
          → 该行进入 dirty（整行变色）→ 行右出现「保存 / 取消」。少点一次「编辑」。 -->
