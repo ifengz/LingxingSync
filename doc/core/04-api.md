@@ -344,30 +344,94 @@ HTTP 状态码：`200` = ok；`400` = 参数错误；`500` = 内部错误。
 }
 ```
 
-## 版本化只读数据集 API（已授权，未声明已实现）
+## 版本化只读数据集 API（已实现）
 
-只允许以下两种固定读端点；当前唯一允许的数据集标识是 `listing-daily-metrics`：
+当前唯一数据集标识是 `listing-daily-v1`，只开放以下两个固定 `POST` 端点：
 
 ```text
-GET /api/v1/datasets/listing-daily-metrics/snapshot
-GET /api/v1/datasets/listing-daily-metrics/changes
+POST /api/v1/datasets/listing-daily-v1/snapshot
+POST /api/v1/datasets/listing-daily-v1/changes
 ```
 
 不得实现 `/:table`、自定义 path、SQL、排序表达式或任意字段表达式入口。新增数据集必须先修改宪法 allowlist，不能仅靠数据库中出现一张表自动暴露。
 
 ### 认证与 scope
 
-- 使用 `Authorization: Bearer <project-token>`，每个内部项目独立 token；不得复用领星 OpenAPI token、ERP `auth-token` 或 UI 的 `X-Sync-Secret`。
-- token 必须同时校验 dataset scope 与 store scope；请求超出任一 scope 返回 `403`，不能静默裁剪为部分结果。
+- 使用 `Authorization: Bearer <project-token>`；服务端只保存明文 token 的小写 SHA-256，不得复用领星 OpenAPI token、ERP `auth-token` 或 UI 的 `X-Sync-Secret`。
+- 每个 token 固定绑定 `project_id`，同一项目允许配置多个独立 `token_id`；token 必须同时具备 `listing-daily-v1` dataset scope、请求店铺的 store scope 和自己的字段清单。
+- 请求超出 dataset、store 或字段 scope 返回 `403`/`400`，不能静默裁剪为部分结果。token 已撤销或过期返回 `401`。
 - 消费者只经 HTTPS 调用；不得直连 MySQL、提交远程 SQL 或从 7799 明文公网访问。
 
 ### `snapshot`
 
-返回某数据集当前有效快照。只接受固定查询参数：`store`、`limit`、`after`；`after` 是服务端生成的不透明 keyset cursor，禁止 offset 分页。响应字段受该 dataset 的字段 allowlist 限制。
+按店铺和业务日期范围返回当前日维快照。请求参数全部放 JSON body：
+
+```json
+{
+  "store": "store-a",
+  "date_from": "2026-08-01",
+  "date_to": "2026-08-07",
+  "fields": ["sales_units", "sales_amount", "inventory_sellable"],
+  "page_size": 100,
+  "cursor": "上一页返回的 next_cursor，可省略"
+}
+```
+
+- `store`、`date_from`、`date_to` 必填；日期格式固定为 `YYYY-MM-DD`，范围受 `dataset_api.max_date_span_days` 限制。
+- `fields` 可省略；省略时返回该 token 当前获准的全部字段。传入时每项仍必须属于该 token 的字段清单。
+- `page_size` 可省略，默认 100，且不得超过 `dataset_api.max_page_size`。
+- `cursor` 只用于继续读取同一次 snapshot；它绑定 token、店铺和日期范围，不能跨 scope 或改作 changes cursor。
+- 最后一页返回独立的 `changes_cursor`，消费者保存它，后续交给 `changes` 获取此次快照之后的变化。
 
 ### `changes`
 
-返回 cursor 之后 LingxingSync **已经写入**的变化。只接受固定查询参数：`store`、`limit`、`cursor`；cursor 是服务端生成的不透明 keyset cursor。它不能发现上游尚未重拉的历史修正，也不能替代重叠同步或正式报告对账。
+返回 `changes_cursor` 之后 LingxingSync **已经写入**的日维变化。请求参数同样全部放 JSON body：
+
+```json
+{
+  "store": "store-a",
+  "fields": ["sales_units", "sales_amount", "inventory_sellable"],
+  "page_size": 100,
+  "cursor": "snapshot 最后一页或上一页 changes 返回的 cursor"
+}
+```
+
+- `store`、`cursor` 必填；`changes` 不接受日期范围。
+- 分页使用服务端签名的不透明 keyset cursor，排序键固定为事实行 `updated_at + listing_dimension_id + business_date`，禁止 offset 分页。
+- 每次成功都返回可保存的 `next_cursor`：有变化时推进到本页最后一行；空页保持输入 cursor。下一次请求原样回传，不解析、不修改 cursor。
+- `listing_daily_metrics.updated_at` 是本项目日维事实行每次 INSERT/UPDATE 自动刷新的内部发布时间，不是领星接口字段；微秒精度用于避免同一秒多次更新被严格游标漏掉。
+- `changes` 不能发现领星侧尚未被本项目重拉的历史修正，也不能替代各 endpoint 的更新时间增量、日期重拉或正式报告对账。
+
+### 固定响应
+
+```json
+{
+  "ok": true,
+  "data": {
+    "schema_version": "listing-daily-v1",
+    "rows": [
+      {
+        "account_id": "",
+        "store": "store-a",
+        "channel": "SC",
+        "asin": "B000000001",
+        "sku": "SKU-1",
+        "business_date": "2026-08-01",
+        "updated_at": "2026-08-12T10:20:30.123456Z",
+        "is_provisional": true,
+        "verification_status": "provisional",
+        "deleted_at": null,
+        "sales_units": 3
+      }
+    ],
+    "next_cursor": "changes 每次成功返回；snapshot 仅有下一页时返回",
+    "changes_cursor": "仅 snapshot 最后一页返回",
+    "has_more": false
+  }
+}
+```
+
+当前日维 schema 尚无 `account_id` 和 `deleted_at` 来源，响应必须如实返回空值/`null`，不得猜补来源或删除标记。
 
 ### 值语义
 
@@ -377,13 +441,20 @@ GET /api/v1/datasets/listing-daily-metrics/changes
 - 无 ASIN/SKU 的 HSA 只可返回店铺级记录，或返回带明确 `allocated` 标识的分摊记录。
 - PO 等不同粒度域不从这两个 listing 端点返回。
 
-## 数据集字段 allowlist 管理（已授权，未声明已实现）
+## 数据集字段 allowlist 管理（已实现）
 
 现有 `/datasources` 页面可使用以下固定管理端点，仍受 `X-Sync-Secret` 中间件保护：
 
 ```text
-GET /api/datasources/datasets/listing-daily-metrics/fields
-PUT /api/datasources/datasets/listing-daily-metrics/fields
+GET /api/datasources/datasets/listing-daily-v1/fields
+PUT /api/datasources/datasets/listing-daily-v1/fields
 ```
 
-`GET` 返回服务端登记的可选字段与当前已选字段；`PUT` 只接受 `{ "fields": ["..."] }`，并拒绝不在登记清单中的字段。该设置只裁剪 dataset API 的响应字段，绝不能创建、修改、删除 MySQL 表或列，也不能接受表名和 SQL。
+字段管理属于现有管理面，继续受 `X-Sync-Secret` 中间件保护，不使用消费者 Bearer token：
+
+- 无查询参数的 `GET` 返回全局 `available_fields` 和可管理的 `projects[]`；每项只含 `project_id`、`token_id`、`fields`，不得返回 token 明文或 hash。
+- 带 `project_id`、`token_id` 的 `GET` 返回该项目/Token 的可选字段与当前已选字段。同项目只有一个 token 时可只传 `project_id`；存在多个 token 时必须同时传 `token_id`。
+- `PUT` 使用同一路径，并提交 `{ "project_id": "project-a", "token_id": "token-a", "fields": ["sales_units"] }`；字段不能为空、不能重复，且必须来自服务端登记的 `available_fields`。
+- 字段清单按 `project_id + token_id` 隔离；修改一个 token 不得改变同项目的其他 token。
+
+该设置只裁剪 `listing-daily-v1` 的指标响应字段，绝不能创建、修改、删除 MySQL 表或列，也不能接受表名、SQL 或动态 path。
