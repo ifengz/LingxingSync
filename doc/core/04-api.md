@@ -458,3 +458,19 @@ PUT /api/datasources/datasets/listing-daily-v1/fields
 - 字段清单按 `project_id + token_id` 隔离；修改一个 token 不得改变同项目的其他 token。
 
 该设置只裁剪 `listing-daily-v1` 的指标响应字段，绝不能创建、修改、删除 MySQL 表或列，也不能接受表名、SQL 或动态 path。
+
+## 正式报表检验管理（已实现）
+
+`/sync` 的“报表检验”二级切卡使用固定管理端点，仍受 `X-Sync-Secret` 中间件保护：
+
+```text
+GET /api/report-exports/config
+PUT /api/report-exports/config
+GET /api/report-exports/status?account={account_id}&store_id={store_id}
+```
+
+- `GET config` 返回 `report_exports[]`、`available_types[]` 和空配置默认值；当前 `available_types` 只能包含已实现的 `fba_customer_returns`。
+- `PUT config` 一次提交完整 `report_exports[]`。每项粒度固定为 `type + account + store_id`，重复项整批拒绝；写盘和现有 Scheduler 热重建沿用配置保存原子边界。
+- Seller ID、store ID 和 Marketplace ID 由 UI 从已选账号的本地店铺资料带入；服务端仍按正式配置合同校验，缺失时不得猜值。
+- `GET status` 必须同时传 `account` 和 `store_id`，只返回该账号+店铺最近一次 Customer Returns 任务及其三类对账差异。临时下载 URL、签名凭证、token 或 hash 不得返回。
+- 新报表类型只有在创建、查询、下载、解析、原始表和对账合同均实现并测试后，才能加入 `available_types`；管理 API 不接受动态 report type 或表名。
