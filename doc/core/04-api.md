@@ -443,6 +443,8 @@ POST /api/v1/datasets/listing-daily-v1/changes
 
 ## 数据集字段 allowlist 管理（已实现）
 
+管理员可在第五页创建 listing-daily-v1 的项目 Token：`POST /api/datasources/datasets/listing-daily-v1/projects`，请求为 `project_id`、`token_id`、非空 `store_scopes` 和非空 `fields`。Token ID 全局唯一，同一项目可有多个 Token；字段必须来自 `dataset_api.field_allowlist`。响应只返回一次随机明文 `token`，配置文件仅保存其 SHA-256 `token_hash`，并返回 `need_restart: true`；明文不进入日志或后续 GET。空 dataset_api 首次创建时，提交字段会初始化 allowlist 并生成 cursor_secret。
+
 独立 `/dataset-fields` 页面使用以下固定管理端点，仍受 `X-Sync-Secret` 中间件保护：
 
 ```text
