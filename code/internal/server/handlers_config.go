@@ -15,6 +15,8 @@ package server
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"fmt"
 	"log"
 	"net/http"
@@ -27,6 +29,7 @@ import (
 
 	"lingxing-sync/internal/api"
 	"lingxing-sync/internal/config"
+	"lingxing-sync/internal/datasetapi"
 	"lingxing-sync/internal/db"
 )
 
@@ -45,8 +48,132 @@ func (s *Server) registerConfigRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/endpoints/{name}", s.apiUpdateEndpoint)
 	mux.HandleFunc("DELETE /api/endpoints/{name}", s.apiDeleteEndpoint)
 	mux.HandleFunc("GET /api/datasources/{table}/columns", s.apiDatasourceColumns)
+	mux.HandleFunc("POST /api/datasources/datasets/listing-daily-v1/projects", s.apiCreateDatasetProjectToken)
 	mux.HandleFunc("POST /api/settings/restart", s.apiRestart)
 	mux.HandleFunc("POST /api/settings/test-connection", s.apiTestConnection)
+}
+
+type createDatasetProjectTokenRequest struct {
+	ProjectID   string   `json:"project_id"`
+	TokenID     string   `json:"token_id"`
+	StoreScopes []string `json:"store_scopes"`
+	Fields      []string `json:"fields"`
+}
+
+// apiCreateDatasetProjectToken creates one fixed listing dataset reader. Only
+// the SHA-256 hash is written to config; the bearer value is returned once so
+// the caller can put it in the consuming project's secret store.
+func (s *Server) apiCreateDatasetProjectToken(w http.ResponseWriter, r *http.Request) {
+	if s.store == nil {
+		errJSON(w, http.StatusInternalServerError, "配置存储未初始化")
+		return
+	}
+	var in createDatasetProjectTokenRequest
+	if err := decodeJSON(r, &in); err != nil {
+		errJSON(w, http.StatusBadRequest, "请求体格式错误: "+err.Error())
+		return
+	}
+	in.ProjectID = strings.TrimSpace(in.ProjectID)
+	in.TokenID = strings.TrimSpace(in.TokenID)
+	if !config.ValidAccountID(in.ProjectID) || !config.ValidAccountID(in.TokenID) {
+		errJSON(w, http.StatusBadRequest, "项目 ID 和 Token ID 只能使用字母、数字、下划线或连字符，长度 1–32")
+		return
+	}
+	storeScopes, err := normalizeDatasetTokenValues(in.StoreScopes, "店铺范围")
+	if err != nil {
+		errJSON(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	fields, err := normalizeDatasetTokenValues(in.Fields, "字段")
+	if err != nil {
+		errJSON(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	current := s.store.Current()
+	available := make(map[string]struct{}, len(current.DatasetAPI.FieldAllowlist))
+	for _, field := range current.DatasetAPI.FieldAllowlist {
+		available[field] = struct{}{}
+	}
+	if len(available) > 0 {
+		for _, field := range fields {
+			if _, ok := available[field]; !ok {
+				errJSON(w, http.StatusBadRequest, fmt.Sprintf("字段 %q 不在当前可选字段清单中", field))
+				return
+			}
+		}
+	}
+	for _, token := range current.DatasetAPI.Tokens {
+		if token.ID == in.TokenID {
+			errJSON(w, http.StatusConflict, "Token ID 已存在: "+in.TokenID)
+			return
+		}
+	}
+	rawToken, err := newDatasetBearerToken()
+	if err != nil {
+		errJSON(w, http.StatusInternalServerError, "生成访问 Token 失败: "+err.Error())
+		return
+	}
+	old := current
+	snap := s.store.Snapshot()
+	if len(snap.DatasetAPI.FieldAllowlist) == 0 {
+		// First project creation is also the simple bootstrap path for an empty
+		// runtime config: its initial fields become the fixed server allowlist.
+		snap.DatasetAPI.FieldAllowlist = append([]string(nil), fields...)
+	}
+	if strings.TrimSpace(snap.DatasetAPI.CursorSecret) == "" {
+		cursorSecret, err := newDatasetRandomValue()
+		if err != nil {
+			errJSON(w, http.StatusInternalServerError, "生成游标密钥失败: "+err.Error())
+			return
+		}
+		snap.DatasetAPI.CursorSecret = cursorSecret
+	}
+	snap.DatasetAPI.Tokens = append(snap.DatasetAPI.Tokens, config.DatasetToken{
+		ID:            in.TokenID,
+		ProjectID:     in.ProjectID,
+		TokenHash:     datasetapi.HashToken(rawToken),
+		DatasetScopes: []string{datasetapi.DatasetID},
+		StoreScopes:   storeScopes,
+		Fields:        fields,
+	})
+	s.applyConfigWrite(w, old, snap, "项目 Token 已新增，请保存明文 Token 并重启同步机", map[string]any{
+		"project_id":   in.ProjectID,
+		"token_id":     in.TokenID,
+		"token":        rawToken,
+		"need_restart": true,
+	})
+}
+
+func normalizeDatasetTokenValues(values []string, label string) ([]string, error) {
+	if len(values) == 0 {
+		return nil, fmt.Errorf("%s不能为空", label)
+	}
+	seen := make(map[string]struct{}, len(values))
+	out := make([]string, 0, len(values))
+	for _, raw := range values {
+		value := strings.TrimSpace(raw)
+		if value == "" {
+			return nil, fmt.Errorf("%s不能包含空值", label)
+		}
+		if _, exists := seen[value]; exists {
+			return nil, fmt.Errorf("%s不能重复: %s", label, value)
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out, nil
+}
+
+func newDatasetBearerToken() (string, error) {
+	return newDatasetRandomValue()
+}
+
+func newDatasetRandomValue() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
 // ---------------------------------------------------------------------------

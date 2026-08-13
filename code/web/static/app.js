@@ -1252,6 +1252,11 @@ window.dataSources = function () {
     fieldsError: '',
     fieldsSaveError: '',
     fieldsRequestVersion: 0,
+    datasetCreateOpen: false,
+    datasetCreating: false,
+    datasetCreateError: '',
+    datasetCreateResult: null,
+    datasetCreateForm: { project_id: '', token_id: '', store_scopes: '', fields: '' },
     dailyPreviewFilters: { date_from: '', date_to: '', store: '', asin: '', sku: '', page: 1, page_size: 20 },
     dailyPreviewItems: [],
     dailyPreviewTotal: 0,
@@ -1275,6 +1280,32 @@ window.dataSources = function () {
     async load() {
       await this.loadEndpoints();
       await this.loadDatasetProjects();
+    },
+    async createDatasetProjectToken() {
+      if (this.datasetCreating) return;
+      this.datasetCreateError = '';
+      const split = (value) => String(value || '').split(',').map((item) => item.trim()).filter(Boolean);
+      const body = {
+        project_id: this.datasetCreateForm.project_id,
+        token_id: this.datasetCreateForm.token_id,
+        store_scopes: split(this.datasetCreateForm.store_scopes),
+        fields: split(this.datasetCreateForm.fields),
+      };
+      this.datasetCreating = true;
+      try {
+        this.datasetCreateResult = await window.apiPost('/api/datasources/datasets/listing-daily-v1/projects', body);
+        this.datasetCreateForm = { project_id: '', token_id: '', store_scopes: '', fields: '' };
+        this.datasetCreateOpen = true;
+        window.toast('success', '项目 Token 已创建，请先复制明文 Token');
+      } catch (error) {
+        this.datasetCreateError = errorMessage(error, '创建项目 Token 失败');
+      } finally {
+        this.datasetCreating = false;
+      }
+    },
+    async restartAfterDatasetToken() {
+      const result = await window.apiPost('/api/settings/restart', {}).catch(window.toastError);
+      if (result) window.toast('success', result.message || '同步机正在重启');
     },
     async loadEndpoints() {
       const eps = await window.apiGet('/api/endpoints').catch(window.toastError);

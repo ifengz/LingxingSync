@@ -61,15 +61,26 @@ assert.equal(entryManage.advancedAdd, false);
   assert.match(template, /项目 \/ Token ID/);
   assert.match(template, /selectedProjectKey/);
   assert.match(template, /selectProject/);
+  assert.match(template, /新增项目 \/ Token/);
+  assert.match(template, /createDatasetProjectToken\(\)/);
   assert.match(template, /尚未配置可选字段/);
   assert.doesNotMatch(template, /fieldGroups.length>0" class="grid/);
   assert.doesNotMatch(template, /<input[^>]*(?:table|sql)/i);
   assert.doesNotMatch(template, /type=["']password/i);
-  assert.doesNotMatch(template, /CREATE|ALTER|DROP|SQL/i);
+  assert.doesNotMatch(template, /CREATE\s+TABLE|ALTER\s+TABLE|DROP\s+TABLE|SQL\s*:/i);
   const dataSourcesTemplate = fs.readFileSync(__dirname + '/../templates/datasources.html', 'utf8');
   assert.match(dataSourcesTemplate, /日维数据预览/);
   assert.match(dataSourcesTemplate, /applyDailyPreviewFilters\(\)/);
   assert.match(dataSourcesTemplate, /dailyPreviewValue/);
+}
+
+// 项目 Token 入口必须把逗号分隔的店铺/字段转换为固定数组，并显示一次性明文结果。
+{
+  const source = fs.readFileSync(__dirname + '/app.js', 'utf8');
+  assert.match(source, /datasetCreateForm/);
+  assert.match(source, /store_scopes: split\(this\.datasetCreateForm\.store_scopes\)/);
+  assert.match(source, /fields: split\(this\.datasetCreateForm\.fields\)/);
+  assert.match(source, /datasetCreateResult = await window\.apiPost/);
 }
 
 // 接口清单启用状态必须在下拉和按钮上可见、可禁用。
