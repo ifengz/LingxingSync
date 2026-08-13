@@ -726,6 +726,15 @@ void (async () => {
     '/api/datasources/datasets/listing-daily-v1/fields?project_id=project-a&token_id=token-a',
   ]));
 
+  // 尚未登记项目/Token 是合法空态；页面保留双栏骨架，不显示红色加载错误。
+  const empty = sandbox.window.dataSources();
+  sandbox.window.apiGet = async () => ({ projects: [] });
+  await empty.loadDatasetProjects();
+  assert.equal(empty.fieldsError, '');
+  assert.equal(empty.hasDatasetSelection, false);
+  assert.equal(empty.projectOptions.length, 0);
+  assert.equal(empty.fieldGroups.length, 0);
+
   // 日维字段只做固定展示分组，不改变 API 字段名或选择结果。
   const grouped = sandbox.window.dataSources();
   sandbox.window.apiGet = async () => ({

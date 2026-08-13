@@ -1406,7 +1406,7 @@ window.dataSources = function () {
         const normalized = normalizeDatasetProjects(data);
         this.datasetProjects = normalized.projects;
         const first = normalized.projects[0];
-        if (!first) throw new Error('未配置可管理的数据集项目');
+        if (!first) return;
         this.selectedProjectKey = first.key;
         this.selectedProjectId = first.project_id;
         this.selectedTokenId = first.token_id;
