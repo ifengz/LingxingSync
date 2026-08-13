@@ -256,6 +256,28 @@ func TestHashTokenDoesNotReturnRawToken(t *testing.T) {
 	}
 }
 
+func TestFieldsListReturnsEmptyProjectsArray(t *testing.T) {
+	h, err := New(Config{}, &fixtureReader{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	rec := requestJSON(t, h, http.MethodGet, FieldsPath, "", ``)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("fields status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var response struct {
+		Data struct {
+			Projects json.RawMessage `json:"projects"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode fields response: %v", err)
+	}
+	if string(response.Data.Projects) != "[]" {
+		t.Fatalf("empty projects = %s, want []", response.Data.Projects)
+	}
+}
+
 func TestFieldsAreScopedPerProjectToken(t *testing.T) {
 	reader := &fixtureReader{}
 	firstRaw := "project-a-token"

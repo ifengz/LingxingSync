@@ -147,7 +147,7 @@ type FieldsResponseData struct {
 	TokenID         string          `json:"token_id,omitempty"`
 	AvailableFields []string        `json:"available_fields"`
 	Fields          []string        `json:"fields,omitempty"`
-	Projects        []ProjectFields `json:"projects,omitempty"`
+	Projects        []ProjectFields `json:"projects"`
 }
 
 type ProjectFields struct {
