@@ -58,6 +58,12 @@ type createDatasetProjectTokenRequest struct {
 	StoreScopes []string `json:"store_scopes"`
 }
 
+var defaultDatasetFields = []string{
+	"sales_units", "sales_amount", "returns_qty", "inventory_sellable",
+	"sessions_desktop", "sessions_mobile", "sessions_total", "review_count", "rating",
+	"sp_spend", "sd_spend", "hsa_spend", "sb_spend",
+}
+
 // apiCreateDatasetProjectToken creates one fixed listing dataset reader. Only
 // the SHA-256 hash is written to config; the bearer value is returned once so
 // the caller can put it in the consuming project's secret store.
@@ -82,10 +88,6 @@ func (s *Server) apiCreateDatasetProjectToken(w http.ResponseWriter, r *http.Req
 		return
 	}
 	current := s.store.Current()
-	if len(current.DatasetAPI.FieldAllowlist) == 0 {
-		errJSON(w, http.StatusBadRequest, "当前没有可用字段，请先在配置中登记已验证字段")
-		return
-	}
 	tokenID := in.ProjectID
 	for _, token := range current.DatasetAPI.Tokens {
 		if token.ID == tokenID || token.ProjectID == in.ProjectID {
@@ -100,6 +102,16 @@ func (s *Server) apiCreateDatasetProjectToken(w http.ResponseWriter, r *http.Req
 	}
 	old := current
 	snap := s.store.Snapshot()
+	if len(snap.DatasetAPI.FieldAllowlist) == 0 {
+		snap.DatasetAPI.FieldAllowlist = append([]string(nil), defaultDatasetFields...)
+	}
+	if snap.DatasetAPI.CursorSecret == "" {
+		snap.DatasetAPI.CursorSecret, err = newDatasetBearerToken()
+		if err != nil {
+			errJSON(w, http.StatusInternalServerError, "生成游标密钥失败: "+err.Error())
+			return
+		}
+	}
 	snap.DatasetAPI.Tokens = append(snap.DatasetAPI.Tokens, config.DatasetToken{
 		ID:            tokenID,
 		ProjectID:     in.ProjectID,
