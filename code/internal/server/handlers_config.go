@@ -49,6 +49,7 @@ func (s *Server) registerConfigRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/endpoints/{name}", s.apiDeleteEndpoint)
 	mux.HandleFunc("GET /api/datasources/{table}/columns", s.apiDatasourceColumns)
 	mux.HandleFunc("POST /api/datasources/datasets/listing-daily-v1/projects", s.apiCreateDatasetProjectToken)
+	mux.HandleFunc("POST /api/datasources/datasets/listing-daily-v1/fields/complete", s.apiCompleteDatasetFields)
 	mux.HandleFunc("POST /api/settings/restart", s.apiRestart)
 	mux.HandleFunc("POST /api/settings/test-connection", s.apiTestConnection)
 }
@@ -62,6 +63,17 @@ var defaultDatasetFields = []string{
 	"sales_units", "sales_amount", "returns_qty", "inventory_sellable",
 	"sessions_desktop", "sessions_mobile", "sessions_total", "review_count", "rating",
 	"sp_spend", "sd_spend", "hsa_spend", "sb_spend",
+}
+
+var availableDatasetFields = []string{
+	"sales_units", "sales_amount", "returns_qty",
+	"inventory_sellable", "inventory_inbound", "inventory_reserved", "inventory_unfulfillable", "inventory_local_warehouse",
+	"inventory_unhealthy_units", "inventory_aged90_sellable_units", "inventory_sell_through_rate", "inventory_receive_fill_rate",
+	"inventory_vendor_confirmation_rate", "inventory_avg_lead_time_days", "inventory_sellable_cost", "inventory_unfulfillable_cost",
+	"inventory_aged90_cost", "inventory_unhealthy_cost", "inventory_inbound_cost", "inventory_currency", "inventory_inbound_receiving",
+	"inventory_inbound_shipped", "inventory_inbound_working", "inventory_reserved_customer_orders", "inventory_reserved_fc_processing", "inventory_reserved_fc_transfers",
+	"sessions_desktop", "sessions_mobile", "sessions_total", "review_count", "rating",
+	"sp_spend", "sp_sales", "sp_orders", "sd_spend", "sd_sales", "sd_orders", "hsa_spend", "hsa_sales", "hsa_orders", "sb_spend", "sb_sales", "sb_orders",
 }
 
 // apiCreateDatasetProjectToken creates one fixed listing dataset reader. Only
@@ -103,7 +115,7 @@ func (s *Server) apiCreateDatasetProjectToken(w http.ResponseWriter, r *http.Req
 	old := current
 	snap := s.store.Snapshot()
 	if len(snap.DatasetAPI.FieldAllowlist) == 0 {
-		snap.DatasetAPI.FieldAllowlist = append([]string(nil), defaultDatasetFields...)
+		snap.DatasetAPI.FieldAllowlist = append([]string(nil), availableDatasetFields...)
 	}
 	if snap.DatasetAPI.CursorSecret == "" {
 		snap.DatasetAPI.CursorSecret, err = newDatasetBearerToken()
@@ -118,7 +130,7 @@ func (s *Server) apiCreateDatasetProjectToken(w http.ResponseWriter, r *http.Req
 		TokenHash:     datasetapi.HashToken(rawToken),
 		DatasetScopes: []string{datasetapi.DatasetID},
 		StoreScopes:   storeScopes,
-		Fields:        append([]string(nil), snap.DatasetAPI.FieldAllowlist...),
+		Fields:        append([]string(nil), defaultDatasetFields...),
 	})
 	s.applyConfigWrite(w, old, snap, "项目 Token 已新增，请保存明文 Token 并重启同步机", map[string]any{
 		"project_id":   in.ProjectID,
@@ -126,6 +138,29 @@ func (s *Server) apiCreateDatasetProjectToken(w http.ResponseWriter, r *http.Req
 		"token":        rawToken,
 		"need_restart": true,
 	})
+}
+
+// apiCompleteDatasetFields adds only fixed, already implemented listing-daily
+// metrics to the global selectable list. It never changes a project's current
+// field permission; the administrator still moves fields into that project.
+func (s *Server) apiCompleteDatasetFields(w http.ResponseWriter, _ *http.Request) {
+	if s.store == nil {
+		errJSON(w, http.StatusInternalServerError, "配置存储未初始化")
+		return
+	}
+	old := s.store.Current()
+	snap := s.store.Snapshot()
+	seen := make(map[string]struct{}, len(snap.DatasetAPI.FieldAllowlist))
+	for _, field := range snap.DatasetAPI.FieldAllowlist {
+		seen[field] = struct{}{}
+	}
+	for _, field := range availableDatasetFields {
+		if _, exists := seen[field]; exists {
+			continue
+		}
+		snap.DatasetAPI.FieldAllowlist = append(snap.DatasetAPI.FieldAllowlist, field)
+	}
+	s.applyConfigWrite(w, old, snap, "可选字段已补全，请重启同步机后继续配置", map[string]any{"need_restart": true, "field_count": len(snap.DatasetAPI.FieldAllowlist)})
 }
 
 func normalizeDatasetTokenValues(values []string, label string) ([]string, error) {

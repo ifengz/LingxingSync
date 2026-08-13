@@ -1192,12 +1192,23 @@ function normalizeListingDailyFields(data, projectId, tokenId) {
     throw new Error('数据集字段响应格式错误');
   }
   const names = new Set();
+  const fieldLabels = {
+    sales_units: '日销量', sales_amount: '日销售额', returns_qty: '日退货量',
+    inventory_sellable: '可售库存', inventory_inbound: '在途库存', inventory_reserved: '预留库存', inventory_unfulfillable: '不可售库存', inventory_local_warehouse: '本地仓库存',
+    inventory_unhealthy_units: '不健康库存', inventory_aged90_sellable_units: '90天以上可售库存', inventory_sell_through_rate: '售罄率', inventory_receive_fill_rate: '收货填充率',
+    inventory_vendor_confirmation_rate: '供应商确认率', inventory_avg_lead_time_days: '平均交付天数', inventory_sellable_cost: '可售库存成本', inventory_unfulfillable_cost: '不可售库存成本',
+    inventory_aged90_cost: '90天以上库存成本', inventory_unhealthy_cost: '不健康库存成本', inventory_inbound_cost: '在途库存成本', inventory_currency: '库存币种',
+    inventory_inbound_receiving: '在途接收中', inventory_inbound_shipped: '在途已发货', inventory_inbound_working: '在途处理中', inventory_reserved_customer_orders: '预留客户订单', inventory_reserved_fc_processing: '预留仓内处理中', inventory_reserved_fc_transfers: '预留仓间调拨',
+    sessions_desktop: '桌面 Sessions', sessions_mobile: '移动 Sessions', sessions_total: '总 Sessions', review_count: '评价数', rating: '评分',
+    sp_spend: 'SP 花费', sp_sales: 'SP 销售额', sp_orders: 'SP 订单量', sd_spend: 'SD 花费', sd_sales: 'SD 销售额', sd_orders: 'SD 订单量',
+    hsa_spend: 'HSA 花费', hsa_sales: 'HSA 销售额', hsa_orders: 'HSA 订单量', sb_spend: 'SB 花费', sb_sales: 'SB 销售额', sb_orders: 'SB 订单量',
+  };
   const fields = data.available_fields.map((name) => {
     if (typeof name !== 'string' || !name.trim()) throw new Error('数据集字段项格式错误');
     const normalized = name.trim();
     if (names.has(normalized)) throw new Error('数据集字段重复: ' + normalized);
     names.add(normalized);
-    return { name: normalized, label: normalized };
+    return { name: normalized, label: fieldLabels[normalized] || normalized };
   });
   const selectedFields = data.fields.map((name) => {
     if (typeof name !== 'string' || !names.has(name)) {
@@ -1254,6 +1265,7 @@ window.dataSources = function () {
     fieldsRequestVersion: 0,
     datasetCreateOpen: false,
     datasetCreating: false,
+    fieldsCompleting: false,
     datasetCreateError: '',
     datasetCreateResult: null,
     datasetCreateForm: { project_id: '', store_scopes: '' },
@@ -1304,6 +1316,21 @@ window.dataSources = function () {
     async restartAfterDatasetToken() {
       const result = await window.apiPost('/api/settings/restart', {}).catch(window.toastError);
       if (result) window.toast('success', result.message || '同步机正在重启');
+    },
+    async completeDatasetFields() {
+      if (this.fieldsCompleting) return;
+      this.fieldsCompleting = true;
+      try {
+        const result = await window.apiPost('/api/datasources/datasets/listing-daily-v1/fields/complete', {});
+        if (!result) return;
+        await window.apiPost('/api/settings/restart', {});
+        window.toast('success', '可选字段已补全，正在重启…');
+        setTimeout(() => window.location.reload(), 3000);
+      } catch (error) {
+        window.toast('error', errorMessage(error, '补全可选字段失败'));
+      } finally {
+        this.fieldsCompleting = false;
+      }
     },
     async loadEndpoints() {
       const eps = await window.apiGet('/api/endpoints').catch(window.toastError);

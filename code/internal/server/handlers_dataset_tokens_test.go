@@ -12,6 +12,7 @@ import (
 )
 
 const datasetProjectsPath = "/api/datasources/datasets/listing-daily-v1/projects"
+const datasetFieldsCompletePath = "/api/datasources/datasets/listing-daily-v1/fields/complete"
 
 func TestCreateDatasetProjectTokenReturnsPlaintextOnceAndPersistsOnlyHash(t *testing.T) {
 	cfg := validDatasetProjectTestConfig()
@@ -92,11 +93,29 @@ func TestCreateDatasetProjectTokenInitializesEmptyDatasetConfig(t *testing.T) {
 		t.Fatalf("empty config status=%d body=%s", rec.Code, rec.Body.String())
 	}
 	saved := store.Current().DatasetAPI
-	if len(saved.FieldAllowlist) != len(defaultDatasetFields) || len(saved.CursorSecret) < 16 || len(saved.Tokens) != 1 {
+	if len(saved.FieldAllowlist) != len(availableDatasetFields) || len(saved.CursorSecret) < 16 || len(saved.Tokens) != 1 {
 		t.Fatalf("initialized dataset config=%+v", saved)
 	}
 	if got := saved.Tokens[0].Fields; len(got) != len(defaultDatasetFields) || got[0] != "sales_units" || got[len(got)-1] != "sb_spend" {
 		t.Fatalf("initialized token fields=%v", got)
+	}
+}
+
+func TestCompleteDatasetFieldsAddsMissingMetricsWithoutChangingProjectPermission(t *testing.T) {
+	cfg := validDatasetProjectTestConfig()
+	cfg.DatasetAPI.Tokens = []config.DatasetToken{{ID: "polabel2", ProjectID: "polabel2", TokenHash: strings.Repeat("a", 64), DatasetScopes: []string{datasetapi.DatasetID}, StoreScopes: []string{"12534"}, Fields: []string{"sales_units"}}}
+	store := config.NewStore(t.TempDir()+"/config.yaml", cfg)
+	s := New(cfg, nil, nil, nil, "", Assets{FS: renderTestFS, TemplateFS: "testdata", StaticFS: "testdata"}, store, nil, nil, "")
+	rec := httptest.NewRecorder()
+
+	s.Routes().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, datasetFieldsCompletePath, nil))
+
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"need_restart":true`) {
+		t.Fatalf("complete fields status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	saved := store.Current().DatasetAPI
+	if len(saved.FieldAllowlist) != len(availableDatasetFields) || saved.Tokens[0].Fields[0] != "sales_units" || len(saved.Tokens[0].Fields) != 1 {
+		t.Fatalf("completed dataset config=%+v", saved)
 	}
 }
 

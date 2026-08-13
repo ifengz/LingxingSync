@@ -9,8 +9,9 @@
 
   <section class="overflow-hidden rounded-lg border border-slate-200 bg-white">
     <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-slate-50 px-4 py-3">
-      <div><h2 class="text-sm font-bold text-slate-700">API 数据集返回字段</h2><p class="mt-0.5 text-xs text-slate-500">listing-daily-v1</p></div>
+      <div><h2 class="text-sm font-bold text-slate-700">API 数据集返回字段</h2><p class="mt-0.5 text-xs text-slate-500">listing-daily-v1。店铺、渠道、ASIN、SKU、日期固定返回；右侧字段决定各项目额外可读取哪些日维指标。</p></div>
       <div class="flex items-center gap-3">
+        <button type="button" @click="completeDatasetFields()" :disabled="fieldsCompleting" class="inline-flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-50"><span x-text="fieldsCompleting ? '处理中…' : '补全可选字段并重启'"></span></button>
         <button type="button" @click="datasetCreateOpen=!datasetCreateOpen" class="inline-flex items-center gap-1.5 rounded-md border border-brand-200 bg-white px-3 py-1.5 text-xs font-medium text-brand-700 hover:bg-brand-50"><span aria-hidden="true">+</span>新增项目 / Token</button>
         <span x-show="fieldsDirty" class="text-xs font-medium text-amber-700">未保存修改</span>
         <span x-show="!fieldsDirty && !fieldsLoading && !fieldsError && hasDatasetSelection" class="text-xs text-emerald-600">已保存</span>
@@ -25,7 +26,7 @@
           <option value="">请选择项目</option><template x-for="project in projectOptions" :key="project.key"><option :value="project.key" x-text="project.label"></option></template>
         </select>
       </label>
-      <p x-show="!fieldsLoading && !fieldsError && projectOptions.length===0" class="mt-2 text-xs text-amber-700">尚未选择项目 / Token。当前列表为空，请先在运行配置的 dataset_api.tokens 中登记项目。</p>
+      <p x-show="!fieldsLoading && !fieldsError && projectOptions.length===0" class="mt-2 text-xs text-amber-700">尚未创建项目。点击右上角“新增项目 / Token”，填写项目 ID 和店铺 ID 即可。</p>
     </div>
     <section x-show="datasetCreateOpen" x-cloak class="border-b border-slate-200 bg-blue-50/40 px-4 py-3">
       <div class="flex items-start justify-between gap-3">
