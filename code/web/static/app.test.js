@@ -33,6 +33,56 @@ const entryManage = sandbox.window.syncManage();
 assert.equal(entryManage.tab, 'manual');
 assert.equal(entryManage.advancedAdd, false);
 
+// 同步配置标题提示必须支持键盘聚焦，并把“修改时间增量”和“业务日期重拉”说清楚。
+{
+  const template = fs.readFileSync(__dirname + '/../templates/sync_manage.html', 'utf8');
+  assert.match(template, /aria-describedby="sync-modified-time-tip"/);
+  assert.match(template, /id="sync-modified-time-tip"[^>]*role="tooltip"/);
+  assert.match(template, /订单、Listing、FBA 退货、VC PO/);
+  assert.match(template, /销量、Performance、SP、SD、HSA、VC 销量\/库存/);
+  assert.match(template, /<span class="block">支持按修改时间补拉：订单、Listing、FBA 退货、VC PO。<\/span>/);
+  assert.match(template, /<span class="block">销量、Performance、SP、SD、HSA、VC 销量\/库存按业务日期重拉最近范围。<\/span>/);
+  assert.match(template, /fixed left-4 right-4 top-44/);
+  assert.match(template, /sm:absolute sm:left-full sm:right-auto/);
+  assert.doesNotMatch(template, /absolute left-1\/2 top-full/);
+}
+
+// 数据集字段配置固定走 listing-daily-v1 的字段合同，不接受表名或 SQL 输入。
+{
+  const template = fs.readFileSync(__dirname + '/../templates/dataset_fields.html', 'utf8');
+  assert.match(template, /API 数据集返回字段/);
+  assert.match(template, /listing-daily-v1/);
+  assert.match(template, /x-data="dataSources\(\)"/);
+  assert.match(template, /x-init="loadDatasetProjects\(\)"/);
+  assert.match(template, /@click="saveDatasetFields\(\)"/);
+  assert.match(template, /可选字段/);
+  assert.match(template, /已获准字段/);
+  assert.match(template, /未保存修改/);
+  assert.match(template, /项目 ID/);
+  assert.match(template, /selectedProjectKey/);
+  assert.match(template, /selectProject/);
+  assert.match(template, /新增项目 \/ Token/);
+  assert.match(template, /createDatasetProjectToken\(\)/);
+  assert.match(template, /尚未配置可选字段/);
+  assert.doesNotMatch(template, /fieldGroups.length>0" class="grid/);
+  assert.doesNotMatch(template, /<input[^>]*(?:table|sql)/i);
+  assert.doesNotMatch(template, /type=["']password/i);
+  assert.doesNotMatch(template, /CREATE\s+TABLE|ALTER\s+TABLE|DROP\s+TABLE|SQL\s*:/i);
+  const dataSourcesTemplate = fs.readFileSync(__dirname + '/../templates/datasources.html', 'utf8');
+  assert.match(dataSourcesTemplate, /日维数据预览/);
+  assert.match(dataSourcesTemplate, /applyDailyPreviewFilters\(\)/);
+  assert.match(dataSourcesTemplate, /dailyPreviewValue/);
+}
+
+// 项目 Token 入口必须把逗号分隔的店铺/字段转换为固定数组，并显示一次性明文结果。
+{
+  const source = fs.readFileSync(__dirname + '/app.js', 'utf8');
+  assert.match(source, /datasetCreateForm/);
+  assert.match(source, /store_scopes: split\(this\.datasetCreateForm\.store_scopes\)/);
+  assert.doesNotMatch(source, /datasetCreateForm\.fields/);
+  assert.match(source, /datasetCreateResult = await window\.apiPost/);
+}
+
 // 接口清单启用状态必须在下拉和按钮上可见、可禁用。
 {
   const m = sandbox.window.syncManage();
@@ -191,6 +241,115 @@ void (async () => {
     request = { url, body };
     return { message: '已请求取消' };
   };
+
+  // 正式报表切卡按账号+店铺读取固定报告状态。
+  {
+    const template = fs.readFileSync(__dirname + '/../templates/sync_manage.html', 'utf8');
+    assert.match(template, /正式报表校验/);
+    assert.match(template, /saveReportExportBatch\(\)/);
+    assert.match(template, /reportStatusText\(row\)/);
+
+    const reportCalls = [];
+    sandbox.window.apiGet = async (url) => {
+      reportCalls.push({ method: 'GET', url });
+      if (url === '/api/config') return { accounts: [], endpoints: [] };
+      if (url === '/api/catalog') return { templates: [], accounts: [] };
+      if (url === '/api/tasks?page=1&page_size=50') return { items: [] };
+      if (url === '/api/report-exports/config') return {
+        report_exports: [{
+          type: 'fba_customer_returns', enabled: true, account: 'sc_us', seller_id: 'SELLER-1',
+          store_id: 'STORE-1', region: 'na', marketplace_ids: ['ATVPDKIKX0DER'], cron: '0 4 * * *', window_days: 3,
+        }],
+      };
+      if (url === '/api/report-exports/status?account=sc_us&store_id=STORE-1') return {
+        configured: true,
+        latest_task: { status: 'success', rows: 18, finished_at: '2026-08-13T04:00:00Z' },
+        differences: { database_missing: 1, report_missing: 2, value_mismatch: 3 },
+      };
+      throw new Error('unexpected GET ' + url);
+    };
+    const report = sandbox.window.syncManage();
+    await report.load();
+    assert.equal(report.reportExportConfigs.length, 1);
+    assert.equal(report.reportStatusText(report.reportExportConfigs[0]), '已完成');
+    assert.equal(report.reportDifferenceFor(report.reportExportConfigs[0], 'database_missing'), 1);
+  }
+
+  // 报表检验批量配置：选一次账号和共同参数，勾多个店铺后生成多条固定报告配置。
+  {
+    const report = sandbox.window.syncManage();
+    report.reportExportConfigs = [{
+      type: 'fba_customer_returns', enabled: true, account: 'sc_us', seller_id: 'SELLER-OLD',
+      store_id: 'OLD', region: 'na', marketplace_ids: ['OLD-MKT'], cron: '0 4 * * *', window_days: 3,
+    }];
+    report.reportBatch = { account: 'sc_us', store_sids: [], region: 'na', cron: '0 5 * * *', window_days: 7, enabled: true };
+    report.storesByAccount = { sc_us: { loaded: true, selected: {}, query: '', items: [
+      { sid: '1001', store_type: 'SC', seller_id: 'SELLER-1', marketplace_id: 'MKT-1', store_name: '美国店' },
+      { sid: '1002', store_type: 'SC', seller_id: 'SELLER-2', marketplace_id: 'MKT-2', store_name: '加拿大店' },
+      { sid: '2001', store_type: 'VC', seller_id: 'SELLER-VC', marketplace_id: 'MKT-VC', store_name: 'VC 店' },
+    ] } };
+    report.selectAllReportStores();
+    assert.deepEqual(report.reportBatch.store_sids, ['1001', '1002'], 'FBA 退货报表只能选择 SC 店铺');
+    let put = null;
+    sandbox.window.apiPut = async (url, body) => { put = { url, body }; return { message: '已保存' }; };
+    report.loadReportExport = async () => {};
+    await report.saveReportExportBatch();
+    assert.equal(put.url, '/api/report-exports/config');
+    assert.equal(put.body.report_exports.length, 3);
+    assert.deepEqual(put.body.report_exports.slice(1).map(row => [row.store_id, row.seller_id, row.marketplace_ids[0], row.cron, row.window_days]), [
+      ['1001', 'SELLER-1', 'MKT-1', '0 5 * * *', 7],
+      ['1002', 'SELLER-2', 'MKT-2', '0 5 * * *', 7],
+    ]);
+
+    report.reportStatuses[report.reportScopeKey(report.reportExportConfigs[0])] = {
+      latest_task: { status: 'success' }, differences: { database_missing: 2 },
+    };
+    assert.equal(report.reportStatusText(report.reportExportConfigs[0]), '已完成');
+    assert.equal(report.reportDifferenceFor(report.reportExportConfigs[0], 'database_missing'), 2);
+
+    report.reportExportConfigs = put.body.report_exports;
+    sandbox.window.syncConfirm = async () => true;
+    await report.deleteReportExport(report.reportExportConfigs[1]);
+    assert.deepEqual(put.body.report_exports.map(row => row.store_id), ['OLD', '1002']);
+  }
+
+  // 日维预览固定使用筛选和分页合同，NULL 显示短横线，错误和空结果分别留在组件状态。
+  {
+    const previewCalls = [];
+    sandbox.window.apiGet = async (url) => {
+      previewCalls.push(url);
+      if (url.startsWith('/api/datasets/listing-daily-v1/preview?')) {
+        return {
+          items: [{ business_date: '2026-08-12', store: 'US', asin: 'B001', sku: 'SKU-1', sales_units: null }],
+          page: 2, page_size: 20, total: 41,
+        };
+      }
+      throw new Error('unexpected GET ' + url);
+    };
+    const preview = sandbox.window.dataSources();
+    preview.dailyPreviewFilters = {
+      date_from: '2026-08-01', date_to: '2026-08-12', store: 'US & West', asin: 'B001', sku: 'SKU/1', page: 2, page_size: 20,
+    };
+    await preview.loadDailyPreview();
+    assert.equal(previewCalls[0], '/api/datasets/listing-daily-v1/preview?date_from=2026-08-01&date_to=2026-08-12&store=US+%26+West&asin=B001&sku=SKU%2F1&page=2&page_size=20');
+    assert.equal(preview.dailyPreviewValue(preview.dailyPreviewItems[0].sales_units), '—');
+    assert.equal(preview.dailyPreviewIdentity({ store: null, store_id: 'US' }, 'store', 'store_id'), 'US');
+  assert.equal(preview.dailyPreviewPages, 3);
+  assert.equal(preview.dailyPreviewError, '');
+    assert.equal(preview.dailyPreviewStatusText({ is_provisional: true, is_verified: false }), '未验证');
+    assert.equal(preview.dailyPreviewStatusText({ is_provisional: false, is_verified: true }), '已验证');
+
+    preview.dailyPreviewFilters.page = 1;
+    await preview.changeDailyPreviewPage(2);
+    assert.equal(preview.dailyPreviewFilters.page, 2);
+    assert.equal(previewCalls[1], '/api/datasets/listing-daily-v1/preview?date_from=2026-08-01&date_to=2026-08-12&store=US+%26+West&asin=B001&sku=SKU%2F1&page=2&page_size=20');
+
+    sandbox.window.apiGet = async () => { throw new Error('日维查询失败'); };
+    await preview.loadDailyPreview();
+    assert.equal(preview.dailyPreviewError, '日维查询失败');
+    assert.equal(preview.dailyPreviewItems.length, 0);
+  }
+
   // 批量启用必须按所选顺序复用单接口 API，并在任一项成功后提示重启。
   const batch = sandbox.window.syncManage();
   batch.catalog = { accounts: [{ id: 'sc_us_1', name: '自营领星' }], templates: [
@@ -382,6 +541,237 @@ void (async () => {
   assert.equal(cronSave.body.rate.bucket, 2);
   assert.equal(cronSave.body.window_days, 7);
   assert.equal(cronSave.body.date_offset_days, 0);
+
+  // 定时调度批量保存复用现有逐行 API；窗口天数只应用到支持日期范围的接口。
+  const scheduleBatch = sandbox.window.syncManage();
+  scheduleBatch.schedule = [
+    scheduleBatch.normalizeRow({
+      name: 'sc_sales', display: '销量', account: 'sc_us', cron: '0 1 * * *', enabled: true,
+      rate: { bucket: 1, interval_ms: 1000 }, store_sids: [], date_range_capable: true, window_days: 3,
+    }),
+    scheduleBatch.normalizeRow({
+      name: 'sc_inventory', display: '库存', account: 'sc_us', cron: '0 2 * * *', enabled: true,
+      rate: { bucket: 1, interval_ms: 1000 }, store_sids: [], date_range_capable: false, window_days: 0,
+    }),
+  ];
+  for (const row of scheduleBatch.schedule) scheduleBatch.scheduleBaseline[row.name] = scheduleBatch.rowSnap(row);
+  scheduleBatch.scheduleSelected = ['sc_sales', 'sc_inventory'];
+  scheduleBatch.scheduleBatch = { enabled: 'disabled', cron: '0 5 * * *', window_days: 7 };
+  const scheduleBatchCalls = [];
+  sandbox.window.apiPut = async (url, body) => {
+    scheduleBatchCalls.push({ url, body });
+    return { message: '已保存', need_restart: false };
+  };
+  await scheduleBatch.saveScheduleBatch();
+  assert.deepEqual(scheduleBatchCalls.map(call => [call.url, call.body.enabled, call.body.cron, call.body.window_days]), [
+    ['/api/endpoints/sc_sales', false, '0 5 * * *', 7],
+    ['/api/endpoints/sc_inventory', false, '0 5 * * *', 0],
+  ]);
+  assert.equal(JSON.stringify(scheduleBatch.scheduleSelected), '[]');
+
+  // 数据集字段双栏：项目与 token ID 共同标识字段清单；不接触明文 bearer。
+  const fieldCalls = [];
+  const fieldLoad = {
+    dataset_id: 'listing-daily-v1',
+    project_id: 'project-a',
+    token_id: 'token-a',
+    available_fields: ['store', 'sales', 'impressions'],
+    fields: ['store'],
+  };
+  const projectBLoad = {
+    dataset_id: 'listing-daily-v1',
+    project_id: 'project-b',
+    token_id: 'token-b',
+    available_fields: ['store', 'sales', 'impressions'],
+    fields: ['impressions'],
+  };
+  let projectResponse = { projects: [
+    { project_id: 'project-a', token_id: 'token-a', fields: ['store'] },
+    { project_id: 'project-b', token_id: 'token-b', fields: ['impressions'] },
+  ] };
+  sandbox.window.apiGet = async (url) => {
+    fieldCalls.push({ method: 'GET', url });
+    if (url === '/api/datasources/datasets/listing-daily-v1/fields') return projectResponse;
+    if (url === '/api/datasources/datasets/listing-daily-v1/fields?project_id=project-a&token_id=token-a') return fieldLoad;
+    if (url === '/api/datasources/datasets/listing-daily-v1/fields?project_id=project-b&token_id=token-b') return projectBLoad;
+    throw new Error('unexpected dataset GET ' + url);
+  };
+  sandbox.window.apiPut = async (url, body) => {
+    fieldCalls.push({ method: 'PUT', url, body });
+    return { message: '已保存' };
+  };
+  const fields = sandbox.window.dataSources();
+  await fields.loadDatasetProjects();
+  assert.equal(JSON.stringify(fieldCalls.slice(0, 2).map(call => call.url)), JSON.stringify([
+    '/api/datasources/datasets/listing-daily-v1/fields',
+    '/api/datasources/datasets/listing-daily-v1/fields?project_id=project-a&token_id=token-a',
+  ]));
+  assert.equal(fields.selectedProjectId, 'project-a');
+  assert.equal(fields.selectedTokenId, 'token-a');
+  assert.ok(fields.fieldStateByProject[JSON.stringify(['project-a', 'token-a'])]);
+  assert.equal(fields.fieldStateByProject['project-a'], undefined);
+  assert.equal(fields.fieldGroups.length, 1);
+  assert.equal(JSON.stringify(fields.selectedFields), JSON.stringify(['store']));
+  assert.equal(fields.fieldsDirty, false);
+  assert.equal(JSON.stringify(fields.availableFields(fields.fieldGroups[0]).map(f => f.name)), JSON.stringify(['sales', 'impressions']));
+  fields.addField('sales');
+  assert.equal(JSON.stringify(fields.selectedFields), JSON.stringify(['store', 'sales']));
+  assert.equal(fields.fieldsDirty, true);
+  fields.removeField('store');
+  assert.equal(JSON.stringify(fields.selectedFields), JSON.stringify(['sales']));
+  await fields.saveDatasetFields();
+  assert.equal(JSON.stringify(fieldCalls.at(-1)), JSON.stringify({
+    method: 'PUT',
+    url: '/api/datasources/datasets/listing-daily-v1/fields?project_id=project-a&token_id=token-a',
+    body: { project_id: 'project-a', token_id: 'token-a', fields: ['sales'] },
+  }));
+  assert.equal(fields.fieldsDirty, false);
+
+  await fields.selectProject(JSON.stringify(['project-b', 'token-b']));
+  assert.equal(JSON.stringify(fields.selectedFields), JSON.stringify(['impressions']));
+  fields.removeField('impressions');
+  assert.equal(fields.fieldsDirty, true);
+  await fields.selectProject(JSON.stringify(['project-a', 'token-a']));
+  assert.equal(JSON.stringify(fields.selectedFields), JSON.stringify(['sales']));
+  assert.equal(fields.fieldsDirty, false);
+
+  // 项目详情读取失败时不得继续展示上一项目字段，也不能误保存到新项目。
+  const putCount = fieldCalls.filter(call => call.method === 'PUT').length;
+  delete fields.fieldStateByProject[JSON.stringify(['project-b', 'token-b'])];
+  sandbox.window.apiGet = async (url) => {
+    if (url.endsWith('project_id=project-b&token_id=token-b')) throw new Error('项目字段不可用');
+    throw new Error('unexpected dataset GET ' + url);
+  };
+  await fields.selectProject(JSON.stringify(['project-b', 'token-b']));
+  assert.equal(fields.fieldsError, '项目字段不可用');
+  assert.equal(fields.fieldGroups.length, 0);
+  assert.equal(fields.fieldsDirty, false);
+  assert.equal(fields.fieldStateByProject[JSON.stringify(['project-b', 'token-b'])], undefined);
+  await fields.saveDatasetFields();
+  assert.equal(fieldCalls.filter(call => call.method === 'PUT').length, putCount);
+  await fields.selectProject(JSON.stringify(['project-a', 'token-a']));
+
+  // 快速切换项目时，迟到的旧请求不能覆盖当前项目的字段状态。
+  const concurrent = sandbox.window.dataSources();
+  concurrent.datasetProjects = [
+    { project_id: 'project-a', token_id: 'token-a', key: JSON.stringify(['project-a', 'token-a']), label: 'project-a / token-a' },
+    { project_id: 'project-b', token_id: 'token-b', key: JSON.stringify(['project-b', 'token-b']), label: 'project-b / token-b' },
+  ];
+  concurrent.selectedProjectKey = JSON.stringify(['project-a', 'token-a']);
+  concurrent.selectedProjectId = 'project-a';
+  concurrent.selectedTokenId = 'token-a';
+  const pending = {};
+  sandbox.window.apiGet = (url) => new Promise((resolve) => { pending[url] = resolve; });
+  const slowA = concurrent.loadDatasetFields();
+  const fastB = concurrent.selectProject(JSON.stringify(['project-b', 'token-b']));
+  pending['/api/datasources/datasets/listing-daily-v1/fields?project_id=project-b&token_id=token-b'](projectBLoad);
+  await fastB;
+  pending['/api/datasources/datasets/listing-daily-v1/fields?project_id=project-a&token_id=token-a'](fieldLoad);
+  await slowA;
+  assert.equal(concurrent.selectedProjectId, 'project-b');
+  assert.equal(JSON.stringify(concurrent.selectedFields), JSON.stringify(['impressions']));
+
+  // 响应身份和分组键必须固定，错误数据不能替换当前清单。
+  sandbox.window.apiGet = async () => ({ ...fieldLoad, dataset_id: 'other-dataset' });
+  await fields.loadDatasetFields();
+  assert.equal(fields.fieldsError, '数据集字段响应格式错误');
+  assert.equal(fields.fieldGroups.length, 1);
+  sandbox.window.apiGet = async () => ({
+    dataset_id: 'listing-daily-v1',
+    project_id: 'project-a',
+    token_id: 'token-a',
+    available_fields: ['sales', 'sales'],
+    fields: [],
+  });
+  await fields.loadDatasetFields();
+  assert.equal(fields.fieldsError, '数据集字段重复: sales');
+  assert.equal(fields.fieldGroups.length, 1);
+
+  // 加载失败不能把已有选择静默清空；保存失败也必须保留待保存选择。
+  fields.selectedFields = ['sales'];
+  fields.savedFields = ['sales'];
+  fields.fieldsError = '';
+  sandbox.window.apiGet = async () => { throw new Error('字段服务不可用'); };
+  await fields.loadDatasetFields();
+  assert.equal(fields.fieldsError, '字段服务不可用');
+  assert.equal(JSON.stringify(fields.selectedFields), JSON.stringify(['sales']));
+  assert.equal(fields.fieldGroups.length, 1, '加载失败时应保留旧字段分组以继续显示当前选择');
+  fields.addField('impressions');
+  fields.fieldsError = '';
+  sandbox.window.apiPut = async () => { throw new Error('保存被拒绝'); };
+  await fields.saveDatasetFields();
+  assert.equal(fields.fieldsSaveError, '保存被拒绝');
+  assert.equal(JSON.stringify(fields.selectedFields), JSON.stringify(['sales', 'impressions']));
+  assert.equal(fields.fieldsDirty, true);
+
+  // 服务端返回空字段组是合法空态，不应被当成加载错误。
+  sandbox.window.apiGet = async () => ({ dataset_id: 'listing-daily-v1', project_id: 'project-a', token_id: 'token-a', available_fields: [], fields: [] });
+  fields.selectedProjectKey = JSON.stringify(['project-a', 'token-a']);
+  fields.selectedProjectId = 'project-a';
+  fields.selectedTokenId = 'token-a';
+  await fields.loadDatasetFields();
+  assert.equal(fields.fieldsError, '');
+  assert.equal(fields.availableFieldCount, 0);
+  assert.equal(fields.selectedFieldCount, 0);
+
+  // 只有单项目详情时，首次 GET 的响应也可直接作为当前项目清单。
+  const single = sandbox.window.dataSources();
+  const singleCalls = [];
+  sandbox.window.apiGet = async (url) => {
+    singleCalls.push(url);
+    if (url === '/api/datasources/datasets/listing-daily-v1/fields') {
+      return { projects: [{ project_id: 'project-a', token_id: 'token-a', fields: ['store'] }] };
+    }
+    return { ...fieldLoad, project_id: 'project-a', token_id: 'token-a' };
+  };
+  await single.loadDatasetProjects();
+  assert.equal(single.selectedProjectId, 'project-a');
+  assert.equal(JSON.stringify(singleCalls), JSON.stringify([
+    '/api/datasources/datasets/listing-daily-v1/fields',
+    '/api/datasources/datasets/listing-daily-v1/fields?project_id=project-a&token_id=token-a',
+  ]));
+
+  // 尚未登记项目/Token 是合法空态；页面保留双栏骨架，不显示红色加载错误。
+  const empty = sandbox.window.dataSources();
+  sandbox.window.apiGet = async () => ({ projects: [] });
+  await empty.loadDatasetProjects();
+  assert.equal(empty.fieldsError, '');
+  assert.equal(empty.hasDatasetSelection, false);
+  assert.equal(empty.projectOptions.length, 0);
+  assert.equal(empty.fieldGroups.length, 0);
+
+  // 日维字段只做固定展示分组，不改变 API 字段名或选择结果。
+  const grouped = sandbox.window.dataSources();
+  sandbox.window.apiGet = async () => ({
+    dataset_id: 'listing-daily-v1',
+    project_id: 'project-a',
+    token_id: 'token-a',
+    available_fields: [
+      'sales_units', 'sales_amount', 'returns_qty',
+      'inventory_sellable', 'inventory_sellable_source',
+      'sessions_desktop', 'review_count', 'rating',
+      'sp_spend', 'sp_spend_source', 'sd_sales', 'hsa_orders', 'sb_spend',
+      'is_provisional',
+    ],
+    fields: ['sales_units', 'inventory_sellable', 'sessions_desktop', 'sp_spend', 'sd_sales', 'hsa_orders', 'sb_spend'],
+  });
+  grouped.selectedProjectKey = JSON.stringify(['project-a', 'token-a']);
+  grouped.selectedProjectId = 'project-a';
+  grouped.selectedTokenId = 'token-a';
+  await grouped.loadDatasetFields();
+  assert.equal(JSON.stringify(grouped.fieldGroups.map(group => group.source)), JSON.stringify([
+    '销量', '库存', 'Performance', 'SP', 'SD', 'HSA', 'SB', '状态',
+  ]));
+  assert.equal(JSON.stringify(grouped.fieldGroups.map(group => group.fields.map(field => field.name))), JSON.stringify([
+    ['sales_units', 'sales_amount', 'returns_qty'],
+    ['inventory_sellable', 'inventory_sellable_source'],
+    ['sessions_desktop', 'review_count', 'rating'],
+    ['sp_spend', 'sp_spend_source'],
+    ['sd_sales'],
+    ['hsa_orders'],
+    ['sb_spend'],
+    ['is_provisional'],
+  ]));
 })().catch((error) => {
   process.nextTick(() => { throw error; });
 });

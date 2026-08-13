@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"embed"
 	"encoding/json"
 	"html/template"
@@ -14,6 +15,7 @@ import (
 	"github.com/jmoiron/sqlx"
 
 	"lingxing-sync/internal/config"
+	"lingxing-sync/internal/datasetapi"
 	"lingxing-sync/internal/db"
 	"lingxing-sync/internal/worker"
 )
@@ -35,6 +37,33 @@ func TestRenderPageWritesLayout(t *testing.T) {
 	s.renderPage(recorder, "sync_manage", pageData{Active: "sync_manage"})
 	if !strings.Contains(recorder.Body.String(), "<html>") {
 		t.Fatalf("rendered page missing layout: %q", recorder.Body.String())
+	}
+}
+
+func TestNavigationIncludesDedicatedDatasetFieldsPage(t *testing.T) {
+	items := sharedFuncs()["listItems"].(func() []navItem)()
+	if len(items) != 5 {
+		t.Fatalf("navigation items=%d, want 5", len(items))
+	}
+	want := navItem{Key: "dataset_fields", Href: "/dataset-fields", Label: "数据集字段"}
+	if items[4] != want {
+		t.Fatalf("fifth navigation item=%+v, want %+v", items[4], want)
+	}
+}
+
+func TestDatasetFieldsPageRouteRendersDedicatedTemplate(t *testing.T) {
+	s := &Server{
+		cfg:    &config.Config{},
+		assets: Assets{FS: renderTestFS, TemplateFS: "testdata", StaticFS: "testdata"},
+		pages:  map[string]*template.Template{},
+	}
+	if err := s.parseTemplates(); err != nil {
+		t.Fatalf("parse templates: %v", err)
+	}
+	recorder := httptest.NewRecorder()
+	s.Routes().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/dataset-fields", nil))
+	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), "<html>") {
+		t.Fatalf("dataset fields page status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
 }
 
@@ -108,6 +137,73 @@ func TestManualSyncRejectsDisabledEndpoint(t *testing.T) {
 	}
 }
 
+func TestDatasetRoutesUseBearerAndReportMissingReader(t *testing.T) {
+	rawToken := "dataset-project-token"
+	cfg := &config.Config{
+		Server: config.Server{Secret: "admin-secret"},
+		DatasetAPI: config.DatasetAPIConfig{
+			CursorSecret:   "cursor-secret-for-server-test",
+			FieldAllowlist: []string{"units"},
+			Tokens: []config.DatasetToken{{
+				ID: "project-a", TokenHash: datasetapi.HashToken(rawToken), DatasetScopes: []string{datasetapi.DatasetID}, StoreScopes: []string{"store-a"}, Fields: []string{"units"},
+			}},
+		},
+	}
+	s := New(cfg, nil, nil, nil, "", Assets{FS: renderTestFS, TemplateFS: "testdata", StaticFS: "testdata"}, nil, nil, nil, "")
+	h := s.withMiddleware(s.Routes())
+
+	req := httptest.NewRequest(http.MethodPost, datasetapi.SnapshotPath, strings.NewReader(`{"store":"store-a","date_from":"2026-08-01","date_to":"2026-08-01"}`))
+	req.Header.Set("Authorization", "Bearer "+rawToken)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("snapshot status=%d, want 503; body=%s", rec.Code, rec.Body.String())
+	}
+
+	fieldsReq := httptest.NewRequest(http.MethodGet, datasetapi.FieldsPath, nil)
+	fieldsReq.Header.Set("Authorization", "Bearer "+rawToken)
+	fieldsRec := httptest.NewRecorder()
+	h.ServeHTTP(fieldsRec, fieldsReq)
+	if fieldsRec.Code != http.StatusUnauthorized {
+		t.Fatalf("fields without admin secret status=%d, want 401; body=%s", fieldsRec.Code, fieldsRec.Body.String())
+	}
+	fieldsReq = httptest.NewRequest(http.MethodGet, datasetapi.FieldsPath+"?project_id=project-a", nil)
+	fieldsReq.Header.Set("X-Sync-Secret", "admin-secret")
+	fieldsRec = httptest.NewRecorder()
+	h.ServeHTTP(fieldsRec, fieldsReq)
+	if fieldsRec.Code != http.StatusOK {
+		t.Fatalf("fields with admin secret status=%d, want 200; body=%s", fieldsRec.Code, fieldsRec.Body.String())
+	}
+}
+
+func TestDatasetRoutesInjectSQLReaderWhenDBProvided(t *testing.T) {
+	rawToken := "dataset-project-token"
+	cfg := &config.Config{
+		Server: config.Server{Secret: "admin-secret"},
+		DatasetAPI: config.DatasetAPIConfig{
+			CursorSecret:   "cursor-secret-for-server-test",
+			FieldAllowlist: []string{"units"},
+			Tokens: []config.DatasetToken{{
+				ID: "project-a", TokenHash: datasetapi.HashToken(rawToken), DatasetScopes: []string{datasetapi.DatasetID}, StoreScopes: []string{"store-a"}, Fields: []string{"units"},
+			}},
+		},
+	}
+	dbx, err := sqlx.Open("mysql", "invalid:invalid@tcp(127.0.0.1:1)/invalid?timeout=1ms")
+	if err != nil {
+		t.Fatalf("open test db: %v", err)
+	}
+	defer dbx.Close()
+	s := New(cfg, dbx, nil, nil, "", Assets{FS: renderTestFS, TemplateFS: "testdata", StaticFS: "testdata"}, nil, nil, nil, "")
+	h := s.withMiddleware(s.Routes())
+	req := httptest.NewRequest(http.MethodPost, datasetapi.SnapshotPath, strings.NewReader(`{"store":"store-a","date_from":"2026-08-01","date_to":"2026-08-01"}`))
+	req.Header.Set("Authorization", "Bearer "+rawToken)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code == http.StatusServiceUnavailable {
+		t.Fatalf("configured db must inject SQL reader, got 503: %s", rec.Body.String())
+	}
+}
+
 // 配置 API 必须完整保留同步合同；否则线上经 GET 后编辑一行定时配置时，
 // 广告账号迭代、协议头或主键回填会在无提示的情况下丢失。
 func TestEndpointDTORoundTripPreservesAdvancedSyncContract(t *testing.T) {
@@ -175,6 +271,67 @@ func TestCreateProbeEndpointDoesNotRequireTableOrRecordIDs(t *testing.T) {
 	}
 }
 
+func TestApplyConfigWriteReturnsErrorWhenSchedulerRebuildFails(t *testing.T) {
+	oldCfg, newCfg := reportHotReloadConfigs()
+	endpoint := config.Endpoint{
+		Name: "orders", Account: "sc_us", Path: "/orders", Method: "POST", Table: "ls_orders", RecordIDFields: []string{"order_id"},
+		Rate: config.Rate{Bucket: 1, IntervalMs: 1000, Dimension: "account+path"}, Cron: "0 * * * *", Enabled: false,
+	}
+	oldCfg.Endpoints = []config.Endpoint{endpoint}
+	endpoint.Enabled = true
+	newCfg.Endpoints = []config.Endpoint{endpoint}
+	store := config.NewStore(t.TempDir()+"/config.yaml", oldCfg)
+	registry := worker.NewRegistry()
+	registered := &worker.EndpointWorker{Endpoint: oldCfg.Endpoints[0]}
+	registry.Register(registered)
+	scheduler := worker.NewScheduler(oldCfg, registry, nil, func(context.Context, string) error { return nil })
+	s := &Server{cfg: oldCfg, store: store, reg: registry, sched: scheduler, limiters: worker.NewLimiterRegistry()}
+	rec := httptest.NewRecorder()
+
+	s.applyConfigWrite(rec, oldCfg, newCfg, "updated")
+
+	if rec.Code != http.StatusInternalServerError || !strings.Contains(rec.Body.String(), "Rebuild") {
+		t.Fatalf("rebuild failure response status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if registered.Endpoint.Enabled {
+		t.Fatal("worker hot state changed even though scheduler Rebuild failed")
+	}
+}
+
+func TestSettingsReloadReturnsErrorWhenSchedulerRebuildFails(t *testing.T) {
+	oldCfg, newCfg := reportHotReloadConfigs()
+	path := t.TempDir() + "/config.yaml"
+	if err := config.NewStore(path, newCfg).Save(newCfg); err != nil {
+		t.Fatal(err)
+	}
+	store := config.NewStore(path, oldCfg)
+	registry := worker.NewRegistry()
+	scheduler := worker.NewScheduler(oldCfg, registry, nil, func(context.Context, string) error { return nil })
+	s := &Server{cfg: oldCfg, configPath: path, store: store, reg: registry, sched: scheduler, limiters: worker.NewLimiterRegistry()}
+	rec := httptest.NewRecorder()
+
+	s.apiSettingsReload(rec, httptest.NewRequest(http.MethodPost, "/api/settings/reload", nil))
+
+	if rec.Code != http.StatusInternalServerError || !strings.Contains(rec.Body.String(), "Rebuild") {
+		t.Fatalf("reload rebuild failure response status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func reportHotReloadConfigs() (*config.Config, *config.Config) {
+	oldCfg := &config.Config{
+		Server:    config.Server{Port: 7799},
+		Database:  config.Database{Host: "127.0.0.1", Port: 3306, User: "test", DB: "lingsync", MaxOpen: 20, MaxIdle: 5, ConnTimeoutSec: 10},
+		Accounts:  []config.Account{{ID: "sc_us", AppKey: "key", AppSecret: "secret", ConnectionCheck: config.DefaultConnectionCheck()}},
+		Retention: config.Retention{TaskLogsDays: 90, TasksDays: 365, CleanupCron: "0 3 * * *"},
+	}
+	newCfg := *oldCfg
+	newCfg.ReportExports = []config.ReportExport{{
+		Type: config.ReportExportCustomerReturns, Enabled: true, Account: "sc_us", SellerID: "SELLER-1", StoreID: "STORE-1",
+		Region: "na", MarketplaceIDs: []string{"ATVPDKIKX0DER"}, Cron: "0 4 * * *", WindowDays: 3,
+	}}
+	return oldCfg, &newCfg
+}
+
 func TestValidateSyncDateRange(t *testing.T) {
 	if err := validateSyncDateRange("2026-08-01", "2026-08-03"); err != nil {
 		t.Fatalf("valid date range rejected: %v", err)
@@ -187,6 +344,36 @@ func TestValidateSyncDateRange(t *testing.T) {
 		if err := validateSyncDateRange(tc.from, tc.to); err == nil {
 			t.Fatalf("invalid date range accepted: %#v", tc)
 		}
+	}
+}
+
+func TestValidateSingleDaySyncDateRangeLimit(t *testing.T) {
+	if err := validateSingleDaySyncDateRange("2024-01-01", "2024-04-01"); err != nil {
+		t.Fatalf("92-day range rejected: %v", err)
+	}
+	if err := validateSingleDaySyncDateRange("2024-01-01", "2024-04-02"); err == nil {
+		t.Fatal("93-day range was accepted")
+	}
+}
+
+func TestManualSyncRejectsSingleDayRangeOver92Days(t *testing.T) {
+	registry := worker.NewRegistry()
+	registry.Register(&worker.EndpointWorker{Endpoint: config.Endpoint{
+		Name: "performance", Enabled: true, SingleDayWindow: true,
+	}})
+	s := &Server{reg: registry}
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/sync/performance",
+		strings.NewReader(`{"date_from":"2024-01-01","date_to":"2024-04-02"}`),
+	)
+	req.SetPathValue("name", "performance")
+	rec := httptest.NewRecorder()
+
+	s.apiSyncTrigger(rec, req)
+
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "92") {
+		t.Fatalf("93-day single-day range status=%d body=%s", rec.Code, rec.Body.String())
 	}
 }
 

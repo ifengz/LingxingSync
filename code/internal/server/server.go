@@ -28,6 +28,7 @@ import (
 
 	"lingxing-sync/internal/api"
 	"lingxing-sync/internal/config"
+	"lingxing-sync/internal/datasetapi"
 	"lingxing-sync/internal/worker"
 )
 
@@ -51,10 +52,13 @@ type Server struct {
 	assets    Assets // 注入的 web/ 静态资源（embed.FS）
 
 	// 配置读写 + 热加载/重启依赖（宪法 §7.5）
-	store      *config.ConfigStore     // config.yaml 线程安全读写 + 变更分类
-	sched      *worker.Scheduler       // 热加载时 Rebuild cron
-	limiters   *worker.LimiterRegistry // rate 变化时 UpdateOrCreate
-	configPath string                  // config.yaml 路径（消息展示用）
+	store        *config.ConfigStore     // config.yaml 线程安全读写 + 变更分类
+	sched        *worker.Scheduler       // 热加载时 Rebuild cron
+	limiters     *worker.LimiterRegistry // rate 变化时 UpdateOrCreate
+	configPath   string                  // config.yaml 路径（消息展示用）
+	datasetAPI   *datasetapi.Handler     // 固定 listing-daily-v1 发布合同
+	dailyPreview dailyPreviewReader      // 固定日维预览查询
+	reportStatus reportStatusReader      // 正式报表任务与对账状态
 
 	// pages: 页面名 → 该页专属的已解析模板树。
 	// 关键解耦：每页一棵独立模板树（layout + 该页 partial），这样各页的
@@ -89,11 +93,67 @@ func New(cfg *config.Config, dbx *sqlx.DB, reg *worker.Registry, clients *api.Cl
 		configPath: configPath,
 		pages:      map[string]*template.Template{},
 	}
+	if dbx != nil {
+		s.dailyPreview = sqlDailyPreviewReader{db: dbx}
+		s.reportStatus = sqlReportStatusReader{db: dbx}
+	}
+	datasetCfg := datasetapi.Config{
+		FieldAllowlist:  cfg.DatasetAPI.FieldAllowlist,
+		MaxDateSpanDays: cfg.DatasetAPI.MaxDateSpanDays,
+		MaxPageSize:     cfg.DatasetAPI.MaxPageSize,
+		CursorSecret:    []byte(cfg.DatasetAPI.CursorSecret),
+	}
+	for _, token := range cfg.DatasetAPI.Tokens {
+		parsedExpiry, err := parseDatasetTokenExpiry(token.ExpiresAt)
+		if err != nil {
+			log.Printf("[server] dataset token %s expires_at invalid: %v", token.ID, err)
+			continue
+		}
+		datasetCfg.Tokens = append(datasetCfg.Tokens, datasetapi.Token{
+			ID: token.ID, ProjectID: token.ProjectID, Hash: token.TokenHash, DatasetScopes: token.DatasetScopes,
+			StoreScopes: token.StoreScopes, Fields: token.Fields, ExpiresAt: parsedExpiry, Revoked: token.Revoked,
+		})
+	}
+	var datasetErr error
+	s.datasetAPI, datasetErr = datasetapi.New(datasetCfg, nil)
+	if datasetErr != nil {
+		log.Printf("[server] dataset API unavailable: %v", datasetErr)
+	} else {
+		if dbx != nil {
+			s.datasetAPI.SetReader(datasetapi.NewSQLReader(dbx))
+		}
+		s.datasetAPI.SetFieldPersistence(func(tokenID string, fields []string) error {
+			if s.store == nil {
+				return fmt.Errorf("config store is not configured")
+			}
+			snap := s.store.Snapshot()
+			for i := range snap.DatasetAPI.Tokens {
+				if snap.DatasetAPI.Tokens[i].ID == tokenID {
+					snap.DatasetAPI.Tokens[i].Fields = append([]string(nil), fields...)
+					return s.store.Save(snap)
+				}
+			}
+			return fmt.Errorf("dataset token %q not found", tokenID)
+		})
+	}
 	if err := s.parseTemplates(); err != nil {
 		// 模板编译错属编程期错误，启动直接 fail-loud（宪法：不静默兜底）
 		log.Fatalf("[server] 模板编译失败: %v", err)
 	}
 	return s
+}
+
+func parseDatasetTokenExpiry(raw string) (time.Time, error) {
+	if strings.TrimSpace(raw) == "" {
+		return time.Time{}, nil
+	}
+	return time.Parse(time.RFC3339, raw)
+}
+
+func (s *Server) SetDatasetReader(reader datasetapi.Reader) {
+	if s.datasetAPI != nil {
+		s.datasetAPI.SetReader(reader)
+	}
 }
 
 // sharedFuncs 是所有模板树共享的 FuncMap。
@@ -126,6 +186,7 @@ func sharedFuncs() template.FuncMap {
 				{Key: "sync_manage", Href: "/sync", Label: "同步配置"},
 				{Key: "logs", Href: "/logs", Label: "同步日志"},
 				{Key: "datasources", Href: "/datasources", Label: "数据源"},
+				{Key: "dataset_fields", Href: "/dataset-fields", Label: "数据集字段"},
 			}
 		},
 	}
@@ -202,6 +263,7 @@ func (s *Server) Routes() *http.ServeMux {
 	mux.HandleFunc("GET /sync", s.pageSyncManage) // 同步管理
 	mux.HandleFunc("GET /logs", s.pageLogs)       // 同步日志
 	mux.HandleFunc("GET /datasources", s.pageDataSources)
+	mux.HandleFunc("GET /dataset-fields", s.pageDatasetFields)
 	mux.HandleFunc("GET /settings/api", s.pageSettingsAPI)
 
 	// ---- API 路由：状态/端点/任务 ----
@@ -221,6 +283,13 @@ func (s *Server) Routes() *http.ServeMux {
 
 	// ---- API 路由：对账 ----
 	mux.HandleFunc("POST /api/reconcile", s.apiReconcile)
+
+	// ---- API 路由：固定 listing 数据集 ----
+	s.registerDailyReportRoutes(mux)
+	if s.datasetAPI != nil {
+		mux.Handle("/api/v1/datasets/listing-daily-v1/", s.datasetAPI)
+		mux.Handle(datasetapi.FieldsPath, s.datasetAPI)
+	}
 
 	// ---- API 路由：配置读写（账号/接口 CRUD + 重启 + 字段查询）----
 	// 全部在 handlers_config.go 内定义并自注册，统一维护（宪法 §7.5）。
@@ -269,7 +338,7 @@ func (s *Server) withMiddleware(h http.Handler) http.Handler {
 				r.Method, r.URL.RequestURI(), rr.status, time.Since(start).Milliseconds())
 		}()
 
-		if s.cfg.Server.Secret != "" && strings.HasPrefix(r.URL.Path, "/api/") {
+		if s.cfg.Server.Secret != "" && strings.HasPrefix(r.URL.Path, "/api/") && !datasetapi.IsBearerPath(r.URL.Path) {
 			if r.Header.Get("X-Sync-Secret") != s.cfg.Server.Secret {
 				errJSON(w, http.StatusUnauthorized, "missing or wrong X-Sync-Secret")
 				return

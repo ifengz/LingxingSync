@@ -213,12 +213,22 @@ window.syncManage = function () {
     // 定时调度：内联直接编辑（无「编辑」按钮）。scheduleBaseline[name] 存该行加载/保存后的
     // 基线快照，用于「整行 dirty 判定 + 取消回滚」（复用店铺选择的 baseline 模式，保持一致）。
     scheduleBaseline: {},
+    scheduleSelected: [],
+    scheduleFilter: { account: '', query: '' },
+    scheduleBatch: { enabled: 'unchanged', cron: '', window_days: '' },
+    scheduleBatchSaving: false,
     // 高级/开发者「手动填合同」折叠区开关（清单没有的接口才用）。默认收起。
     advancedAdd: false,
     // 接口清单（从后端 /api/catalog 拉）：templates=模板列表，accounts=可选账号。
     catalog: { templates: [], accounts: [] },
     catalogBatchAccount: '',
     catalogBatchKeys: [],
+    reportExportConfigs: [],
+    reportBatch: { account: '', store_sids: [], region: 'na', cron: '0 4 * * *', window_days: 3, enabled: true },
+    reportStatuses: {},
+    reportExportLoading: false,
+    reportExportSaving: false,
+    reportExportError: '',
     // 保守限流默认：桶 1 / 间隔 1000ms（对齐 otherlingxinggithub.md §3「业务 API ≥0.6s」留足余量）。
     // extra_params_text 是 JSON 文本输入，保存时解析成对象；解析失败拦截不发请求。
     addForm: { name: '', display: '', account: '', path: '', method: 'GET', table: '', record_id_fields: '', cron: '', bucket: 1, interval_ms: 1000, multi_interval_ms: 0, window_days: 0, iterate_by_store: false, store_param_name: '', extra_params_text: '' },
@@ -238,6 +248,7 @@ window.syncManage = function () {
       const t = q.get('tab');
       if (q.get('add') === '1' || t === 'add') this.tab = 'add';
       else if (t === 'schedule') this.tab = 'schedule';
+      else if (t === 'reports') this.tab = 'reports';
     },
     // blankAddForm 返回添加表单的初始/重置态：与 data 里的 addForm 初值保持一致，
     // 保存成功后调用它清空表单（保守限流默认桶 1 / 间隔 1000ms）。
@@ -281,6 +292,109 @@ window.syncManage = function () {
       }
       await this.loadCatalog();
       await this.loadRecentTasks();
+      await this.loadReportExport();
+    },
+    async loadReportExport() {
+      this.reportExportLoading = true;
+      this.reportExportError = '';
+      try {
+        const response = await window.apiGet('/api/report-exports/config') || {};
+        this.reportExportConfigs = Array.isArray(response.report_exports) ? response.report_exports.slice() : [];
+        this.reportStatuses = {};
+        const statuses = await Promise.all(this.reportExportConfigs.map(async row => {
+          const query = new URLSearchParams({ account: row.account, store_id: row.store_id });
+          const status = await window.apiGet('/api/report-exports/status?' + query.toString());
+          return [this.reportScopeKey(row), status];
+        }));
+        for (const [key, status] of statuses) this.reportStatuses[key] = status;
+      } catch (error) {
+        this.reportExportError = errorMessage(error, '未能读取正式报表');
+      } finally {
+        this.reportExportLoading = false;
+      }
+    },
+    reportScopeKey(row) { return [row.type, row.account, row.store_id].join('|'); },
+    reportStatusFor(row) { return this.reportStatuses[this.reportScopeKey(row)] || { latest_task: null, differences: {} }; },
+    reportStatusText(row) {
+      const task = this.reportStatusFor(row).latest_task;
+      if (!task) return row.enabled ? '等待运行' : '未启用';
+      const labels = { success: '已完成', done: '已完成', completed: '已完成', error: '失败', failed: '失败', running: '运行中', pending: '等待中' };
+      return labels[task.status] || task.status || '未知';
+    },
+    reportDifferenceFor(row, name) {
+      const differences = this.reportStatusFor(row).differences || {};
+      if (differences.error) return '—';
+      return differences[name] === null || differences[name] === undefined ? 0 : differences[name];
+    },
+    async selectReportAccount(account) {
+      this.reportBatch.account = account;
+      this.reportBatch.store_sids = [];
+      if (account) await this.ensureStores(account);
+    },
+    toggleReportStore(sid) {
+      const selected = this.reportBatch.store_sids;
+      const index = selected.indexOf(sid);
+      if (index >= 0) selected.splice(index, 1);
+      else selected.push(sid);
+    },
+    selectAllReportStores() {
+      const slot = this.storesByAccount[this.reportBatch.account];
+      if (!slot || !slot.loaded) return;
+      const valid = slot.items.filter(store => store.store_type === 'SC' && store.seller_id && store.marketplace_id).map(store => store.sid);
+      this.reportBatch.store_sids = this.reportBatch.store_sids.length === valid.length ? [] : valid;
+    },
+    async saveReportExportBatch() {
+      if (this.reportExportSaving) return;
+      const account = this.reportBatch.account;
+      const slot = this.storesByAccount[account];
+      const selected = new Set(this.reportBatch.store_sids);
+      const stores = slot && slot.loaded ? slot.items.filter(store => selected.has(store.sid)) : [];
+      if (!account || !stores.length) {
+        this.reportExportError = '请选择账号和至少一个店铺';
+        return;
+      }
+      const incomplete = stores.filter(store => store.store_type !== 'SC' || !store.seller_id || !store.marketplace_id);
+      if (incomplete.length) {
+        this.reportExportError = '所选店铺缺少 Seller ID 或 Marketplace ID：' + incomplete.map(store => store.store_name || store.sid).join('、');
+        return;
+      }
+      const existingScopes = new Set(stores.map(store => ['fba_customer_returns', account, store.sid].join('|')));
+      const keep = this.reportExportConfigs.filter(row => !existingScopes.has([row.type, row.account, row.store_id].join('|')));
+      const additions = stores.map(store => ({
+        type: 'fba_customer_returns', enabled: !!this.reportBatch.enabled, account,
+        seller_id: store.seller_id, store_id: store.sid, region: this.reportBatch.region,
+        marketplace_ids: [store.marketplace_id], cron: this.reportBatch.cron,
+        window_days: Number(this.reportBatch.window_days),
+      }));
+      this.reportExportSaving = true;
+      this.reportExportError = '';
+      try {
+        const result = await window.apiPut('/api/report-exports/config', { report_exports: keep.concat(additions) });
+        window.toast('success', (result && result.message) || '正式报表配置已保存');
+        await this.loadReportExport();
+      } catch (error) {
+        this.reportExportError = errorMessage(error, '保存正式报表配置失败');
+      } finally {
+        this.reportExportSaving = false;
+      }
+    },
+    async deleteReportExport(row) {
+      if (this.reportExportSaving) return;
+      const ok = await window.syncConfirm('删除「' + this.accountName(row.account) + ' / ' + row.store_id + '」的报表校验配置？', '删除报表配置');
+      if (!ok) return;
+      const key = this.reportScopeKey(row);
+      const reportExports = this.reportExportConfigs.filter(item => this.reportScopeKey(item) !== key);
+      this.reportExportSaving = true;
+      this.reportExportError = '';
+      try {
+        const result = await window.apiPut('/api/report-exports/config', { report_exports: reportExports });
+        window.toast('success', (result && result.message) || '报表配置已删除');
+        await this.loadReportExport();
+      } catch (error) {
+        this.reportExportError = errorMessage(error, '删除报表配置失败');
+      } finally {
+        this.reportExportSaving = false;
+      }
     },
     // 接口清单（从清单添加的主路径数据）。失败静默：清单拉不到不影响调度表。
     async loadCatalog() {
@@ -634,6 +748,61 @@ window.syncManage = function () {
       row.store_sids_text = (e.store_sids || []).join(',');
       return row;
     },
+    get filteredSchedule() {
+      const account = this.scheduleFilter.account;
+      const query = (this.scheduleFilter.query || '').trim().toLowerCase();
+      return this.schedule.filter(row => {
+        if (account && row.account !== account) return false;
+        if (!query) return true;
+        return [row.display, row.name, row.path].some(value => String(value || '').toLowerCase().includes(query));
+      });
+    },
+    isScheduleSelected(name) { return this.scheduleSelected.includes(name); },
+    toggleSchedule(name) {
+      this.scheduleSelected = this.isScheduleSelected(name)
+        ? this.scheduleSelected.filter(item => item !== name)
+        : this.scheduleSelected.concat(name);
+    },
+    get allVisibleScheduleSelected() {
+      return this.filteredSchedule.length > 0 && this.filteredSchedule.every(row => this.isScheduleSelected(row.name));
+    },
+    toggleAllVisibleSchedule() {
+      const visible = new Set(this.filteredSchedule.map(row => row.name));
+      if (this.allVisibleScheduleSelected) {
+        this.scheduleSelected = this.scheduleSelected.filter(name => !visible.has(name));
+        return;
+      }
+      this.scheduleSelected = Array.from(new Set(this.scheduleSelected.concat(Array.from(visible))));
+    },
+    async saveScheduleBatch() {
+      if (this.scheduleBatchSaving || this.scheduleSelected.length === 0) return;
+      const selected = new Set(this.scheduleSelected);
+      const rows = this.schedule.filter(row => selected.has(row.name));
+      const cron = (this.scheduleBatch.cron || '').trim();
+      const hasWindow = this.scheduleBatch.window_days !== '' && this.scheduleBatch.window_days !== null;
+      const windowDays = Number(this.scheduleBatch.window_days);
+      for (const row of rows) {
+        if (this.scheduleBatch.enabled === 'enabled') row.enabled = true;
+        if (this.scheduleBatch.enabled === 'disabled') row.enabled = false;
+        if (cron) row.cron = cron;
+        if (hasWindow && row.date_range_capable) row.window_days = windowDays;
+      }
+      this.scheduleBatchSaving = true;
+      try {
+        const failed = [];
+        for (const row of rows) {
+          if (!(await this.saveRow(row, false))) failed.push(row.name);
+        }
+        this.scheduleSelected = failed;
+        if (failed.length) {
+          window.toast('warn', '已保存 ' + (rows.length - failed.length) + ' 个，失败 ' + failed.length + ' 个');
+          return;
+        }
+        window.toast('success', '已保存 ' + rows.length + ' 个接口');
+      } finally {
+        this.scheduleBatchSaving = false;
+      }
+    },
     // 该行「可编辑字段」的可比较快照，用于 dirty 判定与取消回滚（复用店铺选择的基线模式）。
     rowSnap(e) {
       return JSON.stringify({
@@ -676,7 +845,7 @@ window.syncManage = function () {
     },
     // 保存该行：沿用既有契约 PUT /api/endpoints/{name}；成功后仅更新本行基线（不整表 reload，
     // 避免连带丢弃其他行的未保存编辑）。
-    async saveRow(e) {
+    async saveRow(e, notify = true) {
       const sids = (e.store_sids_text || '').split(',').map(s => s.trim()).filter(Boolean);
       // 后端 DisallowUnknownFields：剔除仅前端用的 store_sids_text 辅助字段。
       const body = Object.assign({}, e, {
@@ -686,13 +855,17 @@ window.syncManage = function () {
       delete body.store_sids_text;
       const r = await window.apiPut('/api/endpoints/' + encodeURIComponent(e.name), body).catch(window.toastError);
       if (r) {
-        if (r.need_restart) { this.needRestart = true; window.toast('info', r.message || '已保存，需重启生效'); }
-        else window.toast('success', r.message || '已热加载生效');
+        if (r.need_restart) {
+          this.needRestart = true;
+          if (notify) window.toast('info', r.message || '已保存，需重启生效');
+        } else if (notify) window.toast('success', r.message || '已热加载生效');
         // 以规范化后的当前值刷新本行（store_sids 数组与文本对齐），并把基线设为当前 → dirty 归零。
         e.store_sids = sids;
         e.store_sids_text = sids.join(',');
         this.scheduleBaseline[e.name] = this.rowSnap(e);
+        return true;
       }
+      return false;
     },
     async deleteEndpoint(e) {
       const ok = await window.syncConfirm('删除接口「' + (e.display || e.name) + '」？不会删除已同步的数据。', '删除接口');
@@ -967,6 +1140,97 @@ window.taskDetail = function () {
 /* ------------------------------------------------------------------ *
  * 3e. dataSources — 数据源（/datasources）
  * ------------------------------------------------------------------ */
+// 数据集字段路径集中在这一处，避免页面拼接任意表名或动态路由。
+function datasetProjectKey(projectId, tokenId) {
+  return JSON.stringify([projectId, tokenId]);
+}
+
+function listingDailyFieldsPath(projectId, tokenId) {
+  const path = '/api/datasources/datasets/listing-daily-v1/fields';
+  if (!projectId && !tokenId) return path;
+  return path + '?' + new URLSearchParams({ project_id: projectId, token_id: tokenId }).toString();
+}
+
+function normalizeDatasetProjects(data) {
+  if (data && typeof data.project_id === 'string' && typeof data.token_id === 'string' &&
+      Array.isArray(data.available_fields) && Array.isArray(data.fields)) {
+    const projectId = data.project_id.trim();
+    const tokenId = data.token_id.trim();
+    if (!projectId || !tokenId) throw new Error('项目或令牌 ID 选项格式错误');
+    const key = datasetProjectKey(projectId, tokenId);
+    return {
+      projects: [{ project_id: projectId, token_id: tokenId, key, label: projectId + ' / ' + tokenId }],
+      detail: { ...data, project_id: projectId, token_id: tokenId },
+    };
+  }
+  const raw = data && data.projects;
+  if (!Array.isArray(raw)) throw new Error('项目与令牌 ID 响应格式错误');
+  const seen = new Set();
+  const projects = raw.map((item) => {
+    if (!item || typeof item.project_id !== 'string' || typeof item.token_id !== 'string') {
+      throw new Error('项目或令牌 ID 选项格式错误');
+    }
+    const projectId = item.project_id.trim();
+    const tokenId = item.token_id.trim();
+    if (!projectId || !tokenId) throw new Error('项目或令牌 ID 选项格式错误');
+    const key = datasetProjectKey(projectId, tokenId);
+    if (seen.has(key)) throw new Error('项目与令牌 ID 选项重复');
+    seen.add(key);
+    return {
+      project_id: projectId,
+      token_id: tokenId,
+      key,
+      label: typeof item.label === 'string' && item.label.trim() ? item.label.trim() : projectId + ' / ' + tokenId,
+    };
+  });
+  return { projects, detail: null };
+}
+
+function normalizeListingDailyFields(data, projectId, tokenId) {
+  if (!data || data.dataset_id !== 'listing-daily-v1' || data.project_id !== projectId || data.token_id !== tokenId ||
+      !Array.isArray(data.available_fields) || !Array.isArray(data.fields)) {
+    throw new Error('数据集字段响应格式错误');
+  }
+  const names = new Set();
+  const fields = data.available_fields.map((name) => {
+    if (typeof name !== 'string' || !name.trim()) throw new Error('数据集字段项格式错误');
+    const normalized = name.trim();
+    if (names.has(normalized)) throw new Error('数据集字段重复: ' + normalized);
+    names.add(normalized);
+    return { name: normalized, label: normalized };
+  });
+  const selectedFields = data.fields.map((name) => {
+    if (typeof name !== 'string' || !names.has(name)) {
+      throw new Error('数据集已选字段不在登记清单中');
+    }
+    return name;
+  });
+  if (new Set(selectedFields).size !== selectedFields.length) {
+    throw new Error('数据集已选字段重复');
+  }
+  const groupPrefixes = [
+    { source: '销量', prefixes: ['sales_', 'returns_'] },
+    { source: '库存', prefixes: ['inventory_'] },
+    { source: 'Performance', prefixes: ['sessions_', 'review_count', 'rating'] },
+    { source: 'SP', prefixes: ['sp_'] },
+    { source: 'SD', prefixes: ['sd_'] },
+    { source: 'HSA', prefixes: ['hsa_'] },
+    { source: 'SB', prefixes: ['sb_'] },
+  ];
+  const groups = groupPrefixes.map((group) => ({
+    source: group.source,
+    fields: fields.filter((field) => group.prefixes.some((prefix) => field.name === prefix || field.name.startsWith(prefix))),
+  }));
+  const groupedNames = new Set(groups.flatMap((group) => group.fields.map((field) => field.name)));
+  const remaining = fields.filter((field) => !groupedNames.has(field.name));
+  if (remaining.length > 0) groups.push({ source: '状态', fields: remaining });
+  return { groups: groups.filter((group) => group.fields.length > 0), selectedFields };
+}
+
+function errorMessage(error, fallback) {
+  return error && error.message ? error.message : (String(error || '') || fallback);
+}
+
 window.dataSources = function () {
   return {
     endpoints: [],
@@ -975,17 +1239,136 @@ window.dataSources = function () {
     columns: [],
     colError: '',       // 读字段失败时的提示（不静默空白）
     refreshing: false,  // 刷新主表工作态（只重拉 /api/endpoints，不动整页）
+    fieldGroups: [],
+    selectedFields: [],
+    savedFields: [],
+    datasetProjects: [],
+    selectedProjectKey: '',
+    selectedProjectId: '',
+    selectedTokenId: '',
+    fieldStateByProject: {},
+    fieldsLoading: false,
+    fieldsSaving: false,
+    fieldsError: '',
+    fieldsSaveError: '',
+    fieldsRequestVersion: 0,
+    datasetCreateOpen: false,
+    datasetCreating: false,
+    datasetCreateError: '',
+    datasetCreateResult: null,
+    datasetCreateForm: { project_id: '', store_scopes: '' },
+    dailyPreviewFilters: { date_from: '', date_to: '', store: '', asin: '', sku: '', page: 1, page_size: 20 },
+    dailyPreviewItems: [],
+    dailyPreviewTotal: 0,
+    dailyPreviewLoading: false,
+    dailyPreviewLoaded: false,
+    dailyPreviewError: '',
+
+    get fieldsDirty() {
+      return JSON.stringify(this.selectedFields) !== JSON.stringify(this.savedFields);
+    },
+    get availableFieldCount() {
+      return this.fieldGroups.reduce((count, group) => count + this.availableFields(group).length, 0);
+    },
+    get selectedFieldCount() { return this.selectedFields.length; },
+    get hasDatasetSelection() { return Boolean(this.selectedProjectKey && this.selectedProjectId && this.selectedTokenId); },
+    get projectOptions() { return this.datasetProjects; },
+    get dailyPreviewPages() {
+      return Math.max(1, Math.ceil(this.dailyPreviewTotal / this.dailyPreviewFilters.page_size));
+    },
 
     async load() {
+      await this.loadEndpoints();
+      await this.loadDatasetProjects();
+    },
+    async createDatasetProjectToken() {
+      if (this.datasetCreating) return;
+      this.datasetCreateError = '';
+      const split = (value) => String(value || '').split(',').map((item) => item.trim()).filter(Boolean);
+      const body = {
+        project_id: this.datasetCreateForm.project_id,
+        store_scopes: split(this.datasetCreateForm.store_scopes),
+      };
+      this.datasetCreating = true;
+      try {
+        this.datasetCreateResult = await window.apiPost('/api/datasources/datasets/listing-daily-v1/projects', body);
+        this.datasetCreateForm = { project_id: '', store_scopes: '' };
+        this.datasetCreateOpen = true;
+        window.toast('success', '项目 Token 已创建，请先复制明文 Token');
+      } catch (error) {
+        this.datasetCreateError = errorMessage(error, '创建项目 Token 失败');
+      } finally {
+        this.datasetCreating = false;
+      }
+    },
+    async restartAfterDatasetToken() {
+      const result = await window.apiPost('/api/settings/restart', {}).catch(window.toastError);
+      if (result) window.toast('success', result.message || '同步机正在重启');
+    },
+    async loadEndpoints() {
       const eps = await window.apiGet('/api/endpoints').catch(window.toastError);
       this.endpoints = eps || [];
+      return eps;
+    },
+    async loadDailyPreview() {
+      if (this.dailyPreviewLoading) return;
+      const filters = this.dailyPreviewFilters;
+      const params = new URLSearchParams({
+        date_from: filters.date_from || '', date_to: filters.date_to || '', store: filters.store || '',
+        asin: filters.asin || '', sku: filters.sku || '', page: String(filters.page), page_size: String(filters.page_size),
+      });
+      this.dailyPreviewLoading = true;
+      this.dailyPreviewError = '';
+      try {
+        const data = await window.apiGet('/api/datasets/listing-daily-v1/preview?' + params.toString());
+        if (!data || !Array.isArray(data.items)) throw new Error('日维预览响应格式错误');
+        this.dailyPreviewItems = data.items;
+        this.dailyPreviewTotal = Number(data.total) || 0;
+        this.dailyPreviewFilters.page = Number(data.page) || filters.page;
+        this.dailyPreviewFilters.page_size = Number(data.page_size) || filters.page_size;
+      } catch (error) {
+        this.dailyPreviewItems = [];
+        this.dailyPreviewTotal = 0;
+        this.dailyPreviewError = errorMessage(error, '未能读取日维数据');
+      } finally {
+        this.dailyPreviewLoaded = true;
+        this.dailyPreviewLoading = false;
+      }
+    },
+    applyDailyPreviewFilters() {
+      this.dailyPreviewFilters.page = 1;
+      return this.loadDailyPreview();
+    },
+    changeDailyPreviewPage(page) {
+      if (page < 1 || page > this.dailyPreviewPages || page === this.dailyPreviewFilters.page) return;
+      this.dailyPreviewFilters.page = page;
+      return this.loadDailyPreview();
+    },
+    dailyPreviewValue(value) { return value === null || value === undefined || value === '' ? '—' : String(value); },
+    dailyPreviewIdentity(row, primary, fallback) {
+      const value = row[primary];
+      return value === null || value === undefined ? row[fallback] : value;
+    },
+    dailyPreviewRowKey(row) {
+      return [row.business_date, this.dailyPreviewIdentity(row, 'store', 'store_id'), row.asin, this.dailyPreviewIdentity(row, 'sku', 'listing_sku')].join('|');
+    },
+    dailyPreviewStatusText(row) {
+      if (row.is_provisional === true || row.is_verified === false) return '未验证';
+      if (row.is_verified === true || row.is_provisional === false) return '已验证';
+      return '未知';
+    },
+    dailyPreviewStatusClass(row) {
+      const status = this.dailyPreviewStatusText(row);
+      if (status === '已验证') return 'bg-emerald-50 text-emerald-700';
+      if (status === '未验证') return 'bg-amber-50 text-amber-700';
+      return 'bg-slate-100 text-slate-500';
     },
     // 只刷新主表（数据源列表），不重载页面、不影响已展开字段外的状态。
     async refresh() {
       if (this.refreshing) return;
       this.refreshing = true;
       try {
-        const eps = await window.apiGet('/api/endpoints').catch(window.toastError);
+        const eps = await this.loadEndpoints();
         if (eps) {
           this.endpoints = eps;
           this.expanded = null; // 列表刷新后收起展开行，避免 idx 错位
@@ -1010,6 +1393,134 @@ window.dataSources = function () {
       this.metaLoading = false;
       if (!d || !d.columns) { this.colError = '未能读取字段结构'; return; }
       this.columns = d.columns; // [{name,type,is_primary}]
+    },
+    rememberCurrentFields() {
+      if (!this.hasDatasetSelection) return;
+      this.fieldStateByProject[this.selectedProjectKey] = {
+        groups: this.fieldGroups.map((group) => ({ ...group, fields: [...group.fields] })),
+        selected: [...this.selectedFields],
+        saved: [...this.savedFields],
+      };
+    },
+    async selectProject(projectKey) {
+      const next = this.datasetProjects.find((target) => target.key === projectKey);
+      if (!next) throw new Error('项目与令牌 ID 不在可选清单中');
+      this.rememberCurrentFields();
+      this.fieldsRequestVersion += 1;
+      this.selectedProjectKey = next.key;
+      this.selectedProjectId = next.project_id;
+      this.selectedTokenId = next.token_id;
+      const saved = this.fieldStateByProject[next.key];
+      if (saved) {
+        this.fieldGroups = saved.groups.map((group) => ({ ...group, fields: [...group.fields] }));
+        this.selectedFields = [...saved.selected];
+        this.savedFields = [...saved.saved];
+        this.fieldsError = '';
+        this.fieldsSaveError = '';
+        return;
+      }
+      this.fieldGroups = [];
+      this.selectedFields = [];
+      this.savedFields = [];
+      this.fieldsError = '';
+      await this.loadDatasetFields();
+    },
+    async loadDatasetProjects() {
+      const requestVersion = ++this.fieldsRequestVersion;
+      this.fieldsLoading = true;
+      this.fieldsError = '';
+      try {
+        const data = await window.apiGet(listingDailyFieldsPath());
+        if (requestVersion !== this.fieldsRequestVersion) return;
+        const normalized = normalizeDatasetProjects(data);
+        this.datasetProjects = normalized.projects;
+        const first = normalized.projects[0];
+        if (!first) return;
+        this.selectedProjectKey = first.key;
+        this.selectedProjectId = first.project_id;
+        this.selectedTokenId = first.token_id;
+        if (normalized.detail) {
+          const fields = normalizeListingDailyFields(normalized.detail, first.project_id, first.token_id);
+          this.applyDatasetFields(fields);
+        } else {
+          await this.loadDatasetFields();
+        }
+      } catch (error) {
+        if (requestVersion === this.fieldsRequestVersion) this.fieldsError = errorMessage(error, '未能读取项目 ID');
+      } finally {
+        if (requestVersion === this.fieldsRequestVersion) this.fieldsLoading = false;
+      }
+    },
+    applyDatasetFields(normalized) {
+      this.fieldGroups = normalized.groups;
+      this.selectedFields = [...normalized.selectedFields];
+      this.savedFields = [...normalized.selectedFields];
+      this.rememberCurrentFields();
+      this.fieldsSaveError = '';
+    },
+    async loadDatasetFields() {
+      if (!this.hasDatasetSelection) {
+        this.fieldsError = '请选择项目 ID';
+        return;
+      }
+      const requestVersion = ++this.fieldsRequestVersion;
+      const projectKey = this.selectedProjectKey;
+      const projectId = this.selectedProjectId;
+      const tokenId = this.selectedTokenId;
+      this.fieldsLoading = true;
+      this.fieldsError = '';
+      try {
+        const data = await window.apiGet(listingDailyFieldsPath(projectId, tokenId));
+        if (requestVersion !== this.fieldsRequestVersion || projectKey !== this.selectedProjectKey) return;
+        const normalized = normalizeListingDailyFields(data, projectId, tokenId);
+        this.applyDatasetFields(normalized);
+      } catch (error) {
+        if (requestVersion === this.fieldsRequestVersion && projectKey === this.selectedProjectKey) {
+          this.fieldsError = errorMessage(error, '未能读取数据集字段');
+        }
+      } finally {
+        if (requestVersion === this.fieldsRequestVersion) this.fieldsLoading = false;
+      }
+    },
+    isSelected(name) { return this.selectedFields.includes(name); },
+    availableFields(group) {
+      return (group && Array.isArray(group.fields)) ? group.fields.filter((field) => !this.isSelected(field.name)) : [];
+    },
+    fieldMeta(name) {
+      for (const group of this.fieldGroups) {
+        const field = group.fields.find((item) => item.name === name);
+        if (field) return field;
+      }
+      return null;
+    },
+    addField(name) {
+      if (!this.isSelected(name) && this.fieldMeta(name)) {
+        this.selectedFields.push(name);
+        this.rememberCurrentFields();
+      }
+    },
+    removeField(name) {
+      this.selectedFields = this.selectedFields.filter((field) => field !== name);
+      this.rememberCurrentFields();
+    },
+    async saveDatasetFields() {
+      if (this.fieldsSaving || this.fieldsError || !this.hasDatasetSelection || !this.fieldsDirty) return;
+      this.fieldsSaving = true;
+      this.fieldsSaveError = '';
+      const fields = [...this.selectedFields];
+      try {
+        await window.apiPut(listingDailyFieldsPath(this.selectedProjectId, this.selectedTokenId), {
+          project_id: this.selectedProjectId,
+          token_id: this.selectedTokenId,
+          fields,
+        });
+        this.savedFields = [...fields];
+        this.rememberCurrentFields();
+      } catch (error) {
+        this.fieldsSaveError = errorMessage(error, '保存数据集字段失败');
+      } finally {
+        this.fieldsSaving = false;
+      }
     },
   };
 };
@@ -1196,6 +1707,12 @@ window.settingsApi = function () {
       (d.items || []).forEach(s => { sel[s.sid] = !!s.enabled; });
       this.storeSel = sel;
       this.storeSelBaseline = Object.assign({}, sel);
+      // 同 storeSel：预先给每个 VC 店铺在 profileSaving 上建键。否则空对象 {} 上的缺失键
+      // 会让 :disabled="profileSaving[store.sid]" 这个布尔绑定永远拿到「键不存在」的状态，
+      // Alpine 不会随之解禁，保存按钮一直 disabled、点击无反应——表现为填了点保存却没真正落库。
+      const saving = Object.assign({}, this.profileSaving);
+      (d.items || []).forEach(s => { if (s.store_type === 'VC') saving[s.sid] = !!saving[s.sid]; });
+      this.profileSaving = saving;
     },
     async syncStores() {
       if (!this.selectedAccountId || this.storeSyncing) return;

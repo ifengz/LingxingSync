@@ -26,12 +26,15 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	"lingxing-sync/internal/api"
 	"lingxing-sync/internal/config"
 	"lingxing-sync/internal/db"
+	"lingxing-sync/internal/listingdaily"
+	"lingxing-sync/internal/reportexport"
 	"lingxing-sync/internal/server"
 	"lingxing-sync/internal/worker"
 )
@@ -46,6 +49,16 @@ func main() {
 	configPath := flag.String("config", "config.yaml", "配置文件路径")
 	validateConfig := flag.Bool("validate-config", false, "只校验配置，不连接数据库或启动服务")
 	baseURL := flag.String("base-url", "https://openapi.lingxing.com", "领星 OpenAPI 根地址")
+	reportReturns := flag.Bool("export-fba-customer-returns", false, "显式导出一份 Amazon FBA Customer Returns 正式报告后退出")
+	reportAccount := flag.String("report-account", "", "报告导出使用的本地 account id")
+	reportSeller := flag.String("report-seller-id", "", "Amazon seller_id")
+	reportStore := flag.String("report-store-id", "", "本地归属 store_id（必填，不传领星）")
+	reportRegion := flag.String("report-region", "", "Amazon region: na/eu/fe")
+	reportMarketplaces := flag.String("report-marketplace-ids", "", "逗号分隔的 Amazon marketplace_ids")
+	reportDateFrom := flag.String("report-date-from", "", "RFC3339 data_start_time")
+	reportDateTo := flag.String("report-date-to", "", "RFC3339 data_end_time")
+	// The explicit CLI lane remains available for manual backfills; configured
+	// report_exports are registered with the existing in-process scheduler.
 	flag.Parse()
 
 	// 1. 加载配置（启动断言式校验，缺字段直接 FATAL）
@@ -69,11 +82,48 @@ func main() {
 		log.Fatalf("[main] 数据库迁移失败: %v", err)
 	}
 	log.Printf("[main] 数据库迁移完成")
+	if *reportReturns {
+		account := cfg.FindAccount(*reportAccount)
+		if account == nil {
+			log.Fatalf("[main] 报告导出账号不存在: %q", *reportAccount)
+		}
+		marketplaces := splitNonEmpty(*reportMarketplaces)
+		runner := reportexport.Runner{
+			Client: api.NewClient(account, *baseURL),
+			Store:  db.NewReportStore(dbx),
+			// Each formal report path has quota bucket=1. The explicit CLI lane
+			// shares one serial limiter across create/query/renew calls.
+			Limiter: worker.NewLimiter(1, 1000),
+		}
+		request := reportexport.Request{
+			AccountID:      account.ID,
+			SellerID:       *reportSeller,
+			StoreID:        *reportStore,
+			Region:         *reportRegion,
+			MarketplaceIDs: marketplaces,
+			DateFrom:       *reportDateFrom,
+			DateTo:         *reportDateTo,
+		}
+		result, err := runner.Run(context.Background(), request)
+		if err != nil {
+			log.Fatalf("[main] FBA Customer Returns 正式报告导出失败: %v", err)
+		}
+		if err := projectCustomerReturns(context.Background(), listingdaily.SQLSourceReader{DB: dbx}, listingdaily.SQLStore{DB: dbx}, request, result); err != nil {
+			log.Fatalf("[main] FBA Customer Returns 日维纠正失败: %v", err)
+		}
+		log.Printf("[main] FBA Customer Returns 正式报告完成：audit=%d task=%s document=%s rows=%d sha256=%s", result.AuditID, result.ReportTaskID, result.ReportDocumentID, result.Rows, result.DownloadSHA256)
+		return
+	}
 
 	// 3. 构造 Worker（每「账号+接口」一个）
 	registry := worker.NewRegistry()
 	clients := api.NewClientRegistry(cfg.Accounts, *baseURL)
 	limiterReg := worker.NewLimiterRegistry() // 限流器按 (quota_group, path) 共享
+	dailyReader := listingdaily.SQLSourceReader{DB: dbx}
+	dailyStore := listingdaily.SQLStore{DB: dbx}
+	dailyProject := func(ctx context.Context, accountID string, targets []worker.DailyProjectionTarget, today time.Time) error {
+		return projectDailyBatch(ctx, dailyReader, dailyStore, accountID, targets, today)
+	}
 	var storeSourceWorkers []*worker.EndpointWorker
 	degraded := 0 // 降级为不可同步的接口数（缺表等），仅用于启动摘要日志
 	warned := 0   // 有告警但仍可同步的条目数（缺声明列等），仅用于启动摘要日志
@@ -94,6 +144,7 @@ func main() {
 			degraded++
 			continue
 		}
+		w.SetDailyProjector(dailyProject)
 		registry.Register(w)
 		if ep.IsStoreSource {
 			storeSourceWorkers = append(storeSourceWorkers, w)
@@ -148,6 +199,8 @@ func main() {
 		}
 		return client.TokenHolder().ForceRefresh(ctx)
 	})
+	reportLimiter := worker.NewLimiter(1, 1000)
+	sched.SetCustomerReturnsRunner(customerReturnsRun(cfg, clients, db.NewReportStore(dbx), reportLimiter, dailyReader, dailyStore))
 	if err := sched.Start(ctx); err != nil {
 		log.Fatalf("[main] 启动调度器失败: %v", err)
 	}
@@ -184,4 +237,111 @@ func main() {
 	cancel()
 	time.Sleep(500 * time.Millisecond) // 给 Worker 一点时间收尾
 	log.Printf("[main] 已退出")
+}
+
+func customerReturnsRun(cfg *config.Config, clients *api.ClientRegistry, store reportexport.Store, limiter reportexport.Limiter, dailyReader listingdaily.SourceReader, dailyStore listingdaily.ReconciliationStore) func(context.Context, reportexport.Request) (reportexport.Result, error) {
+	return func(ctx context.Context, request reportexport.Request) (reportexport.Result, error) {
+		account := cfg.FindAccount(request.AccountID)
+		if account == nil {
+			return reportexport.Result{}, fmt.Errorf("Customer Returns 报表账号不存在: %s", request.AccountID)
+		}
+		request.AccountID = account.ID
+		client := clients.Get(account.ID)
+		if client == nil {
+			return reportexport.Result{}, fmt.Errorf("Customer Returns 报表账号 Client 不存在: %s", account.ID)
+		}
+		runner := reportexport.Runner{Client: client, Store: store, Limiter: limiter}
+		result, err := runner.Run(ctx, request)
+		if err != nil {
+			return result, err
+		}
+		if err := projectCustomerReturns(ctx, dailyReader, dailyStore, request, result); err != nil {
+			return result, err
+		}
+		return result, nil
+	}
+}
+
+func projectDailyBatch(ctx context.Context, dailyReader listingdaily.SourceReader, dailyStore listingdaily.Store, accountID string, targets []worker.DailyProjectionTarget, today time.Time) error {
+	if dailyReader == nil || dailyStore == nil {
+		return fmt.Errorf("日维投影未配置")
+	}
+	rows := make([]listingdaily.Metric, 0)
+	for _, target := range targets {
+		_, built, err := listingdaily.BuildFromSQL(ctx, dailyReader, accountID, target.Store, target.Channel, target.Date, today, listingdaily.ReportAbsent)
+		if err != nil {
+			return fmt.Errorf("%s/%s/%s: %w", target.Store, target.Channel, target.Date.Format("2006-01-02"), err)
+		}
+		rows = append(rows, built...)
+	}
+	return dailyStore.Persist(ctx, rows)
+}
+
+func projectCustomerReturns(ctx context.Context, dailyReader listingdaily.SourceReader, dailyStore listingdaily.ReconciliationStore, request reportexport.Request, result reportexport.Result) error {
+	if dailyReader == nil || dailyStore == nil {
+		return fmt.Errorf("Customer Returns 日维投影未配置")
+	}
+	evidence := listingdaily.ReportEvidence{AuditID: result.AuditID, ReportTaskID: result.ReportTaskID}
+	if evidence.AuditID <= 0 || strings.TrimSpace(evidence.ReportTaskID) == "" {
+		return fmt.Errorf("Customer Returns 日维投影缺少本次 report audit/task")
+	}
+	from, to, err := reportBusinessDates(request)
+	if err != nil {
+		return err
+	}
+	today := time.Now()
+	rows := make([]listingdaily.Metric, 0)
+	audits := make([]listingdaily.ReconciliationAudit, 0, int(to.Sub(from).Hours()/24)+1)
+	for date := from; !date.After(to); date = date.AddDate(0, 0, 1) {
+		projection, built, buildErr := listingdaily.BuildFromSQL(ctx, dailyReader, request.AccountID, request.StoreID, "sc_fba", date, today, listingdaily.ReportReconciled, evidence)
+		reconciliation := listingdaily.Reconciliation{}
+		if projection.Reconciliation != nil {
+			reconciliation = *projection.Reconciliation
+		}
+		if buildErr != nil {
+			failed := listingdaily.ReconciliationAudit{Evidence: evidence, BusinessDate: date, Status: listingdaily.ReconciliationFailed, Reconciliation: reconciliation, ErrorMessage: buildErr.Error()}
+			if err := dailyStore.PersistFailedReconciliations(ctx, []listingdaily.ReconciliationAudit{failed}); err != nil {
+				return fmt.Errorf("Customer Returns 日维纠正 %s: %v; 保存失败对账: %w", date.Format("2006-01-02"), buildErr, err)
+			}
+			return fmt.Errorf("Customer Returns 日维纠正 %s: %w", date.Format("2006-01-02"), buildErr)
+		}
+		status := listingdaily.ReconciliationMatched
+		if len(reconciliation.MissingInDB) != 0 || len(reconciliation.MissingInReport) != 0 || len(reconciliation.FieldDiffs) != 0 {
+			status = listingdaily.ReconciliationCorrected
+		}
+		rows = append(rows, built...)
+		audits = append(audits, listingdaily.ReconciliationAudit{Evidence: evidence, BusinessDate: date, Status: status, Reconciliation: reconciliation})
+	}
+	if err := dailyStore.PersistReportBatch(ctx, rows, audits); err != nil {
+		return fmt.Errorf("Customer Returns 日维纠正发布: %w", err)
+	}
+	return nil
+}
+
+func reportBusinessDates(request reportexport.Request) (time.Time, time.Time, error) {
+	from, err := time.Parse(time.RFC3339, request.DateFrom)
+	if err != nil {
+		return time.Time{}, time.Time{}, fmt.Errorf("Customer Returns date_from 非法: %w", err)
+	}
+	to, err := time.Parse(time.RFC3339, request.DateTo)
+	if err != nil {
+		return time.Time{}, time.Time{}, fmt.Errorf("Customer Returns date_to 非法: %w", err)
+	}
+	from = time.Date(from.Year(), from.Month(), from.Day(), 0, 0, 0, 0, time.UTC)
+	to = time.Date(to.Year(), to.Month(), to.Day(), 0, 0, 0, 0, time.UTC)
+	if from.After(to) {
+		return time.Time{}, time.Time{}, fmt.Errorf("Customer Returns date_to 不能早于 date_from")
+	}
+	return from, to, nil
+}
+
+func splitNonEmpty(value string) []string {
+	parts := strings.Split(value, ",")
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if trimmed := strings.TrimSpace(part); trimmed != "" {
+			result = append(result, trimmed)
+		}
+	}
+	return result
 }

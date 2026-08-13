@@ -106,6 +106,22 @@ func shapeRows(rows []map[string]any, fieldPaths map[string]string, injectParams
 	return nil
 }
 
+func injectRowDate(rows []map[string]any, rowDateField, sourceParam string, params map[string]any) error {
+	if rowDateField == "" || len(rows) == 0 {
+		return nil
+	}
+	value, ok := params[sourceParam]
+	if !ok || isBlank(value) {
+		return fmt.Errorf("row_date_field %q 缺少实际请求参数 %q", rowDateField, sourceParam)
+	}
+	for _, row := range rows {
+		if row != nil {
+			row[rowDateField] = value
+		}
+	}
+	return nil
+}
+
 // ValidateFieldPaths 供 config 校验期调用：只查路径写法，不碰数据。
 // 让配置 typo 在启动时就暴露，而不是等到第一次同步。
 func ValidateFieldPaths(fieldPaths map[string]string) error {

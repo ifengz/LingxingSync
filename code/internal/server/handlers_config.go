@@ -15,6 +15,8 @@ package server
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"fmt"
 	"log"
 	"net/http"
@@ -27,6 +29,7 @@ import (
 
 	"lingxing-sync/internal/api"
 	"lingxing-sync/internal/config"
+	"lingxing-sync/internal/datasetapi"
 	"lingxing-sync/internal/db"
 )
 
@@ -45,8 +48,100 @@ func (s *Server) registerConfigRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/endpoints/{name}", s.apiUpdateEndpoint)
 	mux.HandleFunc("DELETE /api/endpoints/{name}", s.apiDeleteEndpoint)
 	mux.HandleFunc("GET /api/datasources/{table}/columns", s.apiDatasourceColumns)
+	mux.HandleFunc("POST /api/datasources/datasets/listing-daily-v1/projects", s.apiCreateDatasetProjectToken)
 	mux.HandleFunc("POST /api/settings/restart", s.apiRestart)
 	mux.HandleFunc("POST /api/settings/test-connection", s.apiTestConnection)
+}
+
+type createDatasetProjectTokenRequest struct {
+	ProjectID   string   `json:"project_id"`
+	StoreScopes []string `json:"store_scopes"`
+}
+
+// apiCreateDatasetProjectToken creates one fixed listing dataset reader. Only
+// the SHA-256 hash is written to config; the bearer value is returned once so
+// the caller can put it in the consuming project's secret store.
+func (s *Server) apiCreateDatasetProjectToken(w http.ResponseWriter, r *http.Request) {
+	if s.store == nil {
+		errJSON(w, http.StatusInternalServerError, "配置存储未初始化")
+		return
+	}
+	var in createDatasetProjectTokenRequest
+	if err := decodeJSON(r, &in); err != nil {
+		errJSON(w, http.StatusBadRequest, "请求体格式错误: "+err.Error())
+		return
+	}
+	in.ProjectID = strings.TrimSpace(in.ProjectID)
+	if !config.ValidAccountID(in.ProjectID) {
+		errJSON(w, http.StatusBadRequest, "项目 ID 只能使用字母、数字、下划线或连字符，长度 1–32")
+		return
+	}
+	storeScopes, err := normalizeDatasetTokenValues(in.StoreScopes, "店铺范围")
+	if err != nil {
+		errJSON(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	current := s.store.Current()
+	if len(current.DatasetAPI.FieldAllowlist) == 0 {
+		errJSON(w, http.StatusBadRequest, "当前没有可用字段，请先在配置中登记已验证字段")
+		return
+	}
+	tokenID := in.ProjectID
+	for _, token := range current.DatasetAPI.Tokens {
+		if token.ID == tokenID || token.ProjectID == in.ProjectID {
+			errJSON(w, http.StatusConflict, "项目 ID 已存在: "+in.ProjectID)
+			return
+		}
+	}
+	rawToken, err := newDatasetBearerToken()
+	if err != nil {
+		errJSON(w, http.StatusInternalServerError, "生成访问 Token 失败: "+err.Error())
+		return
+	}
+	old := current
+	snap := s.store.Snapshot()
+	snap.DatasetAPI.Tokens = append(snap.DatasetAPI.Tokens, config.DatasetToken{
+		ID:            tokenID,
+		ProjectID:     in.ProjectID,
+		TokenHash:     datasetapi.HashToken(rawToken),
+		DatasetScopes: []string{datasetapi.DatasetID},
+		StoreScopes:   storeScopes,
+		Fields:        append([]string(nil), snap.DatasetAPI.FieldAllowlist...),
+	})
+	s.applyConfigWrite(w, old, snap, "项目 Token 已新增，请保存明文 Token 并重启同步机", map[string]any{
+		"project_id":   in.ProjectID,
+		"token_id":     tokenID,
+		"token":        rawToken,
+		"need_restart": true,
+	})
+}
+
+func normalizeDatasetTokenValues(values []string, label string) ([]string, error) {
+	if len(values) == 0 {
+		return nil, fmt.Errorf("%s不能为空", label)
+	}
+	seen := make(map[string]struct{}, len(values))
+	out := make([]string, 0, len(values))
+	for _, raw := range values {
+		value := strings.TrimSpace(raw)
+		if value == "" {
+			return nil, fmt.Errorf("%s不能包含空值", label)
+		}
+		if _, exists := seen[value]; exists {
+			return nil, fmt.Errorf("%s不能重复: %s", label, value)
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out, nil
+}
+
+func newDatasetBearerToken() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
 // ---------------------------------------------------------------------------
@@ -146,6 +241,8 @@ type endpointDTO struct {
 	Cron               string            `json:"cron"`
 	Enabled            bool              `json:"enabled"`
 	WindowDays         int               `json:"window_days"`
+	SingleDayWindow    bool              `json:"single_day_window"`
+	RowDateField       string            `json:"row_date_field"`
 	WindowStartField   string            `json:"window_start_field"`
 	WindowEndField     string            `json:"window_end_field"`
 	DateField          string            `json:"date_field"`
@@ -191,6 +288,8 @@ func endpointToDTO(e config.Endpoint) endpointDTO {
 		Cron:               e.Cron,
 		Enabled:            e.Enabled,
 		WindowDays:         e.WindowDays,
+		SingleDayWindow:    e.SingleDayWindow,
+		RowDateField:       e.RowDateField,
 		WindowStartField:   e.WindowStartField,
 		WindowEndField:     e.WindowEndField,
 		DateField:          e.DateField,
@@ -235,6 +334,8 @@ func dtoToEndpoint(d endpointDTO) config.Endpoint {
 		Cron:               d.Cron,
 		Enabled:            d.Enabled,
 		WindowDays:         d.WindowDays,
+		SingleDayWindow:    d.SingleDayWindow,
+		RowDateField:       d.RowDateField,
 		WindowStartField:   d.WindowStartField,
 		WindowEndField:     d.WindowEndField,
 		DateField:          d.DateField,
@@ -300,11 +401,18 @@ func (s *Server) applyConfigWrite(w http.ResponseWriter, old, snap *config.Confi
 	}
 	kind := config.ClassifyChange(old, snap)
 	if kind == config.ChangeHot {
-		s.reg.ApplyHotReload(snap)
-		if err := s.sched.Rebuild(snap); err != nil {
-			log.Printf("[server] 热加载 Rebuild 调度失败: %v", err)
+		if s.sched != nil {
+			if err := s.sched.Rebuild(snap); err != nil {
+				errJSON(w, http.StatusInternalServerError, "热加载 Rebuild 调度失败: "+err.Error())
+				return
+			}
 		}
-		s.refreshLimitersFromConfig(snap)
+		if s.reg != nil {
+			s.reg.ApplyHotReload(snap)
+		}
+		if s.limiters != nil {
+			s.refreshLimitersFromConfig(snap)
+		}
 	}
 	// 单管理员工具：接受良性的指针切换竞态（无锁快速刷新，供其它 handler 读到新配置）。
 	s.cfg = snap
@@ -979,11 +1087,18 @@ func (s *Server) apiSettingsReload(w http.ResponseWriter, r *http.Request) {
 		errJSON(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	s.reg.ApplyHotReload(newCfg)
-	if err := s.sched.Rebuild(newCfg); err != nil {
-		log.Printf("[server] reload Rebuild 调度失败: %v", err)
+	if s.sched != nil {
+		if err := s.sched.Rebuild(newCfg); err != nil {
+			errJSON(w, http.StatusInternalServerError, "热加载 Rebuild 调度失败: "+err.Error())
+			return
+		}
 	}
-	s.refreshLimitersFromConfig(newCfg)
+	if s.reg != nil {
+		s.reg.ApplyHotReload(newCfg)
+	}
+	if s.limiters != nil {
+		s.refreshLimitersFromConfig(newCfg)
+	}
 	s.cfg = newCfg
 
 	okJSON(w, map[string]any{"message": "配置已热加载", "need_restart": false})

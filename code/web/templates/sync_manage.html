@@ -1,5 +1,5 @@
 {{/* web/templates/sync_manage.html — 同步管理（/sync）。
-    宪法对应：doc/core/05-ui.md §6 同步管理：两 Tab（手动同步 / 定时调度）。
+    宪法对应：doc/core/05-ui.md §6 同步管理：四 Tab（手动同步 / 定时调度 / 报表检验 / 添加接口）。
     视觉参照：同步中心UI/（SectionHeader / 卡片选择 / StatusBadge），仅套视觉，不引入 React。
     动线不变：所有 Alpine 方法名与数据同 app.js syncManage()，本文件只改结构与样式。
 */}}
@@ -7,13 +7,25 @@
 {{define "content"}}
 <div x-data="syncManage()" x-init="load()" class="mx-auto max-w-6xl space-y-4">
 
-  <!-- 标题 + 内部 Tab（手动同步 / 定时调度）-->
+  <!-- 标题 + 四个二级 Tab -->
   <div class="flex flex-wrap items-center justify-between gap-3">
     <div class="flex items-center gap-2.5">
       <span class="grid h-8 w-8 place-items-center rounded-lg bg-brand-600 text-white">
         <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3 4 7l4 4"/><path d="M4 7h16"/><path d="m16 21 4-4-4-4"/><path d="M20 17H4"/></svg>
       </span>
       <h1 class="text-lg font-semibold tracking-tight text-slate-800">同步配置</h1>
+      <span class="group relative inline-flex">
+        <button type="button" aria-label="查看同步日期说明" aria-describedby="sync-modified-time-tip"
+                @click.stop="$refs.modifiedTimeTipButton.focus()" x-ref="modifiedTimeTipButton"
+                class="grid h-6 w-6 place-items-center rounded-full border border-slate-300 text-xs font-bold text-slate-500 transition hover:border-brand-500 hover:text-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-500/30">
+          ?
+        </button>
+        <span id="sync-modified-time-tip" role="tooltip"
+              class="pointer-events-none invisible fixed left-4 right-4 top-44 z-40 w-auto rounded-md border border-slate-200 bg-slate-900 px-3 py-2 text-xs font-normal leading-5 text-white opacity-0 shadow-lg transition group-hover:visible group-hover:opacity-100 group-focus-within:visible group-focus-within:opacity-100 sm:absolute sm:left-full sm:right-auto sm:top-1/2 sm:ml-2 sm:w-96 sm:-translate-y-1/2">
+          <span class="block">支持按修改时间补拉：订单、Listing、FBA 退货、VC PO。</span>
+          <span class="block">销量、Performance、SP、SD、HSA、VC 销量/库存按业务日期重拉最近范围。</span>
+        </span>
+      </span>
     </div>
     <nav class="flex items-center gap-1.5">
       <button @click="switchTab('manual')"
@@ -27,6 +39,12 @@
               class="inline-flex min-h-8 items-center gap-1.5 rounded-md border px-3 py-1 text-sm font-bold transition">
         <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M3 10h18M8 2v4M16 2v4"/></svg>
         定时调度
+      </button>
+      <button @click="switchTab('reports')"
+              :class="tab==='reports' ? 'border-brand-600 bg-brand-600 text-white' : 'border-transparent text-slate-600 hover:border-slate-200 hover:bg-slate-50 hover:text-slate-900'"
+              class="inline-flex min-h-8 items-center gap-1.5 rounded-md border px-3 py-1 text-sm font-bold transition">
+        <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v16H4z"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>
+        报表检验
       </button>
       <button @click="switchTab('add')"
               :class="tab==='add' ? 'border-brand-600 bg-brand-600 text-white' : 'border-transparent text-slate-600 hover:border-slate-200 hover:bg-slate-50 hover:text-slate-900'"
@@ -219,6 +237,84 @@
          sync_tasks，属重复展示。本页职责只有「触发同步」，任务状态一律看 /logs。 -->
 
   </div>
+  <!-- ══════════ 报表检验 Tab ══════════ -->
+  <div x-show="tab==='reports'" x-cloak class="space-y-4">
+
+    <!-- 当前仅展示已落地的 FBA Customer Returns 合同。 -->
+    <section class="overflow-hidden rounded-lg border border-slate-200 bg-white">
+      <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-slate-50 px-4 py-3">
+        <div>
+          <div class="flex items-center gap-2">
+            <svg class="h-4 w-4 text-brand-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v16H4z"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>
+            <h2 class="text-sm font-bold text-slate-800">正式报表校验</h2>
+            <span class="rounded bg-blue-50 px-1.5 py-0.5 text-[10px] font-bold text-blue-700">FBA 退货</span>
+          </div>
+          <p class="mt-1 text-xs text-slate-500">定时下载 Customer Returns 报表，与 API 数据逐行对账，报表值优先修正日维结果。</p>
+        </div>
+        <button type="button" @click="saveReportExportBatch()" :disabled="reportExportSaving || reportExportLoading || reportBatch.store_sids.length===0"
+                class="inline-flex items-center gap-1.5 rounded-md bg-brand-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50">
+          <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z"/><path d="M17 21v-8H7v8M7 3v5h8"/></svg>
+          <span x-text="reportExportSaving ? '保存中…' : '应用到所选店铺'"></span>
+        </button>
+      </div>
+
+      <div x-show="reportExportLoading" class="px-4 py-8 text-center text-xs text-slate-400">正在读取报表配置和最近状态…</div>
+      <div x-show="!reportExportLoading && reportExportError" class="border-b border-red-100 bg-red-50 px-4 py-3 text-xs text-red-700">
+        未能读取正式报表：<span x-text="reportExportError"></span>
+      </div>
+      <div x-show="!reportExportLoading && !reportExportError" class="space-y-4 p-4">
+        <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <label class="text-xs font-medium text-slate-600">
+            <span class="mb-1 block">运行状态</span>
+            <span class="flex h-9 items-center gap-2 rounded-md border border-slate-300 px-2.5">
+              <input type="checkbox" x-model="reportBatch.enabled" class="h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500/30">
+              <span x-text="reportBatch.enabled ? '启用' : '停用'"></span>
+            </span>
+          </label>
+          <label class="text-xs font-medium text-slate-600">
+            <span class="mb-1 block">账号</span>
+            <select :value="reportBatch.account" @change="selectReportAccount($event.target.value)" class="h-9 w-full rounded-md border border-slate-300 bg-white px-2.5 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500">
+              <option value="">选择账号</option>
+              <template x-for="acc in accounts" :key="acc"><option :value="acc" x-text="accountName(acc)"></option></template>
+            </select>
+          </label>
+          <label class="text-xs font-medium text-slate-600">
+            <span class="mb-1 block">区域</span>
+            <select x-model="reportBatch.region" class="h-9 w-full rounded-md border border-slate-300 bg-white px-2.5 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500">
+              <option value="na">北美 na</option><option value="eu">欧洲 eu</option><option value="fe">远东 fe</option>
+            </select>
+          </label>
+          <label class="text-xs font-medium text-slate-600">
+            <span class="mb-1 block">每日执行 Cron</span>
+            <input x-model="reportBatch.cron" class="h-9 w-full rounded-md border border-slate-300 px-2.5 font-mono text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500">
+          </label>
+          <label class="text-xs font-medium text-slate-600">
+            <span class="mb-1 block">最近完整日窗口</span>
+            <span class="flex h-9 items-center gap-2 rounded-md border border-slate-300 px-2.5">
+              <input type="number" min="1" max="31" x-model.number="reportBatch.window_days" class="min-w-0 flex-1 border-0 p-0 text-sm focus:outline-none focus:ring-0">
+              <span class="text-slate-400">天</span>
+            </span>
+          </label>
+        </div>
+
+        <section class="rounded-md border border-slate-200">
+          <div class="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-3 py-2"><div><h3 class="text-xs font-bold text-slate-700">店铺</h3><p class="mt-0.5 text-[11px] text-slate-400">Seller ID 和 Marketplace ID 自动读取，无需逐店填写</p></div><button type="button" @click="selectAllReportStores()" :disabled="!reportBatch.account" class="rounded border border-slate-300 bg-white px-2 py-1 text-xs text-slate-600 disabled:opacity-50">全选可用店铺</button></div>
+          <div x-show="!reportBatch.account" class="px-3 py-7 text-center text-xs text-slate-400">先选择账号</div>
+          <div x-show="reportBatch.account && storesByAccount[reportBatch.account] && storesByAccount[reportBatch.account].loading" class="px-3 py-7 text-center text-xs text-slate-400">正在读取店铺…</div>
+          <div x-show="reportBatch.account && storesByAccount[reportBatch.account] && storesByAccount[reportBatch.account].loaded" class="grid max-h-64 gap-2 overflow-y-auto p-3 sm:grid-cols-2 lg:grid-cols-3">
+            <template x-for="store in ((storesByAccount[reportBatch.account] && storesByAccount[reportBatch.account].items) || []).filter(item => item.store_type === 'SC')" :key="store.sid"><label class="flex cursor-pointer gap-2 rounded-md border border-slate-200 px-3 py-2"><input type="checkbox" :checked="reportBatch.store_sids.includes(store.sid)" :disabled="!store.seller_id || !store.marketplace_id" @change="toggleReportStore(store.sid)" class="mt-0.5 h-4 w-4 rounded border-slate-300 text-brand-600"><span class="min-w-0"><strong class="block truncate text-xs text-slate-700" x-text="store.store_name || store.sid"></strong><span class="block truncate text-[10px] text-slate-400" x-text="store.sid + ' · ' + (store.marketplace_id || '缺 Marketplace ID')"></span><span x-show="!store.seller_id || !store.marketplace_id" class="block text-[10px] text-red-600">店铺资料不完整，不能配置</span></span></label></template>
+          </div>
+        </section>
+
+        <section class="overflow-hidden rounded-md border border-slate-200">
+          <div class="border-b border-slate-200 bg-slate-50 px-3 py-2"><h3 class="text-xs font-bold text-slate-700">已配置报表</h3></div>
+          <div class="overflow-x-auto"><table class="w-full min-w-[860px] text-xs"><thead class="border-b border-slate-200 text-left text-slate-400"><tr><th class="px-3 py-2">报表</th><th class="px-3 py-2">账号 / 店铺</th><th class="px-3 py-2">调度</th><th class="px-3 py-2">状态</th><th class="px-3 py-2">数据库缺少</th><th class="px-3 py-2">报表缺少</th><th class="px-3 py-2">值不一致</th><th class="px-3 py-2 text-right">操作</th></tr></thead><tbody class="divide-y divide-slate-100"><template x-for="row in reportExportConfigs" :key="reportScopeKey(row)"><tr><td class="px-3 py-2 font-medium text-slate-700">FBA 退货</td><td class="px-3 py-2 text-slate-600" x-text="accountName(row.account) + ' / ' + row.store_id"></td><td class="px-3 py-2 text-slate-500" x-text="row.cron + ' · ' + row.window_days + '天'"></td><td class="px-3 py-2 text-slate-600" x-text="reportStatusText(row)"></td><td class="px-3 py-2 tabular-nums" x-text="reportDifferenceFor(row, 'database_missing')"></td><td class="px-3 py-2 tabular-nums" x-text="reportDifferenceFor(row, 'report_missing')"></td><td class="px-3 py-2 tabular-nums" x-text="reportDifferenceFor(row, 'value_mismatch')"></td><td class="px-3 py-2 text-right"><button type="button" @click="deleteReportExport(row)" :disabled="reportExportSaving" class="rounded border border-red-200 px-2 py-1 font-medium text-red-600 hover:bg-red-50 disabled:opacity-50">删除</button></td></tr></template><tr x-show="reportExportConfigs.length===0"><td colspan="8" class="px-3 py-7 text-center text-slate-400">尚未配置报表</td></tr></tbody></table></div>
+        </section>
+      </div>
+    </section>
+
+  </div>
+
   <!-- ══════════ 定时调度 Tab ══════════ -->
   <div x-show="tab==='schedule'" x-cloak class="space-y-4">
 
@@ -230,9 +326,19 @@
         <h2 class="text-sm font-bold text-slate-800">定时调度</h2>
         <span class="text-xs text-slate-400">直接编辑字段，改动即时高亮，行右保存</span>
       </div>
+      <div class="flex flex-wrap items-end gap-2 border-b border-slate-200 bg-slate-50 px-4 py-3">
+        <label class="text-xs font-medium text-slate-600"><span class="mb-1 block">账号</span><select x-model="scheduleFilter.account" class="h-8 rounded-md border border-slate-300 bg-white px-2 text-xs"><option value="">全部账号</option><template x-for="acc in accounts" :key="acc"><option :value="acc" x-text="accountName(acc)"></option></template></select></label>
+        <label class="text-xs font-medium text-slate-600"><span class="mb-1 block">接口</span><input x-model="scheduleFilter.query" placeholder="名称 / Path" class="h-8 w-40 rounded-md border border-slate-300 px-2 text-xs"></label>
+        <label class="text-xs font-medium text-slate-600"><span class="mb-1 block">启停</span><select x-model="scheduleBatch.enabled" class="h-8 rounded-md border border-slate-300 bg-white px-2 text-xs"><option value="unchanged">不修改</option><option value="enabled">启用</option><option value="disabled">停用</option></select></label>
+        <label class="text-xs font-medium text-slate-600"><span class="mb-1 block">Cron</span><input x-model="scheduleBatch.cron" placeholder="留空不修改" class="h-8 w-36 rounded-md border border-slate-300 px-2 font-mono text-xs"></label>
+        <label class="text-xs font-medium text-slate-600"><span class="mb-1 block">回看天数</span><input type="number" min="1" x-model.number="scheduleBatch.window_days" placeholder="不修改" class="h-8 w-24 rounded-md border border-slate-300 px-2 text-xs"></label>
+        <span class="pb-2 text-xs text-slate-500">已选 <strong x-text="scheduleSelected.length"></strong> 项</span>
+        <button type="button" @click="saveScheduleBatch()" :disabled="scheduleBatchSaving || scheduleSelected.length===0" class="ml-auto h-8 rounded-md bg-brand-600 px-3 text-xs font-bold text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50" x-text="scheduleBatchSaving ? '保存中…' : '应用并保存'"></button>
+      </div>
       <div class="overflow-x-auto">
-        <table class="w-full min-w-[1120px] table-fixed text-sm">
+        <table class="w-full min-w-[1160px] table-fixed text-sm">
           <colgroup>
+            <col class="w-12">
             <col class="w-56">
             <col class="w-44">
             <col class="w-44">
@@ -244,6 +350,7 @@
           </colgroup>
           <thead class="border-b border-slate-200 bg-slate-50 text-xs font-bold text-slate-500">
             <tr>
+              <th class="px-3 py-2.5 text-center"><input type="checkbox" :checked="allVisibleScheduleSelected" @change="toggleAllVisibleSchedule()" aria-label="选择当前接口" class="h-4 w-4 rounded border-slate-300 text-brand-600"></th>
               <th class="px-4 py-2.5 text-left">数据类型</th>
               <th class="px-4 py-2.5 text-left">Cron 表达式</th>
               <th class="px-4 py-2.5 text-left">限流（桶 / ms）</th>
@@ -255,8 +362,9 @@
             </tr>
           </thead>
           <tbody class="divide-y divide-slate-100">
-            <template x-for="e in schedule" :key="e.name">
+            <template x-for="e in filteredSchedule" :key="e.name">
               <tr :class="rowClass(e)" class="transition-colors">
+                <td class="px-3 py-3 text-center align-middle"><input type="checkbox" :checked="isScheduleSelected(e.name)" @change="toggleSchedule(e.name)" :aria-label="'选择 ' + (e.display || e.name)" class="h-4 w-4 rounded border-slate-300 text-brand-600"></td>
                 <td class="px-4 py-3 align-middle">
                   <div class="flex items-center gap-1.5">
                     <div class="font-medium text-slate-800" x-text="e.display || e.name"></div>
@@ -331,8 +439,8 @@
                 </td>
               </tr>
             </template>
-            <tr x-show="schedule.length===0">
-              <td colspan="8" class="px-4 py-10 text-center text-sm text-slate-400">暂无接口配置</td>
+            <tr x-show="filteredSchedule.length===0">
+              <td colspan="9" class="px-4 py-10 text-center text-sm text-slate-400" x-text="schedule.length ? '没有匹配的接口' : '暂无接口配置'"></td>
             </tr>
           </tbody>
         </table>

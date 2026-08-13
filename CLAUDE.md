@@ -8,16 +8,16 @@
 
 ## 1. 用户意图（项目为什么存在，不可妥协）
 
-用户要一个**独立、轻量、跑在云服务器上的专用同步机**：只负责把领星 OpenAPI 数据定时拉下来并落入本项目 `ls_*` 原始表。
+用户要一个**独立、轻量、跑在云服务器上的专用同步机**。核心仍是把领星 OpenAPI 数据按接口独立落入本项目 `ls_*` 原始表；在不改变单进程 Go + MySQL 模型的前提下，还允许正式报表证据、唯一的 listing 日维事实集，以及供内部项目通过 HTTPS 读取的固定数据集 API。授权边界见下文「四项能力边界」，未落地的能力不得写成已实现事实。
 
 本项目的验收红线共 14 条：**1–6 目标、7–11 写码**（均为用户原话），**12–14 工程纪律**（自 aftersale 引入，用户已确认）。另有「规模上限」表，是判断架构该不该加东西的数字依据。
 
 1. **各接口同步独立**：一个「账号+接口」一个独立 goroutine；任一接口挂掉、报错、被限流，**不影响其他接口**，也不会因别的接口断了而连带中断。
 2. **按桶令牌并发**：每个 `(quota_group, path)` 一个 `rate.Limiter`；`bucket=1` 强制串行翻页，`bucket>1` 可并发翻页，并发度 = 桶容量。令牌器**进程内**，不入库、不跨进程。
 3. **加接口极简单、不伤架构**：新增领星接口 = 填接入合同五格 → 建一张表 → `config.yaml` 加一段 → 重编重启。**零代码改动，零回归风险**，不会重蹈 polabel2「加一个接口全盘崩」的覆辙。
-4. **能用领星表格数据校验**：有独立对账能力（`internal/server/reconcile.go`），上传领星导出的 CSV 与本地库比对，输出差异。
+4. **能用领星正式报表校验并纠正日维结果**：已有独立对账能力（`internal/server/reconcile.go`）可上传 CSV 与本地库比对并输出差异；正式 Amazon 报告的导出/导入只能走领星 OpenAPI 线路，必须作为独立证据保留，不能覆盖对应 API 原始行。
 5. **轻量、不锁**：单进程、goroutine、无外部队列、无 DB 行级锁序、无 admission/lease/watchdog。「这锁那锁」是被明确禁止的。
-6. **数据表结构化、与领星一致**：每接口一张 `ls_*` 原始表，列名 = 领星字段名，不翻译、不加工；本项目不承担跨项目投影、拼接或页面适配。
+6. **原始表结构化、与领星一致**：每个已验证的接口或正式报告合同各自对应一张 `ls_*` 原始表，列名 = 领星字段名，不翻译、不加工。除唯一允许的 `listing_daily_metrics` 日维事实集外，不做其他跨表派生、宽表拼接或消费者页面适配。
 
 ### 写码红线（同为用户原话，与上面 6 条同级）
 
@@ -37,11 +37,11 @@
 | 去重接口数（不同 path） | 12 | 40 |
 | Worker goroutine 数（账号 × 接口） | 24 | 400 |
 | 单桶并发（`rate.bucket`） | 最大 5，14/24 个接口是 1 | 10，且不得超过领星实际配额 |
-| `ls_*` 数据表 | 14 | 一接口一表，单表千万行内用索引解决，**不分库分表** |
+| `ls_*` 数据表 | 14 | 一接口/正式报告合同一表，单表千万行内用索引解决，**不分库分表** |
 
-**下列东西禁止引入**：Redis / 外部消息队列 / 多进程或多实例 / Docker-K8s 编排 / 对象存储 / 微服务拆分 / 外部调度器 / 连接池以外的 DB 中间件 / 任何常驻第三方服务。
+**下列东西禁止引入**：Redis / 外部消息队列 / 多进程或多实例 / Docker-K8s 编排 / 对象存储 / 微服务拆分 / 外部调度器 / 连接池以外的 DB 中间件 / 任何常驻第三方服务 / 动态 schema builder / 远程 SQL / 消费方直连数据库 / ERP 内部页面浏览器自动化。
 
-**这些东西在本项目没有使用场景，所以是「禁止」，不是「需要审批」。** 领星 OpenAPI 的全部难度就是：AES 签名 → 换 token → GET/POST 翻页 → Upsert 落库。GitHub 上多个同类项目都用最朴素的方式跑通，没有一个需要这些。所以任何声称「必须引入 X 才能解决」的提案，**先怀疑是方案写错了，不是规模到了**。默认答案是不做，不必给理由 —— 要给理由的是提议加东西的一方。
+**这些东西在本项目没有使用场景，所以是「禁止」，不是「需要审批」。** 原始同步主链仍只是：AES 签名 → 换 token → GET/POST 翻页 → Upsert 落库；新增的报表证据、日维事实集和只读 API 也必须留在同一进程和 MySQL 内，不能成为引入外部基础设施的理由。任何声称「必须引入 X 才能解决」的提案，**先怀疑是方案写错了，不是规模到了**。默认答案是不做，不必给理由 —— 要给理由的是提议加东西的一方。
 
 同理**禁止在代码里自造复杂度**：分布式锁、租约、状态机、事件总线、插件系统、多层抽象、泛型框架、为「将来可扩展」预留的接口层 —— 一律不要。宁可代码笨一点、重复一点，也不要让用户看不懂自己的系统。理由见 §2。
 
@@ -60,11 +60,20 @@
 
     `doc/core/` 下的其余文件**不是宪法**，随业务改动一起提即可：`progress.md`（过程记录）、`findings.md`（调查结论）、`lessons.md`、`task_plan.md`、`10-frontend-rework-flow.md`（执行规格，含已废弃条目）、`sync-field-source-map.md`、`otherlingxinggithub.md`、`LINGXING_API_INTEGRATION.md`。把过程文件当宪法保护只会让「记一笔进展」也要单独 commit，纯属自我设障。
 
+### 四项能力边界（已授权，不等于已实现）
+
+1. **原始同步**：保留「一个接口/报告合同 → 一张 `ls_*` 原始表」。接口响应与正式报告行是两份独立证据，不互相改写。
+2. **正式报表证据**：Amazon 正式报告导出走 OpenAPI 的创建任务、异步状态查询、下载链接续期线路；不得混用 ERP `auth-token` 或页面登录态。正式报告只有在解析和对账成功后才覆盖 `listing_daily_metrics` 的同字段有效值；没有正式报告值时可暂用 API 原始值，API 原始表始终不变。
+3. **唯一日维事实集**：只允许一个 `listing_daily_metrics`，粒度固定为 `store/channel/ASIN/SKU/business_date`；可用一对一 listing 维度键压缩索引，但不得改变粒度。PO 等不同粒度域必须留在独立数据集。来源没有覆盖的值保持 `NULL`/未验证，禁止造零；没有 ASIN/SKU 的 HSA 只能保留为店铺级数据，或明确标记为分摊值。
+4. **固定只读发布**：内部项目只能通过版本化 HTTPS `snapshot` / `changes` 数据集端点读取，使用每项目 token、dataset/store scope、keyset cursor 和分页。端点仅接受固定 dataset 与字段 allowlist，不接受任意表名、路径或 SQL；消费者不得直连本库。`/datasources` 可在现有 Alpine.js + Tailwind 页面内选择某数据集允许返回的字段，但该 UI 永不创建、修改或删除 MySQL 表。
+
+以上能力都必须物理留在本 Go 进程与 MySQL 中；不得借机增加 Redis、对象存储、队列、微服务、React/npm 或通用动态数据平台。`changes` 只发布 LingxingSync 已经落库的变化，不能替代上游重拉或正式报表对账。
+
 **已授权的唯一候选迭代例外**：VC PO detail 必须先从同账号 `ls_vc_orders` 取得 `local_po_number` 与 `vc_store_id`。它只使用 `iterate_by_vc_orders` 在本 endpoint 内串行逐单请求并直接写唯一的 `ls_vc_po_details`，不引入队列、父子任务、staging 或通用工作流引擎；其他接口不得借此扩展跨表编排。
 
 ### 与 polabel2 的关系（边界）
 
-- LingxingSync 与 polabel2 **完全独立**，不存在数据库直连、数据投影或页面接入关系。
+- LingxingSync 与 polabel2 **完全独立**，不存在数据库直连或页面接入关系。polabel2 如需消费数据，只能按本节固定 HTTPS 数据集合同读取，不得把自身表结构或页面合同反向带入本项目。
 - polabel2 只用于学习其已经跑通的领星接口对接证据：method/path/body、候选账号与店铺上下文、字段处理和错误处理。
 - 参考结论必须在 LingxingSync 自身按真实账号、真实响应和原始表合同重新验证；不得修改 polabel2，也不得把其业务逻辑、事实表或页面合同带入本项目。
 
@@ -84,7 +93,7 @@
 | watchdog goroutine 回收资源 | 不需要，进程内资源无残留 |
 | 父子任务 / partial / `ADMISSIBLE_INTENT_STATUSES` 状态机 | 单层 `sync_tasks`：一次触发一条任务 |
 | BullMQ / 外部任务队列 | 进程内 channel + goroutine |
-| staging → canonical 三层数据流 | 一张结构化 `ls_*` 表，Upsert 直接落 |
+| 通用 staging → canonical 三层数据流 | 原始接口/报告各自直落 `ls_*`；仅允许一个固定 `listing_daily_metrics` 日维事实集 |
 | self/affiliate/spotterio 三数据源 + Channel 店铺矩阵 | 账号(accounts) + 接口(endpoints) 模型 |
 
 前端层面同样**不继承 polabel2 的同步中心副本**的数据契约：`DataSourceRow` 三源、`ChannelRow` 渠道矩阵、`SyncRunRow` 父子/lease/segments、按 endpoint URL 的限流覆盖——这些是 polabel2 专属概念，本项目不沿用。
@@ -105,7 +114,8 @@ Go 单二进制（module: lingxing-sync, Go 1.23）
 │   └─ 主循环：等触发 → 限流 → 翻页 → Upsert → 更新状态
 └─ MySQL（lingsync 库）
     ├─ sync_tasks / sync_task_logs   系统表（单写者：Worker 自己）
-    └─ ls_*                          领星原始数据表（结构化）
+    ├─ ls_*                          领星接口/正式报告原始证据表（结构化）
+    └─ listing_daily_metrics         唯一允许的日维事实集（授权合同；未实现前不得声称存在）
 ```
 
 **单写者原则**：只有 EndpointWorker 写自己的 `sync_tasks` 状态行。HTTP handler 只能 INSERT 新 pending 行或发 channel 信号，**永不 UPDATE status 列**。
@@ -146,13 +156,13 @@ Go 单二进制（module: lingxing-sync, Go 1.23）
 
 **本地开发（Docker MySQL）**：见 `code/README.md`，`docker run mysql:8.0` → `cp config.example.yaml config.yaml` → `make build && ./lingxing-sync` → 开 `http://127.0.0.1:7799`。
 
-**改完代码的收口动作**：`make fmt && make vet && go test ./...` 全绿 → `make build` → 重启 7799 上的进程 → 抽查 4 个页面 HTTP 200 非空 → **对照 `doc/core/` 逐条核对是否偏移宪法（见 §1.11）**。这套流程记录在 `doc/core/progress.md`，沿用即可。
+**改完代码的收口动作**：`make fmt && make vet && go test ./...` 全绿 → `make build` → 重启 7799 上的进程 → 抽查 5 个页面 HTTP 200 非空 → **对照 `doc/core/` 逐条核对是否偏移宪法（见 §1.11）**。这套流程记录在 `doc/core/progress.md`，沿用即可。
 
 ---
 
 ## 6. UI 技术栈红线（重要）
 
-宪法 `doc/core/05-ui.md §1` 当前规定：**禁止 React / Vue / Webpack / npm / Node.js**，服务器上只需要 Go 和 MySQL。现有 4 个页面（API 配置 / 同步配置 / 同步日志 / 数据源）用 `html/template` + Alpine.js + Tailwind CDN 实现，`//go:embed web/` 打包进单二进制。
+宪法 `doc/core/05-ui.md §1` 当前规定：**禁止 React / Vue / Webpack / npm / Node.js**，服务器上只需要 Go 和 MySQL。现有 5 个页面（API 配置 / 同步配置 / 同步日志 / 数据源 / 数据集字段）用 `html/template` + Alpine.js + Tailwind CDN 实现，`//go:embed web/` 打包进单二进制。
 
 > ⚠️ 如果后续决定引入 React 前端（例如把外部的同步中心 UI 套进来），属于**修改宪法**，必须：
 > 1. 先与用户确认接入方式（静态 SPA 托管 / Alpine 重写 / 独立 Node 服务三选一）；
@@ -193,7 +203,7 @@ LingxingSync/
     │   ├── db/                ← pool + tasks + upsert + migrate
     │   └── server/            ← HTTP server + handlers + reconcile
     ├── web/
-    │   ├── templates/         ← Go html/template（4 个页面）
+    │   ├── templates/         ← Go html/template（5 个页面）
     │   └── static/app.js      ← Alpine.js 逻辑
     └── migrations/            ← 001_system / 002_data_tables / 003_fix_nullable
 ```

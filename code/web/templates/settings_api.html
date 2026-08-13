@@ -42,7 +42,7 @@
           <td class="px-4 py-3">
             <span :class="egress.error ? 'bg-red-50 text-red-700' : 'bg-emerald-50 text-emerald-700'" class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-bold">
               <span :class="egress.error ? 'bg-red-500' : 'bg-emerald-500'" class="h-1.5 w-1.5 rounded-full"></span>
-              <span x-text="egress.error || '正常'"></span>
+              <span x-text="egress.error || '已获取出口IP'"></span>
             </span>
           </td>
         </tr>

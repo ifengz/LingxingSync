@@ -239,10 +239,10 @@ func TestCatalogIncludesVerifiedReportTemplates(t *testing.T) {
 			},
 		},
 		{
-			key: "sc_performance", path: "/bd/productPerformance/openApi/asinList", table: "ls_sc_performance",
-			ids: []string{"sid", "asin"},
+			key: "sc_performance", path: "/bd/productPerformance/openApi/asinList", table: "ls_sc_performance_daily",
+			ids: []string{"sid", "asin", "business_date"},
 			contract: func(ep Endpoint) bool {
-				return ep.IterateByStore && ep.StoreType == "SC" && ep.FieldPaths["asin"] == "asins[0].asin" &&
+				return ep.SingleDayWindow && ep.RowDateField == "business_date" && ep.IterateByStore && ep.StoreType == "SC" && ep.FieldPaths["asin"] == "asins[0].asin" &&
 					reflect.DeepEqual(ep.InjectParams, []string{"sid"})
 			},
 		},

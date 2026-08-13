@@ -12,6 +12,7 @@ func TestAnyToStringArrayJSON(t *testing.T) {
 		want string
 	}{
 		{"string slice", []any{"1"}, `["1"]`},
+		{"typed string slice", []string{"ATVPDHSKDCJ6R"}, `["ATVPDHSKDCJ6R"]`},
 		{"multi slice", []any{"1", "2"}, `["1","2"]`},
 		{"object", map[string]any{"k": "v"}, `{"k":"v"}`},
 		// 标量路径不受影响

@@ -1,0 +1,69 @@
+{{define "content"}}
+<div x-data="dataSources()" x-init="loadDatasetProjects()" class="mx-auto max-w-6xl space-y-4">
+  <div class="flex items-center gap-3">
+    <div class="flex h-10 w-10 items-center justify-center rounded-lg bg-brand-50 text-brand-600">
+      <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h16M4 18h10"/><path d="m18 15 3 3-3 3"/></svg>
+    </div>
+    <div><h1 class="text-lg font-bold text-slate-800">数据表字段</h1><p class="mt-0.5 text-xs text-slate-500">配置内部项目可读取的 listing-daily-v1 字段</p></div>
+  </div>
+
+  <section class="overflow-hidden rounded-lg border border-slate-200 bg-white">
+    <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-slate-50 px-4 py-3">
+      <div><h2 class="text-sm font-bold text-slate-700">API 数据集返回字段</h2><p class="mt-0.5 text-xs text-slate-500">listing-daily-v1</p></div>
+      <div class="flex items-center gap-3">
+        <button type="button" @click="datasetCreateOpen=!datasetCreateOpen" class="inline-flex items-center gap-1.5 rounded-md border border-brand-200 bg-white px-3 py-1.5 text-xs font-medium text-brand-700 hover:bg-brand-50"><span aria-hidden="true">+</span>新增项目 / Token</button>
+        <span x-show="fieldsDirty" class="text-xs font-medium text-amber-700">未保存修改</span>
+        <span x-show="!fieldsDirty && !fieldsLoading && !fieldsError && hasDatasetSelection" class="text-xs text-emerald-600">已保存</span>
+        <button type="button" @click="saveDatasetFields()" :disabled="fieldsSaving || fieldsLoading || !fieldsDirty" class="inline-flex items-center gap-1.5 rounded-md bg-brand-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50">
+          <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z"/><path d="M17 21v-8H7v8M7 3v5h8"/></svg><span x-text="fieldsSaving ? '保存中…' : '保存'"></span>
+        </button>
+      </div>
+    </div>
+    <div class="border-b border-slate-200 px-4 py-3">
+      <label class="min-w-0 text-xs font-medium text-slate-600">项目 / Token ID
+        <select :value="selectedProjectKey" @change="selectProject($event.target.value)" class="mt-1 block w-full rounded-md border border-slate-300 bg-white px-2.5 py-2 text-xs text-slate-700 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500">
+          <option value="">请选择项目</option><template x-for="project in projectOptions" :key="project.key"><option :value="project.key" x-text="project.label"></option></template>
+        </select>
+      </label>
+      <p x-show="!fieldsLoading && !fieldsError && projectOptions.length===0" class="mt-2 text-xs text-amber-700">尚未选择项目 / Token。当前列表为空，请先在运行配置的 dataset_api.tokens 中登记项目。</p>
+    </div>
+    <section x-show="datasetCreateOpen" x-cloak class="border-b border-slate-200 bg-blue-50/40 px-4 py-3">
+      <div class="flex items-start justify-between gap-3">
+        <div><h3 class="text-xs font-bold text-slate-700">新增项目</h3><p class="mt-1 text-[11px] text-slate-500">填写项目名称和店铺范围，Token 与字段权限自动生成。</p></div>
+        <button type="button" @click="datasetCreateOpen=false" aria-label="关闭新增项目表单" title="关闭" class="inline-flex h-7 w-7 items-center justify-center rounded-md border border-slate-300 bg-white text-slate-500 hover:text-slate-800">×</button>
+      </div>
+      <div class="mt-3 grid gap-3 md:grid-cols-2">
+        <label class="text-xs font-medium text-slate-600">项目 ID<input x-model.trim="datasetCreateForm.project_id" type="text" maxlength="32" placeholder="例如 polabel2" class="mt-1 block w-full rounded-md border border-slate-300 bg-white px-2.5 py-2 font-mono text-xs focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"></label>
+        <label class="text-xs font-medium text-slate-600">店铺 ID（逗号分隔）<input x-model="datasetCreateForm.store_scopes" type="text" placeholder="例如 12534,12535" class="mt-1 block w-full rounded-md border border-slate-300 bg-white px-2.5 py-2 font-mono text-xs focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"></label>
+      </div>
+      <div x-show="datasetCreateError" class="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700" x-text="datasetCreateError"></div>
+      <div class="mt-3 flex items-center justify-end gap-2">
+        <button type="button" @click="createDatasetProjectToken()" :disabled="datasetCreating" class="inline-flex items-center gap-1.5 rounded-md bg-brand-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50"><span x-text="datasetCreating ? '创建中…' : '创建并生成 Token'"></span></button>
+      </div>
+      <div x-show="datasetCreateResult" class="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs text-amber-900">
+        <div class="font-medium">项目 Token 已保存，但同步机需要重启后才会生效。</div>
+        <div class="mt-1">明文 Token 仅在本次页面显示，请立即复制保存：</div>
+        <code class="mt-2 block break-all rounded bg-white px-2 py-1.5 text-[11px]" x-text="datasetCreateResult && datasetCreateResult.token"></code>
+        <button type="button" @click="restartAfterDatasetToken()" class="mt-2 inline-flex items-center gap-1.5 rounded-md border border-amber-300 bg-white px-2.5 py-1.5 text-xs font-medium text-amber-800 hover:bg-amber-100">保存后重启同步机</button>
+      </div>
+    </section>
+    <div x-show="fieldsLoading" class="px-4 py-8 text-center text-xs text-slate-400">正在加载字段清单…</div>
+    <div x-show="!fieldsLoading && fieldsError" class="px-4 py-8 text-center text-xs text-red-600">未能读取数据集字段：<span x-text="fieldsError"></span></div>
+    <div x-show="!fieldsLoading && !fieldsError && fieldsSaveError" class="border-b border-red-100 bg-red-50 px-4 py-2.5 text-xs text-red-700">保存失败：<span x-text="fieldsSaveError"></span></div>
+
+    <div class="grid grid-cols-1 gap-4 p-4 md:grid-cols-2">
+      <section class="min-w-0 rounded-md border border-slate-200">
+        <div class="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-3 py-2"><h3 class="text-xs font-bold text-slate-600">可选字段</h3><span class="text-[11px] tabular-nums text-slate-400" x-text="availableFieldCount + ' 项'"></span></div>
+        <div x-show="!fieldsLoading && fieldGroups.length===0" class="px-3 py-8 text-center text-xs text-slate-400">尚未配置可选字段</div>
+        <div x-show="fieldGroups.length>0 && availableFieldCount===0" class="px-3 py-8 text-center text-xs text-slate-400">没有可添加字段</div>
+        <div x-show="availableFieldCount>0" class="space-y-4 p-3"><template x-for="group in fieldGroups" :key="group.source"><fieldset x-show="availableFields(group).length>0" class="min-w-0"><legend class="mb-1.5 text-[11px] font-bold uppercase tracking-wide text-slate-400" x-text="group.source"></legend><div class="space-y-1"><template x-for="field in availableFields(group)" :key="field.name"><div class="flex items-center justify-between gap-2 rounded-md border border-slate-100 px-2.5 py-2"><div class="min-w-0"><div class="truncate text-xs font-medium text-slate-700" x-text="field.label"></div><code class="block truncate text-[10px] text-slate-400" x-text="field.name"></code></div><button type="button" @click="addField(field.name)" :aria-label="'添加 ' + field.label" title="添加字段" class="inline-flex h-7 w-7 flex-none items-center justify-center rounded-md border border-slate-300 text-slate-600 hover:border-brand-600 hover:text-brand-700">+</button></div></template></div></fieldset></template></div>
+      </section>
+      <section class="min-w-0 rounded-md border border-slate-200">
+        <div class="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-3 py-2"><h3 class="text-xs font-bold text-slate-600">已获准字段</h3><span class="text-[11px] tabular-nums text-slate-400" x-text="selectedFieldCount + ' 项'"></span></div>
+        <div x-show="selectedFieldCount===0" class="px-3 py-8 text-center text-xs text-slate-400">尚未选择字段</div>
+        <div x-show="selectedFieldCount>0" class="space-y-1 p-3"><template x-for="name in selectedFields" :key="name"><div class="flex items-center justify-between gap-2 rounded-md border border-slate-100 px-2.5 py-2"><div class="min-w-0"><div class="truncate text-xs font-medium text-slate-700" x-text="fieldMeta(name).label"></div><code class="block truncate text-[10px] text-slate-400" x-text="name"></code></div><button type="button" @click="removeField(name)" :aria-label="'移除 ' + fieldMeta(name).label" title="移除字段" class="inline-flex h-7 w-7 flex-none items-center justify-center rounded-md border border-slate-300 text-slate-600 hover:border-red-500 hover:text-red-600">×</button></div></template></div>
+      </section>
+    </div>
+  </section>
+</div>
+{{end}}

@@ -101,7 +101,14 @@ type EndpointWorker struct {
 	todayRecords int       // 当日累计落库行数
 	todayErrors  int       // 当日累计错误次数
 	today        string    // 当日日期（YYYY-MM-DD），用于跨天重置 today*
+
+	// dailyProject runs only after the complete raw endpoint task succeeds.
+	// It is injected before Run starts and remains process-local.
+	dailyProject DailyProjector
 }
+
+// DailyProjector validates every target before publishing one atomic batch.
+type DailyProjector func(context.Context, string, []DailyProjectionTarget, time.Time) error
 
 // New 构造一个 EndpointWorker。
 //
@@ -193,6 +200,10 @@ func vcOrdersRecordIDsValid(fields []string) bool {
 // FatalError 返回启动断言失败的原因，nil = 该接口可正常同步。
 // server 层用它挡手动触发并回显原因；main 用它打启动告警。
 func (w *EndpointWorker) FatalError() error { return w.fatalErr }
+
+// SetDailyProjector wires the one allowed listing daily fact publisher. Main
+// calls it before worker goroutines start, so no runtime synchronization is needed.
+func (w *EndpointWorker) SetDailyProjector(project DailyProjector) { w.dailyProject = project }
 
 // missingDeclaredColumns 返回配置声明过、但目标表实际不存在的列名（已排序去重）。
 //
@@ -416,6 +427,7 @@ func (w *EndpointWorker) doSync(ctx context.Context, req triggerReq) {
 	status := "success"
 	totalRecords := 0
 	totalPages := 0
+	dailyTargets := make([]DailyProjectionTarget, 0)
 
 	defer func() {
 		// 收尾：写 task 最终状态 + 更新快照。
@@ -433,8 +445,18 @@ func (w *EndpointWorker) doSync(ctx context.Context, req triggerReq) {
 			return
 		}
 		var finalErr error
+		if status == "success" {
+			if projectErr := w.projectDaily(syncCtx, dailyTargets); projectErr != nil {
+				status = "error"
+				finalErr = projectErr
+				_ = db.InsertTaskLog(w.DB, taskID, totalPages+1, 0, 0, 0, 0, "daily projection: "+projectErr.Error())
+				log.Printf("[worker:%s] 日维投影失败: %v", w.Endpoint.Name, projectErr)
+			}
+		}
 		if status == "error" {
-			finalErr = fmt.Errorf("同步过程出错，见 task_logs")
+			if finalErr == nil {
+				finalErr = fmt.Errorf("同步过程出错，见 task_logs")
+			}
 		}
 		if uerr := db.UpdateTask(w.DB, taskID, status, totalRecords, totalPages, finalErr); uerr != nil {
 			log.Printf("[worker:%s] UpdateTask(%d)=%s 失败: %v", w.Endpoint.Name, taskID, status, uerr)
@@ -478,16 +500,26 @@ func (w *EndpointWorker) doSync(ctx context.Context, req triggerReq) {
 				status = "cancelled"
 				return
 			}
-			params := w.baseParamsFor(req)
-			params["sid"] = account.SID
-			params["profile_id"] = account.ProfileID
-			rec, pages, ok := w.fetchAllPages(syncCtx, taskID, params)
+			sets, paramErr := w.paramSetsFor(req)
+			if paramErr != nil {
+				log.Printf("[worker:%s] 请求日期参数无效: %v", w.Endpoint.Name, paramErr)
+				status = "error"
+				return
+			}
+			for _, params := range sets {
+				params["sid"] = account.SID
+				params["profile_id"] = account.ProfileID
+			}
+			rec, pages, ok := forEachParamSet(sets, func(params map[string]any) (int, int, bool) {
+				return w.fetchAllPages(syncCtx, taskID, params)
+			})
 			totalRecords += rec
 			totalPages += pages
 			if !ok {
 				status = "error"
 				return
 			}
+			dailyTargets = append(dailyTargets, projectionTargets(w.Endpoint, account.SID, sets, time.Now())...)
 			if i < len(accounts)-1 && w.Endpoint.Rate.MultiIntervalMs > 0 {
 				select {
 				case <-syncCtx.Done():
@@ -526,15 +558,25 @@ func (w *EndpointWorker) doSync(ctx context.Context, req triggerReq) {
 				status = "cancelled"
 				return
 			}
-			params := w.baseParamsFor(req)
-			params[paramName] = sid
-			rec, pages, ok := w.fetchAllPages(syncCtx, taskID, params)
+			sets, paramErr := w.paramSetsFor(req)
+			if paramErr != nil {
+				log.Printf("[worker:%s] 请求日期参数无效: %v", w.Endpoint.Name, paramErr)
+				status = "error"
+				return
+			}
+			for _, params := range sets {
+				params[paramName] = sid
+			}
+			rec, pages, ok := forEachParamSet(sets, func(params map[string]any) (int, int, bool) {
+				return w.fetchAllPages(syncCtx, taskID, params)
+			})
 			totalRecords += rec
 			totalPages += pages
 			if !ok {
 				status = "error"
 				return // 任一 sid 失败则 break（宪法 §10）
 			}
+			dailyTargets = append(dailyTargets, projectionTargets(w.Endpoint, sid, sets, time.Now())...)
 			// 多店铺间隔（非最后一个）
 			if i < len(sids)-1 && w.Endpoint.Rate.MultiIntervalMs > 0 {
 				select {
@@ -549,13 +591,22 @@ func (w *EndpointWorker) doSync(ctx context.Context, req triggerReq) {
 	}
 
 	// 单店铺：直接一次 fetchAllPages
-	rec, pages, ok := w.fetchAllPages(syncCtx, taskID, w.baseParamsFor(req))
+	sets, paramErr := w.paramSetsFor(req)
+	if paramErr != nil {
+		log.Printf("[worker:%s] 请求日期参数无效: %v", w.Endpoint.Name, paramErr)
+		status = "error"
+		return
+	}
+	rec, pages, ok := forEachParamSet(sets, func(params map[string]any) (int, int, bool) {
+		return w.fetchAllPages(syncCtx, taskID, params)
+	})
 	totalRecords = rec
 	totalPages = pages
 	if !ok {
 		status = "error"
 		return
 	}
+	dailyTargets = append(dailyTargets, projectionTargets(w.Endpoint, stringParam(sets[0], w.Endpoint.StoreParamName), sets, time.Now())...)
 	if syncCtx.Err() != nil {
 		status = "cancelled"
 		return
@@ -632,6 +683,10 @@ func (w *EndpointWorker) fetchAllPages(ctx context.Context, taskID int64, params
 		if uerr := shapeRows(list, w.Endpoint.FieldPaths, w.Endpoint.InjectParams, w.Endpoint.ForceInjectParams, pageParams); uerr != nil {
 			_ = db.InsertTaskLog(w.DB, taskID, pages+1, httpStatus, apiCode, len(list), durationMs, "shape: "+uerr.Error())
 			log.Printf("[worker:%s] 行整形出错 offset=%d: %v", w.Endpoint.Name, offset, uerr)
+			return totalRecords, pages, false
+		}
+		if uerr := injectRowDate(list, w.Endpoint.RowDateField, w.Endpoint.WindowStartFieldOrDefault(), pageParams); uerr != nil {
+			_ = db.InsertTaskLog(w.DB, taskID, pages+1, httpStatus, apiCode, len(list), durationMs, "row date: "+uerr.Error())
 			return totalRecords, pages, false
 		}
 		if len(list) > 0 {
@@ -753,14 +808,14 @@ func truncateUTF8(s string, max int) string {
 
 // baseParams 构造一个店铺无关的基础参数集合：
 //   - 复制 endpoint.ExtraParams（string 化值）
-//   - 若 WindowDays>0：注入窗口起止日期（近 N 天，YYYY-MM-DD），参数名取
-//     WindowStartField/WindowEndField（默认 start_date/end_date）
+//   - 非 single-day 且 WindowDays>0 时，注入窗口起止日期（近 N 天，YYYY-MM-DD）
+//   - single-day 的逐日窗口由 paramSetsForAt 构造
 func (w *EndpointWorker) baseParams() map[string]any {
 	params := make(map[string]any, len(w.Endpoint.ExtraParams)+2)
 	for k, v := range w.Endpoint.ExtraParams {
 		params[k] = stringifyParam(v)
 	}
-	if w.Endpoint.WindowDays > 0 {
+	if w.Endpoint.WindowDays > 0 && !w.Endpoint.SingleDayWindow {
 		now := time.Now()
 		start := now.AddDate(0, 0, -w.Endpoint.WindowDays)
 		// 参数名可配：领星各接口命名不统一——SC/VC 订单用蛇形 start_date/end_date，
@@ -778,7 +833,7 @@ func (w *EndpointWorker) baseParams() map[string]any {
 	return params
 }
 
-func (w *EndpointWorker) baseParamsFor(req triggerReq) map[string]any {
+func (w *EndpointWorker) baseParamsFor(req triggerReq) (map[string]any, error) {
 	params := w.baseParams()
 	if req.kind == "manual" && req.dateFrom != "" && req.dateTo != "" {
 		if w.Endpoint.DateField != "" {
@@ -788,7 +843,195 @@ func (w *EndpointWorker) baseParamsFor(req triggerReq) map[string]any {
 			params[w.Endpoint.WindowEndFieldOrDefault()] = req.dateTo
 		}
 	}
-	return params
+	return params, nil
+}
+
+func (w *EndpointWorker) paramSetsFor(req triggerReq) ([]map[string]any, error) {
+	return w.paramSetsForAt(req, time.Now())
+}
+
+const maxSingleDayManualRangeDays = 92
+
+func (w *EndpointWorker) paramSetsForAt(req triggerReq, now time.Time) ([]map[string]any, error) {
+	if !w.Endpoint.SingleDayWindow {
+		params, err := w.baseParamsFor(req)
+		return []map[string]any{params}, err
+	}
+	if req.kind == "manual" && (req.dateFrom == "" || req.dateTo == "") {
+		return nil, fmt.Errorf("single-day endpoint 手动同步必须明确提供 date_from/date_to")
+	}
+	var dates []time.Time
+	if req.kind == "manual" {
+		from, err := time.Parse("2006-01-02", req.dateFrom)
+		if err != nil {
+			return nil, fmt.Errorf("date_from 非法: %w", err)
+		}
+		to, err := time.Parse("2006-01-02", req.dateTo)
+		if err != nil {
+			return nil, fmt.Errorf("date_to 非法: %w", err)
+		}
+		if from.After(to) {
+			return nil, fmt.Errorf("date_to 不能早于 date_from")
+		}
+		if to.After(from.AddDate(0, 0, maxSingleDayManualRangeDays-1)) {
+			return nil, fmt.Errorf("single-day endpoint 手动同步范围不能超过 %d 个自然日", maxSingleDayManualRangeDays)
+		}
+		for date := from; !date.After(to); date = date.AddDate(0, 0, 1) {
+			dates = append(dates, date)
+		}
+	} else {
+		for offset := 0; offset < w.Endpoint.WindowDays; offset++ {
+			dates = append(dates, now.AddDate(0, 0, -offset))
+		}
+	}
+	sets := make([]map[string]any, 0, len(dates))
+	for _, date := range dates {
+		params := w.baseParams()
+		value := date.Format("2006-01-02")
+		params[w.Endpoint.WindowStartFieldOrDefault()] = value
+		params[w.Endpoint.WindowEndFieldOrDefault()] = value
+		sets = append(sets, params)
+	}
+	return sets, nil
+}
+
+func forEachParamSet(sets []map[string]any, fetch func(map[string]any) (int, int, bool)) (int, int, bool) {
+	totalRecords, totalPages := 0, 0
+	for _, params := range sets {
+		records, pages, ok := fetch(params)
+		totalRecords += records
+		totalPages += pages
+		if !ok {
+			return totalRecords, totalPages, false
+		}
+	}
+	return totalRecords, totalPages, true
+}
+
+type DailyProjectionTarget struct {
+	Store   string
+	Channel string
+	Date    time.Time
+}
+
+func dailyProjectionChannel(table string) (string, bool) {
+	channels := map[string]string{
+		"ls_sc_sales_report":      "sc_fba",
+		"ls_sc_sales_revenue":     "sc_fba",
+		"ls_sc_refunds":           "sc_fba",
+		"ls_fba_inventory":        "sc_fba",
+		"ls_sc_performance_daily": "sc_fba",
+		"ls_ad_sp_product":        "sc_fba",
+		"ls_ad_sd_product":        "sc_fba",
+		"ls_vc_sales_report":      "vc",
+		"ls_vc_inventory":         "vc",
+		"ls_ad_hsa_campaign":      "hsa",
+	}
+	channel, ok := channels[table]
+	return channel, ok
+}
+
+func dailyProjectionDates(endpoint config.Endpoint, params map[string]any, now time.Time) ([]time.Time, error) {
+	if endpoint.Table == "ls_fba_inventory" {
+		return []time.Time{calendarDate(now)}, nil
+	}
+	if endpoint.DateField != "" {
+		date, err := parseProjectionDate(stringParam(params, endpoint.DateField), endpoint.DateField)
+		return oneDate(date, err)
+	}
+	startField := endpoint.WindowStartFieldOrDefault()
+	endField := endpoint.WindowEndFieldOrDefault()
+	start, err := parseProjectionDate(stringParam(params, startField), startField)
+	if err != nil {
+		return nil, err
+	}
+	end, err := parseProjectionDate(stringParam(params, endField), endField)
+	if err != nil {
+		return nil, err
+	}
+	if start.After(end) {
+		return nil, fmt.Errorf("daily projection: %s is after %s", startField, endField)
+	}
+	dates := make([]time.Time, 0, int(end.Sub(start).Hours()/24)+1)
+	for date := start; !date.After(end); date = date.AddDate(0, 0, 1) {
+		dates = append(dates, date)
+	}
+	return dates, nil
+}
+
+func projectionTargets(endpoint config.Endpoint, store string, sets []map[string]any, now time.Time) []DailyProjectionTarget {
+	channel, ok := dailyProjectionChannel(endpoint.Table)
+	if !ok {
+		return nil
+	}
+	targets := make([]DailyProjectionTarget, 0, len(sets))
+	for _, params := range sets {
+		dates, err := dailyProjectionDates(endpoint, params, now)
+		if err != nil {
+			return []DailyProjectionTarget{{Store: strings.TrimSpace(store), Channel: channel}}
+		}
+		for _, date := range dates {
+			targets = append(targets, DailyProjectionTarget{Store: strings.TrimSpace(store), Channel: channel, Date: date})
+		}
+	}
+	return targets
+}
+
+func (w *EndpointWorker) projectDaily(ctx context.Context, targets []DailyProjectionTarget) error {
+	if _, ok := dailyProjectionChannel(w.Endpoint.Table); !ok {
+		return nil
+	}
+	if w.dailyProject == nil {
+		return fmt.Errorf("daily projection: publisher is not configured")
+	}
+	seen := make(map[string]struct{}, len(targets))
+	unique := make([]DailyProjectionTarget, 0, len(targets))
+	today := time.Now()
+	for _, target := range targets {
+		if target.Store == "" || target.Date.IsZero() {
+			return fmt.Errorf("daily projection: store/date target is missing for table %s", w.Endpoint.Table)
+		}
+		key := target.Store + "\x00" + target.Channel + "\x00" + target.Date.Format("2006-01-02")
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		unique = append(unique, target)
+	}
+	if err := w.dailyProject(ctx, w.Account.ID, unique, today); err != nil {
+		return fmt.Errorf("daily projection batch: %w", err)
+	}
+	return nil
+}
+
+func stringParam(params map[string]any, field string) string {
+	if field == "" {
+		field = "sid"
+	}
+	return strings.TrimSpace(fmt.Sprint(params[field]))
+}
+
+func parseProjectionDate(value, field string) (time.Time, error) {
+	if value == "" {
+		return time.Time{}, fmt.Errorf("daily projection: missing %s", field)
+	}
+	date, err := time.Parse("2006-01-02", value)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("daily projection: invalid %s %q: %w", field, value, err)
+	}
+	return date, nil
+}
+
+func oneDate(date time.Time, err error) ([]time.Time, error) {
+	if err != nil {
+		return nil, err
+	}
+	return []time.Time{date}, nil
+}
+
+func calendarDate(value time.Time) time.Time {
+	year, month, day := value.Date()
+	return time.Date(year, month, day, 0, 0, 0, 0, time.UTC)
 }
 
 // stringifyParam 把 yaml 解析出来的 any（可能是 int/float64/bool）转成字符串，
