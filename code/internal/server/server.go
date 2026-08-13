@@ -186,7 +186,7 @@ func sharedFuncs() template.FuncMap {
 				{Key: "sync_manage", Href: "/sync", Label: "同步配置"},
 				{Key: "logs", Href: "/logs", Label: "同步日志"},
 				{Key: "datasources", Href: "/datasources", Label: "数据源"},
-				{Key: "dataset_fields", Href: "/dataset-fields", Label: "数据集字段"},
+				{Key: "dataset_fields", Href: "/dataset-fields", Label: "数据表字段"},
 			}
 		},
 	}
