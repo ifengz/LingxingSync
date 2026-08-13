@@ -552,6 +552,11 @@
     justify-content: flex-start;
   }
 
+  .ui-app-nav-link {
+    padding-inline: 0.5rem;
+    font-size: 0.75rem;
+  }
+
   .ui-app-stats {
     gap: 0.5rem;
   }
