@@ -45,7 +45,7 @@ func TestNavigationIncludesDedicatedDatasetFieldsPage(t *testing.T) {
 	if len(items) != 5 {
 		t.Fatalf("navigation items=%d, want 5", len(items))
 	}
-	want := navItem{Key: "dataset_fields", Href: "/dataset-fields", Label: "数据集字段"}
+	want := navItem{Key: "dataset_fields", Href: "/dataset-fields", Label: "数据表字段"}
 	if items[4] != want {
 		t.Fatalf("fifth navigation item=%+v, want %+v", items[4], want)
 	}
