@@ -231,12 +231,12 @@ void (async () => {
     return { message: '已请求取消' };
   };
 
-  // 正式报表卡片固定读取配置和状态端点；保存只提交当前固定报告合同。
+  // 正式报表切卡按账号+店铺读取固定报告状态。
   {
     const template = fs.readFileSync(__dirname + '/../templates/sync_manage.html', 'utf8');
     assert.match(template, /正式报表校验/);
-    assert.match(template, /saveReportExportConfig\(\)/);
-    assert.match(template, /reportExportStatus/);
+    assert.match(template, /saveReportExportBatch\(\)/);
+    assert.match(template, /reportStatusText\(row\)/);
 
     const reportCalls = [];
     sandbox.window.apiGet = async (url) => {
@@ -250,32 +250,56 @@ void (async () => {
           store_id: 'STORE-1', region: 'na', marketplace_ids: ['ATVPDKIKX0DER'], cron: '0 4 * * *', window_days: 3,
         }],
       };
-      if (url === '/api/report-exports/status') return {
+      if (url === '/api/report-exports/status?account=sc_us&store_id=STORE-1') return {
         configured: true,
         latest_task: { status: 'success', rows: 18, finished_at: '2026-08-13T04:00:00Z' },
         differences: { database_missing: 1, report_missing: 2, value_mismatch: 3 },
       };
       throw new Error('unexpected GET ' + url);
     };
-    sandbox.window.apiPut = async (url, body) => {
-      reportCalls.push({ method: 'PUT', url, body });
-      return { message: '已保存' };
-    };
     const report = sandbox.window.syncManage();
     await report.load();
-    assert.equal(report.reportExportForm.type, 'fba_customer_returns');
-    assert.equal(report.reportExportStatus.latest_task.status, 'success');
-    assert.equal(report.reportExportStatusText(), '已完成');
-    assert.equal(report.reportDifference('database_missing'), 1);
-    report.reportExportMarketplaceText = 'ATVPDKIKX0DER, A2EUQ1WTGCTBG2';
-    report.reportExportForm.window_days = 7;
-    await report.saveReportExportConfig();
-    assert.equal(JSON.stringify(reportCalls.find(call => call.method === 'PUT')), JSON.stringify({
-      method: 'PUT', url: '/api/report-exports/config', body: { report_exports: [{
-        type: 'fba_customer_returns', enabled: true, account: 'sc_us', seller_id: 'SELLER-1',
-        store_id: 'STORE-1', region: 'na', marketplace_ids: ['ATVPDKIKX0DER', 'A2EUQ1WTGCTBG2'], cron: '0 4 * * *', window_days: 7,
-      }] },
-    }));
+    assert.equal(report.reportExportConfigs.length, 1);
+    assert.equal(report.reportStatusText(report.reportExportConfigs[0]), '已完成');
+    assert.equal(report.reportDifferenceFor(report.reportExportConfigs[0], 'database_missing'), 1);
+  }
+
+  // 报表检验批量配置：选一次账号和共同参数，勾多个店铺后生成多条固定报告配置。
+  {
+    const report = sandbox.window.syncManage();
+    report.reportExportConfigs = [{
+      type: 'fba_customer_returns', enabled: true, account: 'sc_us', seller_id: 'SELLER-OLD',
+      store_id: 'OLD', region: 'na', marketplace_ids: ['OLD-MKT'], cron: '0 4 * * *', window_days: 3,
+    }];
+    report.reportBatch = { account: 'sc_us', store_sids: [], region: 'na', cron: '0 5 * * *', window_days: 7, enabled: true };
+    report.storesByAccount = { sc_us: { loaded: true, selected: {}, query: '', items: [
+      { sid: '1001', store_type: 'SC', seller_id: 'SELLER-1', marketplace_id: 'MKT-1', store_name: '美国店' },
+      { sid: '1002', store_type: 'SC', seller_id: 'SELLER-2', marketplace_id: 'MKT-2', store_name: '加拿大店' },
+      { sid: '2001', store_type: 'VC', seller_id: 'SELLER-VC', marketplace_id: 'MKT-VC', store_name: 'VC 店' },
+    ] } };
+    report.selectAllReportStores();
+    assert.deepEqual(report.reportBatch.store_sids, ['1001', '1002'], 'FBA 退货报表只能选择 SC 店铺');
+    let put = null;
+    sandbox.window.apiPut = async (url, body) => { put = { url, body }; return { message: '已保存' }; };
+    report.loadReportExport = async () => {};
+    await report.saveReportExportBatch();
+    assert.equal(put.url, '/api/report-exports/config');
+    assert.equal(put.body.report_exports.length, 3);
+    assert.deepEqual(put.body.report_exports.slice(1).map(row => [row.store_id, row.seller_id, row.marketplace_ids[0], row.cron, row.window_days]), [
+      ['1001', 'SELLER-1', 'MKT-1', '0 5 * * *', 7],
+      ['1002', 'SELLER-2', 'MKT-2', '0 5 * * *', 7],
+    ]);
+
+    report.reportStatuses[report.reportScopeKey(report.reportExportConfigs[0])] = {
+      latest_task: { status: 'success' }, differences: { database_missing: 2 },
+    };
+    assert.equal(report.reportStatusText(report.reportExportConfigs[0]), '已完成');
+    assert.equal(report.reportDifferenceFor(report.reportExportConfigs[0], 'database_missing'), 2);
+
+    report.reportExportConfigs = put.body.report_exports;
+    sandbox.window.syncConfirm = async () => true;
+    await report.deleteReportExport(report.reportExportConfigs[1]);
+    assert.deepEqual(put.body.report_exports.map(row => row.store_id), ['OLD', '1002']);
   }
 
   // 日维预览固定使用筛选和分页合同，NULL 显示短横线，错误和空结果分别留在组件状态。
@@ -506,6 +530,33 @@ void (async () => {
   assert.equal(cronSave.body.rate.bucket, 2);
   assert.equal(cronSave.body.window_days, 7);
   assert.equal(cronSave.body.date_offset_days, 0);
+
+  // 定时调度批量保存复用现有逐行 API；窗口天数只应用到支持日期范围的接口。
+  const scheduleBatch = sandbox.window.syncManage();
+  scheduleBatch.schedule = [
+    scheduleBatch.normalizeRow({
+      name: 'sc_sales', display: '销量', account: 'sc_us', cron: '0 1 * * *', enabled: true,
+      rate: { bucket: 1, interval_ms: 1000 }, store_sids: [], date_range_capable: true, window_days: 3,
+    }),
+    scheduleBatch.normalizeRow({
+      name: 'sc_inventory', display: '库存', account: 'sc_us', cron: '0 2 * * *', enabled: true,
+      rate: { bucket: 1, interval_ms: 1000 }, store_sids: [], date_range_capable: false, window_days: 0,
+    }),
+  ];
+  for (const row of scheduleBatch.schedule) scheduleBatch.scheduleBaseline[row.name] = scheduleBatch.rowSnap(row);
+  scheduleBatch.scheduleSelected = ['sc_sales', 'sc_inventory'];
+  scheduleBatch.scheduleBatch = { enabled: 'disabled', cron: '0 5 * * *', window_days: 7 };
+  const scheduleBatchCalls = [];
+  sandbox.window.apiPut = async (url, body) => {
+    scheduleBatchCalls.push({ url, body });
+    return { message: '已保存', need_restart: false };
+  };
+  await scheduleBatch.saveScheduleBatch();
+  assert.deepEqual(scheduleBatchCalls.map(call => [call.url, call.body.enabled, call.body.cron, call.body.window_days]), [
+    ['/api/endpoints/sc_sales', false, '0 5 * * *', 7],
+    ['/api/endpoints/sc_inventory', false, '0 5 * * *', 0],
+  ]);
+  assert.equal(JSON.stringify(scheduleBatch.scheduleSelected), '[]');
 
   // 数据集字段双栏：项目与 token ID 共同标识字段清单；不接触明文 bearer。
   const fieldCalls = [];
