@@ -79,7 +79,7 @@ func TestCreateDatasetProjectTokenRejectsDuplicateAndInvalidScope(t *testing.T) 
 	}
 }
 
-func TestCreateDatasetProjectTokenRejectsEmptyDatasetConfig(t *testing.T) {
+func TestCreateDatasetProjectTokenInitializesEmptyDatasetConfig(t *testing.T) {
 	cfg := validDatasetProjectTestConfig()
 	cfg.DatasetAPI.CursorSecret = ""
 	cfg.DatasetAPI.FieldAllowlist = nil
@@ -88,8 +88,15 @@ func TestCreateDatasetProjectTokenRejectsEmptyDatasetConfig(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, datasetProjectsPath, strings.NewReader(`{"project_id":"polabel2","store_scopes":["12534"]}`))
 	rec := httptest.NewRecorder()
 	s.Routes().ServeHTTP(rec, req)
-	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "没有可用字段") {
+	if rec.Code != http.StatusOK {
 		t.Fatalf("empty config status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	saved := store.Current().DatasetAPI
+	if len(saved.FieldAllowlist) != len(defaultDatasetFields) || len(saved.CursorSecret) < 16 || len(saved.Tokens) != 1 {
+		t.Fatalf("initialized dataset config=%+v", saved)
+	}
+	if got := saved.Tokens[0].Fields; len(got) != len(defaultDatasetFields) || got[0] != "sales_units" || got[len(got)-1] != "sb_spend" {
+		t.Fatalf("initialized token fields=%v", got)
 	}
 }
 

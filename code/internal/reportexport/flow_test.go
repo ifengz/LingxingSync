@@ -151,6 +151,25 @@ func TestRunnerCompletesAndRenewsExpiredURLAndAllowsSameRangeRerun(t *testing.T)
 	}
 }
 
+func TestRunnerReportsUnknownStatusDiagnostics(t *testing.T) {
+	client := signedClientFunc(func(_ context.Context, _ string, path string, _ map[string]any) ([]byte, int, int, error) {
+		switch path {
+		case createPath:
+			return []byte(`{"code":0,"data":{"task_id":"task-unknown"}}`), 200, 0, nil
+		case queryPath:
+			return []byte(`{"code":0,"message":"upstream detail","request_id":"trace-123","error_details":["seller report unavailable"],"data":{"progress_status":"UNKNOWN"}}`), 200, 0, nil
+		default:
+			return nil, 0, 0, fmt.Errorf("unexpected path %s", path)
+		}
+	})
+	store := &fakeStore{}
+	runner := Runner{Client: client, Store: store, PollInterval: time.Millisecond, PollTimeout: time.Second}
+	_, err := runner.Run(context.Background(), Request{AccountID: "acct", SellerID: "seller", StoreID: "store-1", Region: "na", MarketplaceIDs: []string{"ATVPDHSKDCJ6R"}, DateFrom: "2026-08-11T00:00:00Z", DateTo: "2026-08-11T23:59:59Z"})
+	if err == nil || !strings.Contains(err.Error(), "progress_status=UNKNOWN") || !strings.Contains(err.Error(), "request_id=trace-123") || !strings.Contains(err.Error(), "seller report unavailable") {
+		t.Fatalf("unknown status error=%v", err)
+	}
+}
+
 type concurrentStore struct {
 	mu      sync.Mutex
 	audit   Audit

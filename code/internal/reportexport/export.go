@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -261,7 +262,7 @@ func (r *Runner) waitForDone(ctx context.Context, request Request, auditID int64
 			return data, nil
 		case "IN_PROGRESS", "IN_QUEUE":
 		case "CANCELLED", "FATAL", "UNKNOWN":
-			return data, fmt.Errorf("report export: upstream progress_status=%s", data.ProgressStatus)
+			return data, fmt.Errorf("report export: upstream progress_status=%s; %s", data.ProgressStatus, responseDiagnostics(raw))
 		default:
 			return data, fmt.Errorf("report export: unknown progress_status=%q", data.ProgressStatus)
 		}
@@ -431,6 +432,36 @@ func decodeEnvelope(raw []byte, target any) error {
 		return fmt.Errorf("report export: decode response data: %w", err)
 	}
 	return nil
+}
+
+func responseDiagnostics(raw []byte) string {
+	var envelope struct {
+		RequestID    string          `json:"request_id"`
+		Message      string          `json:"message"`
+		Msg          string          `json:"msg"`
+		ErrorDetails json.RawMessage `json:"error_details"`
+	}
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		return "response diagnostics unavailable"
+	}
+	message := strings.TrimSpace(envelope.Message)
+	if message == "" {
+		message = strings.TrimSpace(envelope.Msg)
+	}
+	parts := make([]string, 0, 3)
+	if envelope.RequestID != "" {
+		parts = append(parts, "request_id="+envelope.RequestID)
+	}
+	if message != "" {
+		parts = append(parts, "message="+strconv.Quote(message))
+	}
+	if len(envelope.ErrorDetails) > 0 && string(envelope.ErrorDetails) != "null" && string(envelope.ErrorDetails) != "[]" {
+		parts = append(parts, "error_details="+string(envelope.ErrorDetails))
+	}
+	if len(parts) == 0 {
+		return "response diagnostics unavailable"
+	}
+	return strings.Join(parts, "; ")
 }
 
 func parseEnvelope(raw []byte, target any) error { return decodeEnvelope(raw, target) }
