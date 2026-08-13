@@ -443,7 +443,7 @@ POST /api/v1/datasets/listing-daily-v1/changes
 
 ## 数据集字段 allowlist 管理（已实现）
 
-现有 `/datasources` 页面可使用以下固定管理端点，仍受 `X-Sync-Secret` 中间件保护：
+独立 `/dataset-fields` 页面使用以下固定管理端点，仍受 `X-Sync-Secret` 中间件保护：
 
 ```text
 GET /api/datasources/datasets/listing-daily-v1/fields
