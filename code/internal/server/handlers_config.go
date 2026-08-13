@@ -55,9 +55,7 @@ func (s *Server) registerConfigRoutes(mux *http.ServeMux) {
 
 type createDatasetProjectTokenRequest struct {
 	ProjectID   string   `json:"project_id"`
-	TokenID     string   `json:"token_id"`
 	StoreScopes []string `json:"store_scopes"`
-	Fields      []string `json:"fields"`
 }
 
 // apiCreateDatasetProjectToken creates one fixed listing dataset reader. Only
@@ -74,9 +72,8 @@ func (s *Server) apiCreateDatasetProjectToken(w http.ResponseWriter, r *http.Req
 		return
 	}
 	in.ProjectID = strings.TrimSpace(in.ProjectID)
-	in.TokenID = strings.TrimSpace(in.TokenID)
-	if !config.ValidAccountID(in.ProjectID) || !config.ValidAccountID(in.TokenID) {
-		errJSON(w, http.StatusBadRequest, "项目 ID 和 Token ID 只能使用字母、数字、下划线或连字符，长度 1–32")
+	if !config.ValidAccountID(in.ProjectID) {
+		errJSON(w, http.StatusBadRequest, "项目 ID 只能使用字母、数字、下划线或连字符，长度 1–32")
 		return
 	}
 	storeScopes, err := normalizeDatasetTokenValues(in.StoreScopes, "店铺范围")
@@ -84,27 +81,15 @@ func (s *Server) apiCreateDatasetProjectToken(w http.ResponseWriter, r *http.Req
 		errJSON(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	fields, err := normalizeDatasetTokenValues(in.Fields, "字段")
-	if err != nil {
-		errJSON(w, http.StatusBadRequest, err.Error())
+	current := s.store.Current()
+	if len(current.DatasetAPI.FieldAllowlist) == 0 {
+		errJSON(w, http.StatusBadRequest, "当前没有可用字段，请先在配置中登记已验证字段")
 		return
 	}
-	current := s.store.Current()
-	available := make(map[string]struct{}, len(current.DatasetAPI.FieldAllowlist))
-	for _, field := range current.DatasetAPI.FieldAllowlist {
-		available[field] = struct{}{}
-	}
-	if len(available) > 0 {
-		for _, field := range fields {
-			if _, ok := available[field]; !ok {
-				errJSON(w, http.StatusBadRequest, fmt.Sprintf("字段 %q 不在当前可选字段清单中", field))
-				return
-			}
-		}
-	}
+	tokenID := in.ProjectID
 	for _, token := range current.DatasetAPI.Tokens {
-		if token.ID == in.TokenID {
-			errJSON(w, http.StatusConflict, "Token ID 已存在: "+in.TokenID)
+		if token.ID == tokenID || token.ProjectID == in.ProjectID {
+			errJSON(w, http.StatusConflict, "项目 ID 已存在: "+in.ProjectID)
 			return
 		}
 	}
@@ -115,30 +100,17 @@ func (s *Server) apiCreateDatasetProjectToken(w http.ResponseWriter, r *http.Req
 	}
 	old := current
 	snap := s.store.Snapshot()
-	if len(snap.DatasetAPI.FieldAllowlist) == 0 {
-		// First project creation is also the simple bootstrap path for an empty
-		// runtime config: its initial fields become the fixed server allowlist.
-		snap.DatasetAPI.FieldAllowlist = append([]string(nil), fields...)
-	}
-	if strings.TrimSpace(snap.DatasetAPI.CursorSecret) == "" {
-		cursorSecret, err := newDatasetRandomValue()
-		if err != nil {
-			errJSON(w, http.StatusInternalServerError, "生成游标密钥失败: "+err.Error())
-			return
-		}
-		snap.DatasetAPI.CursorSecret = cursorSecret
-	}
 	snap.DatasetAPI.Tokens = append(snap.DatasetAPI.Tokens, config.DatasetToken{
-		ID:            in.TokenID,
+		ID:            tokenID,
 		ProjectID:     in.ProjectID,
 		TokenHash:     datasetapi.HashToken(rawToken),
 		DatasetScopes: []string{datasetapi.DatasetID},
 		StoreScopes:   storeScopes,
-		Fields:        fields,
+		Fields:        append([]string(nil), snap.DatasetAPI.FieldAllowlist...),
 	})
 	s.applyConfigWrite(w, old, snap, "项目 Token 已新增，请保存明文 Token 并重启同步机", map[string]any{
 		"project_id":   in.ProjectID,
-		"token_id":     in.TokenID,
+		"token_id":     tokenID,
 		"token":        rawToken,
 		"need_restart": true,
 	})
@@ -165,10 +137,6 @@ func normalizeDatasetTokenValues(values []string, label string) ([]string, error
 }
 
 func newDatasetBearerToken() (string, error) {
-	return newDatasetRandomValue()
-}
-
-func newDatasetRandomValue() (string, error) {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
 		return "", err

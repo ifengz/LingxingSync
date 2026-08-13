@@ -58,7 +58,7 @@ assert.equal(entryManage.advancedAdd, false);
   assert.match(template, /可选字段/);
   assert.match(template, /已获准字段/);
   assert.match(template, /未保存修改/);
-  assert.match(template, /项目 \/ Token ID/);
+  assert.match(template, /项目 ID/);
   assert.match(template, /selectedProjectKey/);
   assert.match(template, /selectProject/);
   assert.match(template, /新增项目 \/ Token/);
@@ -79,7 +79,7 @@ assert.equal(entryManage.advancedAdd, false);
   const source = fs.readFileSync(__dirname + '/app.js', 'utf8');
   assert.match(source, /datasetCreateForm/);
   assert.match(source, /store_scopes: split\(this\.datasetCreateForm\.store_scopes\)/);
-  assert.match(source, /fields: split\(this\.datasetCreateForm\.fields\)/);
+  assert.doesNotMatch(source, /datasetCreateForm\.fields/);
   assert.match(source, /datasetCreateResult = await window\.apiPost/);
 }
 
