@@ -40,6 +40,9 @@ assert.equal(entryManage.advancedAdd, false);
   assert.match(template, /id="sync-modified-time-tip"[^>]*role="tooltip"/);
   assert.match(template, /订单、Listing、FBA 退货、VC PO/);
   assert.match(template, /销量、Performance、SP、SD、HSA、VC 销量\/库存/);
+  assert.match(template, /fixed left-4 right-4 top-44/);
+  assert.match(template, /sm:absolute sm:left-full sm:right-auto/);
+  assert.doesNotMatch(template, /absolute left-1\/2 top-full/);
 }
 
 // 数据集字段配置固定走 listing-daily-v1 的字段合同，不接受表名或 SQL 输入。
