@@ -227,15 +227,15 @@ func (s *Server) apiGetReportExportConfig(w http.ResponseWriter, _ *http.Request
 	if s.store != nil {
 		cfg = s.store.Current()
 	}
-	result := defaultReportExportDTO()
-	if cfg != nil && len(cfg.ReportExports) > 1 {
-		errJSON(w, http.StatusConflict, "当前存在多个正式报表配置，UI 只支持一个 fba_customer_returns")
+	if cfg == nil || len(cfg.ReportExports) == 0 {
+		okJSON(w, map[string]any{"report_exports": []reportExportConfigDTO{}, "available_types": []string{config.ReportExportCustomerReturns}, "default": defaultReportExportDTO()})
 		return
 	}
-	if cfg != nil && len(cfg.ReportExports) == 1 {
-		result = reportExportToDTO(cfg.ReportExports[0])
+	result := make([]reportExportConfigDTO, 0, len(cfg.ReportExports))
+	for _, report := range cfg.ReportExports {
+		result = append(result, reportExportToDTO(report))
 	}
-	okJSON(w, result)
+	okJSON(w, map[string]any{"report_exports": result, "available_types": []string{config.ReportExportCustomerReturns}, "default": defaultReportExportDTO()})
 }
 
 func (s *Server) apiPutReportExportConfig(w http.ResponseWriter, r *http.Request) {
@@ -248,27 +248,19 @@ func (s *Server) apiPutReportExportConfig(w http.ResponseWriter, r *http.Request
 		errJSON(w, http.StatusBadRequest, "请求体格式错误: "+err.Error())
 		return
 	}
-	if len(input.ReportExports) > 1 {
-		errJSON(w, http.StatusBadRequest, "当前只支持一个 fba_customer_returns 配置")
-		return
-	}
 	if input.ReportExports == nil {
 		errJSON(w, http.StatusBadRequest, "缺少 report_exports")
 		return
 	}
 	old := s.store.Current()
-	if len(old.ReportExports) > 1 {
-		errJSON(w, http.StatusConflict, "当前存在多个正式报表配置，不能通过单配置 UI 覆盖")
-		return
-	}
 	snap := s.store.Snapshot()
-	snap.ReportExports = nil
-	if len(input.ReportExports) == 1 {
-		if input.ReportExports[0].Type != config.ReportExportCustomerReturns {
+	snap.ReportExports = make([]config.ReportExport, 0, len(input.ReportExports))
+	for _, report := range input.ReportExports {
+		if report.Type != config.ReportExportCustomerReturns {
 			errJSON(w, http.StatusBadRequest, "当前只支持 fba_customer_returns")
 			return
 		}
-		snap.ReportExports = []config.ReportExport{reportExportFromDTO(input.ReportExports[0])}
+		snap.ReportExports = append(snap.ReportExports, reportExportFromDTO(report))
 	}
 	s.applyConfigWrite(w, old, snap, "正式报表配置已保存")
 }
@@ -298,13 +290,13 @@ type reportExportStatusOut struct {
 }
 
 type reportStatusReader interface {
-	Latest(context.Context) (reportExportStatusOut, error)
+	Latest(context.Context, string, string) (reportExportStatusOut, error)
 }
 
 type sqlReportStatusReader struct{ db *sqlx.DB }
 
 const latestReportTaskSQL = `SELECT id, status, rows_imported, error_message, created_at, downloaded_at, updated_at
-FROM ls_report_export_tasks WHERE report_type = ? ORDER BY id DESC LIMIT 1`
+FROM ls_report_export_tasks WHERE report_type = ? AND account_id = ? AND store_id = ? ORDER BY id DESC LIMIT 1`
 
 const reportDifferencesSQL = `SELECT
 COUNT(*) AS reconciliation_count,
@@ -314,7 +306,7 @@ COALESCE(SUM(JSON_LENGTH(field_diffs)), 0) AS value_mismatch,
 MAX(error_message) AS reconciliation_error
 FROM listing_daily_reconciliations WHERE report_audit_id = ?`
 
-func (r sqlReportStatusReader) Latest(ctx context.Context) (reportExportStatusOut, error) {
+func (r sqlReportStatusReader) Latest(ctx context.Context, accountID, storeID string) (reportExportStatusOut, error) {
 	if r.db == nil {
 		return reportExportStatusOut{}, fmt.Errorf("正式报表状态数据库未配置")
 	}
@@ -328,7 +320,7 @@ func (r sqlReportStatusReader) Latest(ctx context.Context) (reportExportStatusOu
 		UpdatedAt    time.Time      `db:"updated_at"`
 	}
 	noTask := false
-	if err := r.db.GetContext(ctx, &row, latestReportTaskSQL, reportexport.CustomerReturnsReportType); err != nil {
+	if err := r.db.GetContext(ctx, &row, latestReportTaskSQL, reportexport.CustomerReturnsReportType, accountID, storeID); err != nil {
 		noTask = err == sql.ErrNoRows
 		if !noTask {
 			return reportExportStatusOut{}, fmt.Errorf("查询正式报表任务: %w", err)
@@ -384,7 +376,13 @@ func (s *Server) apiReportExportStatus(w http.ResponseWriter, r *http.Request) {
 		errJSON(w, http.StatusInternalServerError, "正式报表状态查询未配置")
 		return
 	}
-	status, err := s.reportStatus.Latest(r.Context())
+	accountID := strings.TrimSpace(r.URL.Query().Get("account"))
+	storeID := strings.TrimSpace(r.URL.Query().Get("store_id"))
+	if accountID == "" || storeID == "" {
+		errJSON(w, http.StatusBadRequest, "account 和 store_id 必填")
+		return
+	}
+	status, err := s.reportStatus.Latest(r.Context(), accountID, storeID)
 	if err != nil {
 		errJSON(w, http.StatusInternalServerError, err.Error())
 		return
@@ -393,8 +391,20 @@ func (s *Server) apiReportExportStatus(w http.ResponseWriter, r *http.Request) {
 	if s.store != nil {
 		cfg = s.store.Current()
 	}
-	status.Configured = cfg != nil && len(cfg.ReportExports) > 0
+	status.Configured = reportScopeConfigured(cfg, accountID, storeID)
 	okJSON(w, status)
+}
+
+func reportScopeConfigured(cfg *config.Config, accountID, storeID string) bool {
+	if cfg == nil {
+		return false
+	}
+	for _, report := range cfg.ReportExports {
+		if report.Type == config.ReportExportCustomerReturns && config.NormID(report.Account) == config.NormID(accountID) && report.StoreID == storeID {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) registerDailyReportRoutes(mux *http.ServeMux) {

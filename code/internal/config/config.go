@@ -423,10 +423,16 @@ func (c *Config) validate() error {
 			}
 		}
 	}
+	reportScopes := make(map[string]struct{}, len(c.ReportExports))
 	for i, report := range c.ReportExports {
 		if report.Type != ReportExportCustomerReturns {
 			return fmt.Errorf("report_exports[%d].type=%q 非法", i, report.Type)
 		}
+		scope := report.Type + "\x00" + NormID(report.Account) + "\x00" + report.StoreID
+		if _, exists := reportScopes[scope]; exists {
+			return fmt.Errorf("report_exports[%d] 的 type+account+store_id 重复", i)
+		}
+		reportScopes[scope] = struct{}{}
 		if !report.Enabled {
 			continue
 		}

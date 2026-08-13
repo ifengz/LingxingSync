@@ -125,6 +125,26 @@ report_exports:
 	}
 }
 
+func TestLoadRejectsDuplicateReportExportScope(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	raw := `
+server: {port: 7799, secret: test}
+database: {host: 127.0.0.1, port: 3306, user: test, password: test, db: test}
+accounts:
+  - {id: sc_us, app_key: key, app_secret: secret}
+report_exports:
+  - {type: fba_customer_returns, enabled: false, account: sc_us, store_id: store-1}
+  - {type: fba_customer_returns, enabled: false, account: sc_us, store_id: store-1}
+endpoints: []
+`
+	if err := os.WriteFile(path, []byte(raw), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "重复") {
+		t.Fatalf("duplicate report scope err=%v", err)
+	}
+}
+
 func TestLoadRejectsUnknownDisabledReportExportType(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	raw := `database:

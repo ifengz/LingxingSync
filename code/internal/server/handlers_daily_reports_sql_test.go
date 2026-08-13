@@ -40,4 +40,9 @@ func TestReportStatusSQLUsesAuditIDAndProbesReconciliationTable(t *testing.T) {
 	if strings.Contains(latestReportTaskSQL, "download_url") {
 		t.Fatalf("report status must not expose temporary download URL: %s", latestReportTaskSQL)
 	}
+	for _, want := range []string{"account_id = ?", "store_id = ?"} {
+		if !strings.Contains(latestReportTaskSQL, want) {
+			t.Fatalf("report status SQL must scope %s: %s", want, latestReportTaskSQL)
+		}
+	}
 }
