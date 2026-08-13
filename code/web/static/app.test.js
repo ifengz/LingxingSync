@@ -2,12 +2,6 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 
-// 五个一级入口在移动端必须完整容纳；横向滚动只作极窄屏兜底，不能默认裁掉第五项。
-{
-  const css = fs.readFileSync(__dirname + '/ui.css', 'utf8');
-  assert.match(css, /@media \(max-width: 640px\)[\s\S]*?\.ui-app-nav-link\s*\{[\s\S]*?padding-inline:\s*0\.25rem\s*!important;[\s\S]*?font-size:\s*0\.75rem\s*!important;/);
-}
-
 const sandbox = {
   window: { addEventListener() {}, dispatchEvent() {}, location: { search: '?tab=schedule&add=1' } },
   document: { querySelector() { return null; } },
