@@ -908,6 +908,11 @@ func (s *Server) apiUpdateEndpoint(w http.ResponseWriter, r *http.Request) {
 	ep.Cron = in.Cron
 	ep.Enabled = in.Enabled
 	ep.WindowDays = in.WindowDays
+	ep.SingleDayWindow = in.SingleDayWindow
+	ep.RowDateField = in.RowDateField
+	ep.WindowStartField = in.WindowStartField
+	ep.WindowEndField = in.WindowEndField
+	ep.DateField = in.DateField
 	ep.DateOffsetDays = in.DateOffsetDays
 	ep.ExtraParams = in.ExtraParams
 	ep.StoreSids = in.StoreSids

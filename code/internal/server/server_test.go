@@ -241,6 +241,63 @@ func TestEndpointDTORoundTripPreservesVCPOOrderIteration(t *testing.T) {
 	}
 }
 
+func TestUpdateEndpointPersistsDailyDateContract(t *testing.T) {
+	cfg := &config.Config{
+		Database: config.Database{Host: "127.0.0.1", User: "test", DB: "lingsync"},
+		Accounts: []config.Account{{ID: "sc_us_1", AppKey: "key", AppSecret: "secret"}},
+		Endpoints: []config.Endpoint{{
+			Name: "sc_performance", Account: "sc_us_1", Path: "/performance", Method: "POST",
+			Table: "ls_sc_performance_daily", RecordIDFields: []string{"sid", "asin", "business_date"},
+			Rate: config.Rate{Bucket: 1, IntervalMs: 1000, Dimension: "account+path"},
+			Cron: "0 5 * * *", Enabled: true, WindowDays: 7,
+		}},
+	}
+	store := config.NewStore(t.TempDir()+"/config.yaml", cfg)
+	s := &Server{cfg: cfg, store: store}
+	body := `{
+		"name":"sc_performance",
+		"display":"SC 产品表现（ASIN）",
+		"account":"sc_us_1",
+		"path":"/performance",
+		"method":"POST",
+		"table":"ls_sc_performance_daily",
+		"record_id_fields":["sid","asin","business_date"],
+		"rate":{"bucket":1,"interval_ms":1000,"multi_interval_ms":10000,"dimension":"account+path"},
+		"cron":"0 5 * * *",
+		"enabled":true,
+		"window_days":7,
+		"single_day_window":true,
+		"row_date_field":"business_date",
+		"window_start_field":"start_date",
+		"window_end_field":"end_date",
+		"date_field":"",
+		"date_offset_days":0,
+		"extra_params":{},
+		"headers":{},
+		"iterate_by_store":true,
+		"store_param_name":"sid",
+		"store_sids":[],
+		"store_type":"SC",
+		"field_paths":{"asin":"asins[0].asin"},
+		"inject_params":["sid"]
+	}`
+	req := httptest.NewRequest(http.MethodPut, "/api/endpoints/sc_performance", strings.NewReader(body))
+	req.SetPathValue("name", "sc_performance")
+	rec := httptest.NewRecorder()
+
+	s.apiUpdateEndpoint(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("update endpoint status=%d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	got := store.Current().Endpoints[0]
+	if !got.SingleDayWindow || got.RowDateField != "business_date" ||
+		got.WindowStartField != "start_date" || got.WindowEndField != "end_date" ||
+		got.DateField != "" || got.DateOffsetDays != 0 {
+		t.Fatalf("daily date contract not persisted: %#v", got)
+	}
+}
+
 func TestCreateProbeEndpointDoesNotRequireTableOrRecordIDs(t *testing.T) {
 	cfg := &config.Config{
 		Database: config.Database{Host: "127.0.0.1", User: "test", DB: "test"},
