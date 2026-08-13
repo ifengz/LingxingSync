@@ -1707,6 +1707,12 @@ window.settingsApi = function () {
       (d.items || []).forEach(s => { sel[s.sid] = !!s.enabled; });
       this.storeSel = sel;
       this.storeSelBaseline = Object.assign({}, sel);
+      // 同 storeSel：预先给每个 VC 店铺在 profileSaving 上建键。否则空对象 {} 上的缺失键
+      // 会让 :disabled="profileSaving[store.sid]" 这个布尔绑定永远拿到「键不存在」的状态，
+      // Alpine 不会随之解禁，保存按钮一直 disabled、点击无反应——表现为填了点保存却没真正落库。
+      const saving = Object.assign({}, this.profileSaving);
+      (d.items || []).forEach(s => { if (s.store_type === 'VC') saving[s.sid] = !!saving[s.sid]; });
+      this.profileSaving = saving;
     },
     async syncStores() {
       if (!this.selectedAccountId || this.storeSyncing) return;
