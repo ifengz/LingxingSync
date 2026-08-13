@@ -186,6 +186,7 @@ func sharedFuncs() template.FuncMap {
 				{Key: "sync_manage", Href: "/sync", Label: "同步配置"},
 				{Key: "logs", Href: "/logs", Label: "同步日志"},
 				{Key: "datasources", Href: "/datasources", Label: "数据源"},
+				{Key: "dataset_fields", Href: "/dataset-fields", Label: "数据集字段"},
 			}
 		},
 	}
@@ -262,6 +263,7 @@ func (s *Server) Routes() *http.ServeMux {
 	mux.HandleFunc("GET /sync", s.pageSyncManage) // 同步管理
 	mux.HandleFunc("GET /logs", s.pageLogs)       // 同步日志
 	mux.HandleFunc("GET /datasources", s.pageDataSources)
+	mux.HandleFunc("GET /dataset-fields", s.pageDatasetFields)
 	mux.HandleFunc("GET /settings/api", s.pageSettingsAPI)
 
 	// ---- API 路由：状态/端点/任务 ----

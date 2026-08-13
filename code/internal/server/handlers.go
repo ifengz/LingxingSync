@@ -157,6 +157,10 @@ func (s *Server) pageDataSources(w http.ResponseWriter, r *http.Request) {
 	s.renderPage(w, "datasources", s.newPageData("datasources"))
 }
 
+func (s *Server) pageDatasetFields(w http.ResponseWriter, r *http.Request) {
+	s.renderPage(w, "dataset_fields", s.newPageData("dataset_fields"))
+}
+
 func (s *Server) pageSettingsAPI(w http.ResponseWriter, r *http.Request) {
 	s.renderPage(w, "settings_api", s.newPageData("settings_api"))
 }

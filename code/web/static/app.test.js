@@ -40,6 +40,8 @@ assert.equal(entryManage.advancedAdd, false);
   assert.match(template, /id="sync-modified-time-tip"[^>]*role="tooltip"/);
   assert.match(template, /订单、Listing、FBA 退货、VC PO/);
   assert.match(template, /销量、Performance、SP、SD、HSA、VC 销量\/库存/);
+  assert.match(template, /<span class="block">支持按修改时间补拉：订单、Listing、FBA 退货、VC PO。<\/span>/);
+  assert.match(template, /<span class="block">销量、Performance、SP、SD、HSA、VC 销量\/库存按业务日期重拉最近范围。<\/span>/);
   assert.match(template, /fixed left-4 right-4 top-44/);
   assert.match(template, /sm:absolute sm:left-full sm:right-auto/);
   assert.doesNotMatch(template, /absolute left-1\/2 top-full/);
@@ -47,11 +49,11 @@ assert.equal(entryManage.advancedAdd, false);
 
 // 数据集字段配置固定走 listing-daily-v1 的字段合同，不接受表名或 SQL 输入。
 {
-  const template = fs.readFileSync(__dirname + '/../templates/datasources.html', 'utf8');
+  const template = fs.readFileSync(__dirname + '/../templates/dataset_fields.html', 'utf8');
   assert.match(template, /API 数据集返回字段/);
   assert.match(template, /listing-daily-v1/);
   assert.match(template, /x-data="dataSources\(\)"/);
-  assert.match(template, /x-init="load\(\)"/);
+  assert.match(template, /x-init="loadDatasetProjects\(\)"/);
   assert.match(template, /@click="saveDatasetFields\(\)"/);
   assert.match(template, /可选字段/);
   assert.match(template, /已获准字段/);
@@ -59,13 +61,15 @@ assert.equal(entryManage.advancedAdd, false);
   assert.match(template, /项目 \/ Token ID/);
   assert.match(template, /selectedProjectKey/);
   assert.match(template, /selectProject/);
-  assert.match(template, /!fieldsError && fieldGroups.length>0/);
+  assert.match(template, /尚未配置可选字段/);
+  assert.doesNotMatch(template, /fieldGroups.length>0" class="grid/);
   assert.doesNotMatch(template, /<input[^>]*(?:table|sql)/i);
   assert.doesNotMatch(template, /type=["']password/i);
   assert.doesNotMatch(template, /CREATE|ALTER|DROP|SQL/i);
-  assert.match(template, /日维数据预览/);
-  assert.match(template, /applyDailyPreviewFilters\(\)/);
-  assert.match(template, /dailyPreviewValue/);
+  const dataSourcesTemplate = fs.readFileSync(__dirname + '/../templates/datasources.html', 'utf8');
+  assert.match(dataSourcesTemplate, /日维数据预览/);
+  assert.match(dataSourcesTemplate, /applyDailyPreviewFilters\(\)/);
+  assert.match(dataSourcesTemplate, /dailyPreviewValue/);
 }
 
 // 接口清单启用状态必须在下拉和按钮上可见、可禁用。

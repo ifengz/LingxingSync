@@ -40,6 +40,33 @@ func TestRenderPageWritesLayout(t *testing.T) {
 	}
 }
 
+func TestNavigationIncludesDedicatedDatasetFieldsPage(t *testing.T) {
+	items := sharedFuncs()["listItems"].(func() []navItem)()
+	if len(items) != 5 {
+		t.Fatalf("navigation items=%d, want 5", len(items))
+	}
+	want := navItem{Key: "dataset_fields", Href: "/dataset-fields", Label: "数据集字段"}
+	if items[4] != want {
+		t.Fatalf("fifth navigation item=%+v, want %+v", items[4], want)
+	}
+}
+
+func TestDatasetFieldsPageRouteRendersDedicatedTemplate(t *testing.T) {
+	s := &Server{
+		cfg:    &config.Config{},
+		assets: Assets{FS: renderTestFS, TemplateFS: "testdata", StaticFS: "testdata"},
+		pages:  map[string]*template.Template{},
+	}
+	if err := s.parseTemplates(); err != nil {
+		t.Fatalf("parse templates: %v", err)
+	}
+	recorder := httptest.NewRecorder()
+	s.Routes().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/dataset-fields", nil))
+	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), "<html>") {
+		t.Fatalf("dataset fields page status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
 func TestShortBuildCommit(t *testing.T) {
 	for _, tc := range []struct {
 		name string

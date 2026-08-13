@@ -69,3 +69,29 @@ func TestDataSourcesTemplateUsesSingleRootForExpandedEndpoint(t *testing.T) {
 		t.Fatal("endpoint x-for 必须以单个 tbody 作为根节点，才能稳定渲染主行和详情行")
 	}
 }
+
+func TestDatasetFieldsTemplateKeepsBothColumnsVisibleWhenConfigurationIsEmpty(t *testing.T) {
+	raw, err := os.ReadFile("../../web/templates/dataset_fields.html")
+	if err != nil {
+		t.Fatalf("读 dataset_fields.html: %v", err)
+	}
+	source := string(raw)
+	for _, required := range []string{"API 数据集返回字段", "可选字段", "已获准字段", "尚未配置可选字段", "尚未选择项目 / Token"} {
+		if !strings.Contains(source, required) {
+			t.Fatalf("数据集字段页缺少 %q", required)
+		}
+	}
+	if strings.Contains(source, `x-show="!fieldsLoading && !fieldsError && fieldGroups.length>0" class="grid`) {
+		t.Fatal("字段双栏不得因 fieldGroups 为空而整体隐藏")
+	}
+}
+
+func TestDataSourcesTemplateDoesNotContainDatasetFieldEditor(t *testing.T) {
+	raw, err := os.ReadFile("../../web/templates/datasources.html")
+	if err != nil {
+		t.Fatalf("读 datasources.html: %v", err)
+	}
+	if strings.Contains(string(raw), "API 数据集返回字段") {
+		t.Fatal("数据源页不应继续嵌入数据集字段编辑器")
+	}
+}
