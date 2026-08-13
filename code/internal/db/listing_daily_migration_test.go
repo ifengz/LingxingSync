@@ -66,6 +66,33 @@ func TestListingDailyTimestampPrecisionMigrationUpgradesExistingFacts(t *testing
 	}
 }
 
+func TestListingDailyLegacySchemaMigrationAddsCurrentMetricColumns(t *testing.T) {
+	raw, err := os.ReadFile("../../migrations/036_upgrade_listing_daily_metric_columns.sql")
+	if err != nil {
+		t.Fatalf("读取 listing 日维旧表升级迁移失败: %v", err)
+	}
+	sql := strings.ToUpper(string(raw))
+	for _, want := range []string{
+		"INFORMATION_SCHEMA.COLUMNS",
+		"TABLE_NAME = 'LISTING_DAILY_METRICS'",
+		"DROP CHECK CHK_LISTING_DAILY_SOURCES",
+		"CHANGE COLUMN INVENTORY_SNAPSHOT INVENTORY_SELLABLE BIGINT NULL",
+		"CHANGE COLUMN INVENTORY_SNAPSHOT_SOURCE INVENTORY_SELLABLE_SOURCE VARCHAR(16) NOT NULL DEFAULT ''",
+		"ADD COLUMN INVENTORY_INBOUND BIGINT NULL",
+		"ADD COLUMN VERIFIED_FIELDS JSON NOT NULL",
+		"ADD CONSTRAINT CHK_LISTING_DAILY_SOURCES",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("listing 日维旧表升级迁移缺少 %q", want)
+		}
+	}
+	for _, forbidden := range []string{"DROP TABLE", "DELETE FROM", "TRUNCATE"} {
+		if strings.Contains(sql, forbidden) {
+			t.Fatalf("listing 日维旧表升级迁移不得使用破坏性语句 %s", forbidden)
+		}
+	}
+}
+
 func TestListingDailyTimestampPrecisionMigrationAgainstLocalMySQL(t *testing.T) {
 	dsn := os.Getenv("LINGXING_MIGRATION_TEST_DSN")
 	if dsn == "" {
