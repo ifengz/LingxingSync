@@ -8,9 +8,12 @@ import (
 	"encoding/csv"
 	"fmt"
 	"io"
+	"mime"
 	"strconv"
 	"strings"
 	"unicode/utf8"
+
+	"golang.org/x/text/encoding/charmap"
 )
 
 const CustomerReturnsReportType = "GET_FBA_FULFILLMENT_CUSTOMER_RETURNS_DATA"
@@ -41,13 +44,14 @@ type CustomerReturn struct {
 
 // ParseCustomerReturns validates the complete report before any row reaches
 // MySQL. Header aliases, missing fields and malformed quantities are errors.
-func ParseCustomerReturns(downloaded []byte, compressionAlgorithm string) ([]CustomerReturn, error) {
+func ParseCustomerReturns(downloaded []byte, compressionAlgorithm, contentType string) ([]CustomerReturn, error) {
 	payload, err := decompress(downloaded, compressionAlgorithm)
 	if err != nil {
 		return nil, err
 	}
-	if !utf8.Valid(payload) {
-		return nil, fmt.Errorf("customer returns TSV is not valid UTF-8")
+	payload, err = decodeReportText(payload, contentType)
+	if err != nil {
+		return nil, err
 	}
 	reader := csv.NewReader(bytes.NewReader(payload))
 	reader.Comma = '\t'
@@ -81,6 +85,32 @@ func ParseCustomerReturns(downloaded []byte, compressionAlgorithm string) ([]Cus
 			ReturnDate: record[0], OrderID: record[1], SKU: record[2], ASIN: record[3], FNSKU: record[4], ProductName: record[5], Quantity: quantity, QuantityRaw: record[6],
 			FulfillmentCenterID: record[7], DetailedDisposition: record[8], Reason: record[9], Status: record[10], LicensePlateNumber: record[11], CustomerComments: record[12],
 		})
+	}
+}
+
+func decodeReportText(payload []byte, contentType string) ([]byte, error) {
+	charset := ""
+	if strings.TrimSpace(contentType) != "" {
+		_, params, err := mime.ParseMediaType(contentType)
+		if err != nil {
+			return nil, fmt.Errorf("customer returns report content type %q: %w", contentType, err)
+		}
+		charset = strings.ToLower(strings.TrimSpace(params["charset"]))
+	}
+	switch charset {
+	case "", "utf-8", "utf8", "us-ascii":
+		if !utf8.Valid(payload) {
+			return nil, fmt.Errorf("customer returns TSV is not valid UTF-8")
+		}
+		return payload, nil
+	case "cp1252", "windows-1252":
+		decoded, err := charmap.Windows1252.NewDecoder().Bytes(payload)
+		if err != nil {
+			return nil, fmt.Errorf("decode customer returns TSV charset %q: %w", charset, err)
+		}
+		return decoded, nil
+	default:
+		return nil, fmt.Errorf("unsupported customer returns TSV charset %q", charset)
 	}
 }
 

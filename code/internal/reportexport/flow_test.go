@@ -24,7 +24,7 @@ func TestParseCustomerReturnsGZIPTSVRequiresExactHeader(t *testing.T) {
 	zw := gzip.NewWriter(&compressed)
 	_, _ = zw.Write([]byte("return-date\torder-id\tsku\tasin\tfnsku\tproduct-name\tquantity\tfulfillment-center-id\tdetailed-disposition\treason\tstatus\tlicense-plate-number\tcustomer-comments\n2026-08-11\torder-1\tsku-1\tasin-1\tfnsku-1\tWidget\t2\tFC1\tSELLABLE\tOTHER\tCOMPLETE\tlp-1\tok\n"))
 	_ = zw.Close()
-	rows, err := ParseCustomerReturns(compressed.Bytes(), "GZIP")
+	rows, err := ParseCustomerReturns(compressed.Bytes(), "GZIP", "")
 	if err != nil {
 		t.Fatalf("ParseCustomerReturns returned error: %v", err)
 	}
@@ -33,15 +33,26 @@ func TestParseCustomerReturnsGZIPTSVRequiresExactHeader(t *testing.T) {
 	}
 }
 
+func TestParseCustomerReturnsDecodesDeclaredCP1252(t *testing.T) {
+	data := []byte("return-date\torder-id\tsku\tasin\tfnsku\tproduct-name\tquantity\tfulfillment-center-id\tdetailed-disposition\treason\tstatus\tlicense-plate-number\tcustomer-comments\n2026-08-08\torder-1\tsku-1\tasin-1\tfnsku-1\tWidget\t1\tFC1\tSELLABLE\tOTHER\tCOMPLETE\tlp-1\t\x93opened\x94\n")
+	rows, err := ParseCustomerReturns(data, "", "text/plain; charset=cp1252")
+	if err != nil {
+		t.Fatalf("ParseCustomerReturns returned error: %v", err)
+	}
+	if got := rows[0].CustomerComments; got != "\u201copened\u201d" {
+		t.Fatalf("customer comments = %q, want decoded cp1252 punctuation", got)
+	}
+}
+
 func TestParseCustomerReturnsFailsOnMissingHeaderColumn(t *testing.T) {
-	_, err := ParseCustomerReturns([]byte("return-date\torder-id\n"), "")
+	_, err := ParseCustomerReturns([]byte("return-date\torder-id\n"), "", "")
 	if err == nil {
 		t.Fatal("expected exact-header error")
 	}
 }
 
 func TestParseCustomerReturnsRejectsUnknownCompression(t *testing.T) {
-	_, err := ParseCustomerReturns([]byte("not a zip file"), "ZIP")
+	_, err := ParseCustomerReturns([]byte("not a zip file"), "ZIP", "")
 	if err == nil || !strings.Contains(err.Error(), "unsupported compression") {
 		t.Fatalf("error = %v, want unsupported compression", err)
 	}
@@ -411,9 +422,26 @@ func TestDownloadAppliesDefaultTimeout(t *testing.T) {
 		return nil, fmt.Errorf("stop after deadline assertion")
 	})}
 	runner := Runner{HTTP: httpClient}
-	_, _, err := runner.download(context.Background(), Request{}, reportStatus{URL: "https://example.invalid/report"})
+	_, _, _, err := runner.download(context.Background(), Request{}, reportStatus{URL: "https://example.invalid/report"})
 	if err == nil {
 		t.Fatal("expected test transport error")
+	}
+}
+
+func TestDownloadPreservesReportContentType(t *testing.T) {
+	download := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=cp1252")
+		_, _ = w.Write([]byte("report"))
+	}))
+	defer download.Close()
+
+	runner := Runner{}
+	_, _, contentType, err := runner.download(context.Background(), Request{}, reportStatus{URL: download.URL})
+	if err != nil {
+		t.Fatalf("download returned error: %v", err)
+	}
+	if contentType != "text/plain; charset=cp1252" {
+		t.Fatalf("content type = %q, want cp1252 declaration", contentType)
 	}
 }
 

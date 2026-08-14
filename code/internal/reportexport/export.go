@@ -180,11 +180,11 @@ func (r *Runner) Run(ctx context.Context, request Request) (result Result, err e
 		return fail(fmt.Errorf("report export: DONE response missing report_document_id or url"))
 	}
 
-	body, hash, downloadErr := r.download(ctx, request, data)
+	body, hash, contentType, downloadErr := r.download(ctx, request, data)
 	if downloadErr != nil {
 		return fail(downloadErr)
 	}
-	rows, parseErr := ParseCustomerReturns(body, data.CompressionAlgorithm)
+	rows, parseErr := ParseCustomerReturns(body, data.CompressionAlgorithm, contentType)
 	if parseErr != nil {
 		return fail(parseErr)
 	}
@@ -286,12 +286,12 @@ func (r *Runner) waitForDone(ctx context.Context, request Request, auditID int64
 	}
 }
 
-func (r *Runner) download(ctx context.Context, request Request, data reportStatus) ([]byte, string, error) {
+func (r *Runner) download(ctx context.Context, request Request, data reportStatus) ([]byte, string, string, error) {
 	hc := r.HTTP
 	if hc == nil {
 		hc = &http.Client{Timeout: defaultDownloadTimeout}
 	}
-	get := func(url string) ([]byte, error) {
+	get := func(url string) ([]byte, string, error) {
 		downloadCtx := ctx
 		cancel := func() {}
 		if _, hasDeadline := ctx.Deadline(); !hasDeadline {
@@ -300,26 +300,27 @@ func (r *Runner) download(ctx context.Context, request Request, data reportStatu
 		defer cancel()
 		req, err := http.NewRequestWithContext(downloadCtx, http.MethodGet, url, nil)
 		if err != nil {
-			return nil, err
+			return nil, "", err
 		}
 		response, err := hc.Do(req)
 		if err != nil {
-			return nil, err
+			return nil, "", err
 		}
 		defer response.Body.Close()
 		if response.StatusCode < 200 || response.StatusCode >= 300 {
-			return nil, fmt.Errorf("download report: HTTP %d", response.StatusCode)
+			return nil, "", fmt.Errorf("download report: HTTP %d", response.StatusCode)
 		}
-		return io.ReadAll(response.Body)
+		body, err := io.ReadAll(response.Body)
+		return body, response.Header.Get("Content-Type"), err
 	}
-	body, err := get(data.URL)
+	body, contentType, err := get(data.URL)
 	if err != nil {
 		if data.ReportDocumentID == "" {
-			return nil, "", err
+			return nil, "", "", err
 		}
 		raw, renewErr := r.call(ctx, renewPath, map[string]any{"region": request.Region, "seller_id": request.SellerID, "report_document_id": data.ReportDocumentID})
 		if renewErr != nil {
-			return nil, "", fmt.Errorf("download report: %v; renew link: %w", err, renewErr)
+			return nil, "", "", fmt.Errorf("download report: %v; renew link: %w", err, renewErr)
 		}
 		var renewed struct {
 			URL string `json:"url"`
@@ -328,15 +329,15 @@ func (r *Runner) download(ctx context.Context, request Request, data reportStatu
 			if renewErr == nil {
 				renewErr = fmt.Errorf("renew response missing data.url")
 			}
-			return nil, "", fmt.Errorf("download report: %v; renew link: %w", err, renewErr)
+			return nil, "", "", fmt.Errorf("download report: %v; renew link: %w", err, renewErr)
 		}
-		body, err = get(renewed.URL)
+		body, contentType, err = get(renewed.URL)
 		if err != nil {
-			return nil, "", err
+			return nil, "", "", err
 		}
 	}
 	sum := sha256.Sum256(body)
-	return body, hex.EncodeToString(sum[:]), nil
+	return body, hex.EncodeToString(sum[:]), contentType, nil
 }
 
 func (r *Runner) call(ctx context.Context, path string, body map[string]any) ([]byte, error) {
