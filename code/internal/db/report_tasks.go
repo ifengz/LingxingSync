@@ -17,7 +17,7 @@ import (
 
 // EnsureReport starts one independently auditable formal report run. The
 // active-scope unique key makes concurrent callers reuse PENDING/CREATING/
-// IN_QUEUE/IN_PROGRESS/DONE work, while terminal rows clear that key so a
+// IN_QUEUE/IN_PROGRESS/UNKNOWN/DONE work, while terminal rows clear that key so a
 // later correction can create a fresh report.
 func (d *DBReportStore) EnsureReport(ctx context.Context, req reportexport.Request) (reportexport.Audit, error) {
 	if d == nil || d.db == nil {
@@ -123,7 +123,7 @@ func (d *DBReportStore) findActiveReport(ctx context.Context, req reportexport.R
 	}
 	const q = `SELECT id, report_task_id, report_document_id, status
 FROM ls_report_export_tasks
-WHERE status IN ('PENDING', 'CREATING', 'IN_QUEUE', 'IN_PROGRESS', 'DONE')
+WHERE status IN ('PENDING', 'CREATING', 'IN_QUEUE', 'IN_PROGRESS', 'UNKNOWN', 'DONE')
   AND (active_scope_key = ? OR (
     active_scope_key IS NULL AND account_id = ? AND seller_id = ? AND store_id = ?
     AND report_type = ? AND region = ? AND date_from = ? AND date_to = ?
@@ -171,7 +171,7 @@ func (d *DBReportStore) MarkReportProgress(ctx context.Context, id int64, status
 	}
 	const q = `UPDATE ls_report_export_tasks
 SET status = ?,
-    active_scope_key = CASE WHEN ? IN ('CANCELLED', 'FATAL', 'UNKNOWN') THEN NULL ELSE active_scope_key END,
+    active_scope_key = CASE WHEN ? IN ('CANCELLED', 'FATAL') THEN NULL ELSE active_scope_key END,
     report_document_id = NULLIF(?, ''), download_url = NULLIF(?, ''), compression_algorithm = NULLIF(?, '')
 WHERE id = ?`
 	if _, err := d.db.ExecContext(ctx, q, status, status, documentID, url, compression, id); err != nil {

@@ -93,6 +93,24 @@ func TestEnsureReportDeduplicatesConcurrentActiveScope(t *testing.T) {
 		t.Fatalf("got %d audit results, want %d", count, callers)
 	}
 
+	if err := store.MarkReportProgress(context.Background(), first, "UNKNOWN", "", "", ""); err != nil {
+		t.Fatalf("mark active task UNKNOWN: %v", err)
+	}
+	var unknownActiveKey *string
+	if err := db.Get(&unknownActiveKey, `SELECT active_scope_key FROM ls_report_export_tasks WHERE id = ?`, first); err != nil {
+		t.Fatalf("load UNKNOWN active key: %v", err)
+	}
+	if unknownActiveKey == nil {
+		t.Fatal("transient UNKNOWN task released its active scope key")
+	}
+	reusedUnknown, err := store.EnsureReport(context.Background(), req)
+	if err != nil {
+		t.Fatalf("EnsureReport during UNKNOWN: %v", err)
+	}
+	if reusedUnknown.ID != first {
+		t.Fatalf("UNKNOWN task was not reused: got id=%d want id=%d", reusedUnknown.ID, first)
+	}
+
 	if err := store.MarkReportError(context.Background(), first, "ERROR", fmt.Errorf("test terminal state")); err != nil {
 		t.Fatalf("mark active task terminal: %v", err)
 	}
