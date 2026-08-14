@@ -613,7 +613,8 @@ void (async () => {
   assert.equal(fields.fieldGroups.length, 1);
   assert.equal(JSON.stringify(fields.selectedFields), JSON.stringify(['store']));
   assert.equal(fields.fieldsDirty, false);
-  assert.equal(JSON.stringify(fields.availableFields(fields.fieldGroups[0]).map(f => f.name)), JSON.stringify(['sales', 'impressions']));
+  assert.equal(JSON.stringify(fields.displayFields(fields.fieldGroups[0]).map(f => f.name)), JSON.stringify(['store', 'sales', 'impressions']));
+  assert.equal(fields.catalogFieldCount, 3, '左栏必须保留完整字段目录，不因右栏已选字段而减少');
   fields.addField('sales');
   assert.equal(JSON.stringify(fields.selectedFields), JSON.stringify(['store', 'sales']));
   assert.equal(fields.fieldsDirty, true);
@@ -711,7 +712,7 @@ void (async () => {
   fields.selectedTokenId = 'token-a';
   await fields.loadDatasetFields();
   assert.equal(fields.fieldsError, '');
-  assert.equal(fields.availableFieldCount, 0);
+  assert.equal(fields.catalogFieldCount, 0);
   assert.equal(fields.selectedFieldCount, 0);
 
   // 只有单项目详情时，首次 GET 的响应也可直接作为当前项目清单。

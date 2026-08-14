@@ -1279,8 +1279,8 @@ window.dataSources = function () {
     get fieldsDirty() {
       return JSON.stringify(this.selectedFields) !== JSON.stringify(this.savedFields);
     },
-    get availableFieldCount() {
-      return this.fieldGroups.reduce((count, group) => count + this.availableFields(group).length, 0);
+    get catalogFieldCount() {
+      return this.fieldGroups.reduce((count, group) => count + this.displayFields(group).length, 0);
     },
     get selectedFieldCount() { return this.selectedFields.length; },
     get hasDatasetSelection() { return Boolean(this.selectedProjectKey && this.selectedProjectId && this.selectedTokenId); },
@@ -1510,8 +1510,8 @@ window.dataSources = function () {
       }
     },
     isSelected(name) { return this.selectedFields.includes(name); },
-    availableFields(group) {
-      return (group && Array.isArray(group.fields)) ? group.fields.filter((field) => !this.isSelected(field.name)) : [];
+    displayFields(group) {
+      return (group && Array.isArray(group.fields)) ? group.fields : [];
     },
     fieldMeta(name) {
       for (const group of this.fieldGroups) {
