@@ -245,6 +245,9 @@ func (r *Runner) waitForDone(ctx context.Context, request Request, auditID int64
 	}
 	deadline := time.NewTimer(timeout)
 	defer deadline.Stop()
+	var lastStatus reportStatus
+	var lastRaw []byte
+	unknownPolls := 0
 	for {
 		raw, err := r.call(ctx, queryPath, map[string]any{"seller_id": request.SellerID, "task_id": taskID, "region": request.Region})
 		if err != nil {
@@ -261,8 +264,18 @@ func (r *Runner) waitForDone(ctx context.Context, request Request, auditID int64
 		case "DONE":
 			return data, nil
 		case "IN_PROGRESS", "IN_QUEUE":
-		case "CANCELLED", "FATAL", "UNKNOWN":
+			unknownPolls = 0
+			lastStatus = reportStatus{}
+			lastRaw = nil
+		case "CANCELLED", "FATAL":
 			return data, fmt.Errorf("report export: upstream progress_status=%s; %s", data.ProgressStatus, responseDiagnostics(raw))
+		case "UNKNOWN":
+			unknownPolls++
+			lastStatus = data
+			lastRaw = append(lastRaw[:0], raw...)
+			if unknownPolls >= 3 {
+				return lastStatus, fmt.Errorf("report export: progress_status remained UNKNOWN after %d polls; %s", unknownPolls, responseDiagnostics(lastRaw))
+			}
 		default:
 			return data, fmt.Errorf("report export: unknown progress_status=%q", data.ProgressStatus)
 		}
@@ -270,6 +283,9 @@ func (r *Runner) waitForDone(ctx context.Context, request Request, auditID int64
 		case <-ctx.Done():
 			return data, ctx.Err()
 		case <-deadline.C:
+			if strings.EqualFold(lastStatus.ProgressStatus, "UNKNOWN") {
+				return lastStatus, fmt.Errorf("report export: polling timed out after %s; last progress_status=%s; %s", timeout, lastStatus.ProgressStatus, responseDiagnostics(lastRaw))
+			}
 			return data, fmt.Errorf("report export: polling timed out after %s", timeout)
 		case <-time.After(interval):
 		}

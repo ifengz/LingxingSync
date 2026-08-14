@@ -151,12 +151,50 @@ func TestRunnerCompletesAndRenewsExpiredURLAndAllowsSameRangeRerun(t *testing.T)
 	}
 }
 
-func TestRunnerReportsUnknownStatusDiagnostics(t *testing.T) {
+func TestRunnerRetriesUnknownUntilDone(t *testing.T) {
+	data := "return-date\torder-id\tsku\tasin\tfnsku\tproduct-name\tquantity\tfulfillment-center-id\tdetailed-disposition\treason\tstatus\tlicense-plate-number\tcustomer-comments\n2026-08-11\torder-1\tsku-1\tasin-1\tfnsku-1\tWidget\t1\tFC1\tSELLABLE\tOTHER\tCOMPLETE\tlp-1\tok\n"
+	download := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(data)) }))
+	defer download.Close()
+	queries := 0
+	client := signedClientFunc(func(_ context.Context, _ string, path string, _ map[string]any) ([]byte, int, int, error) {
+		switch path {
+		case createPath:
+			return []byte(`{"code":0,"data":{"task_id":"task-unknown-then-done"}}`), 200, 0, nil
+		case queryPath:
+			queries++
+			switch queries {
+			case 1, 2:
+				return []byte(`{"code":0,"message":"temporarily unavailable","request_id":"trace-first","data":{"progress_status":"UNKNOWN"}}`), 200, 0, nil
+			case 3:
+				return []byte(`{"code":0,"data":{"progress_status":"IN_PROGRESS"}}`), 200, 0, nil
+			case 4, 5:
+				return []byte(`{"code":0,"message":"temporarily unavailable","request_id":"trace-second","data":{"progress_status":"UNKNOWN"}}`), 200, 0, nil
+			}
+			return []byte(fmt.Sprintf(`{"code":0,"data":{"progress_status":"DONE","report_document_id":"doc-1","url":"%s/file"}}`, download.URL)), 200, 0, nil
+		default:
+			return nil, 0, 0, fmt.Errorf("unexpected path %s", path)
+		}
+	})
+	store := &fakeStore{}
+	runner := Runner{Client: client, Store: store, PollInterval: time.Millisecond, PollTimeout: time.Second}
+	result, err := runner.Run(context.Background(), Request{AccountID: "acct", SellerID: "seller", StoreID: "store-1", Region: "na", MarketplaceIDs: []string{"ATVPDHSKDCJ6R"}, DateFrom: "2026-08-11T00:00:00Z", DateTo: "2026-08-11T23:59:59Z"})
+	if err != nil || result.Status != "SUCCESS" {
+		t.Fatalf("result=%#v, err=%v", result, err)
+	}
+	wantProgress := []string{"UNKNOWN", "UNKNOWN", "IN_PROGRESS", "UNKNOWN", "UNKNOWN", "DONE"}
+	if queries != len(wantProgress) || strings.Join(store.progress, ",") != strings.Join(wantProgress, ",") {
+		t.Fatalf("queries=%d progress=%v, want %v", queries, store.progress, wantProgress)
+	}
+}
+
+func TestRunnerReportsUnknownStatusDiagnosticsAfterTimeout(t *testing.T) {
+	queries := 0
 	client := signedClientFunc(func(_ context.Context, _ string, path string, _ map[string]any) ([]byte, int, int, error) {
 		switch path {
 		case createPath:
 			return []byte(`{"code":0,"data":{"task_id":"task-unknown"}}`), 200, 0, nil
 		case queryPath:
+			queries++
 			return []byte(`{"code":0,"message":"upstream detail","request_id":"trace-123","error_details":["seller report unavailable"],"data":{"progress_status":"UNKNOWN"}}`), 200, 0, nil
 		default:
 			return nil, 0, 0, fmt.Errorf("unexpected path %s", path)
@@ -165,8 +203,11 @@ func TestRunnerReportsUnknownStatusDiagnostics(t *testing.T) {
 	store := &fakeStore{}
 	runner := Runner{Client: client, Store: store, PollInterval: time.Millisecond, PollTimeout: time.Second}
 	_, err := runner.Run(context.Background(), Request{AccountID: "acct", SellerID: "seller", StoreID: "store-1", Region: "na", MarketplaceIDs: []string{"ATVPDHSKDCJ6R"}, DateFrom: "2026-08-11T00:00:00Z", DateTo: "2026-08-11T23:59:59Z"})
-	if err == nil || !strings.Contains(err.Error(), "progress_status=UNKNOWN") || !strings.Contains(err.Error(), "request_id=trace-123") || !strings.Contains(err.Error(), "seller report unavailable") {
+	if err == nil || !strings.Contains(err.Error(), "remained UNKNOWN after 3 polls") || !strings.Contains(err.Error(), "request_id=trace-123") || !strings.Contains(err.Error(), "message=\"upstream detail\"") || !strings.Contains(err.Error(), "seller report unavailable") {
 		t.Fatalf("unknown status error=%v", err)
+	}
+	if queries != 3 {
+		t.Fatalf("queries=%d, want exactly three consecutive UNKNOWN polls", queries)
 	}
 }
 
