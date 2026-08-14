@@ -82,6 +82,26 @@ func knownMetricFieldNames() []string {
 	return []string{"sales_units", "sales_amount", "returns_qty", "inventory_sellable", "inventory_inbound", "inventory_reserved", "inventory_unfulfillable", "inventory_local_warehouse", "inventory_unhealthy_units", "inventory_aged90_sellable_units", "inventory_sell_through_rate", "inventory_receive_fill_rate", "inventory_vendor_confirmation_rate", "inventory_avg_lead_time_days", "inventory_sellable_cost", "inventory_unfulfillable_cost", "inventory_aged90_cost", "inventory_unhealthy_cost", "inventory_inbound_cost", "inventory_currency", "inventory_inbound_receiving", "inventory_inbound_shipped", "inventory_inbound_working", "inventory_reserved_customer_orders", "inventory_reserved_fc_processing", "inventory_reserved_fc_transfers", "sessions_desktop", "sessions_mobile", "sessions_total", "review_count", "rating", "sp_spend", "sp_sales", "sp_orders", "sd_spend", "sd_sales", "sd_orders", "hsa_spend", "hsa_sales", "hsa_orders", "sb_spend", "sb_sales", "sb_orders"}
 }
 
+// CustomerReturnsSchemaRequirements is the exact listing-daily schema touched
+// after a formal Customer Returns report has been downloaded and retained.
+func CustomerReturnsSchemaRequirements() map[string][]string {
+	metricColumns := []string{"listing_dimension_id", "business_date"}
+	for _, field := range knownMetricFieldNames() {
+		metricColumns = append(metricColumns, field, field+"_source")
+	}
+	metricColumns = append(metricColumns, "is_provisional", "is_verified", "verified_fields", "report_verified_at")
+	return map[string][]string{
+		"listing_dimensions": {
+			"id", "store_id", "channel", "identity_scope", "identity_key", "asin", "sku",
+		},
+		"listing_daily_metrics": metricColumns,
+		"listing_daily_reconciliations": {
+			"report_audit_id", "report_task_id", "business_date", "status",
+			"missing_in_db", "missing_in_report", "field_diffs", "error_message", "updated_at",
+		},
+	}
+}
+
 func metricField(values Values, field string) any {
 	switch field {
 	case "sales_units":

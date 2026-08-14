@@ -26,6 +26,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -78,10 +79,21 @@ func main() {
 		log.Fatalf("[main] 连接 MySQL 失败: %v", err)
 	}
 	defer dbx.Close()
-	if err := db.RunMigrations(dbx, "migrations"); err != nil {
-		log.Fatalf("[main] 数据库迁移失败: %v", err)
+	if err := prepareDatabase(*reportReturns,
+		func() error { return db.RunMigrations(dbx, "migrations") },
+		func() error {
+			return validateCustomerReturnsSchema(func(table string) ([]string, error) {
+				return db.GetTableColumns(dbx, table)
+			})
+		},
+	); err != nil {
+		log.Fatalf("[main] 数据库准备失败: %v", err)
 	}
-	log.Printf("[main] 数据库迁移完成")
+	if *reportReturns {
+		log.Printf("[main] Customer Returns 数据库结构只读校验通过")
+	} else {
+		log.Printf("[main] 数据库迁移完成")
+	}
 	if *reportReturns {
 		account := cfg.FindAccount(*reportAccount)
 		if account == nil {
@@ -260,6 +272,55 @@ func customerReturnsRun(cfg *config.Config, clients *api.ClientRegistry, store r
 		}
 		return result, nil
 	}
+}
+
+func prepareDatabase(reportReturns bool, runMigrations, validateReportSchema func() error) error {
+	if reportReturns {
+		return validateReportSchema()
+	}
+	return runMigrations()
+}
+
+func customerReturnsSchemaRequirements() map[string][]string {
+	requirements := listingdaily.CustomerReturnsSchemaRequirements()
+	requirements["ls_report_export_tasks"] = []string{
+		"id", "account_id", "seller_id", "store_id", "report_type", "region", "marketplace_ids",
+		"date_from", "date_to", "report_task_id", "report_document_id", "status",
+		"compression_algorithm", "download_url", "download_sha256", "downloaded_at", "rows_imported",
+		"error_message", "active_scope_key", "updated_at",
+	}
+	requirements["ls_fba_fulfillment_customer_returns"] = []string{
+		"account_id", "seller_id", "store_id", "report_task_id", "row_number", "row_sha256",
+		"return-date", "order-id", "sku", "asin", "fnsku", "product-name", "quantity",
+		"fulfillment-center-id", "detailed-disposition", "reason", "status",
+		"license-plate-number", "customer-comments",
+	}
+	return requirements
+}
+
+func validateCustomerReturnsSchema(loadColumns func(string) ([]string, error)) error {
+	requirements := customerReturnsSchemaRequirements()
+	tables := make([]string, 0, len(requirements))
+	for table := range requirements {
+		tables = append(tables, table)
+	}
+	sort.Strings(tables)
+	for _, table := range tables {
+		columns, err := loadColumns(table)
+		if err != nil {
+			return fmt.Errorf("Customer Returns schema %s: %w", table, err)
+		}
+		available := make(map[string]struct{}, len(columns))
+		for _, column := range columns {
+			available[column] = struct{}{}
+		}
+		for _, column := range requirements[table] {
+			if _, ok := available[column]; !ok {
+				return fmt.Errorf("Customer Returns schema missing %s.%s", table, column)
+			}
+		}
+	}
+	return nil
 }
 
 func projectDailyBatch(ctx context.Context, dailyReader listingdaily.SourceReader, dailyStore listingdaily.Store, accountID string, targets []worker.DailyProjectionTarget, today time.Time) error {

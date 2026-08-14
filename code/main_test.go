@@ -35,6 +35,75 @@ func TestCustomerReturnsRunUsesConfiguredAccount(t *testing.T) {
 	}
 }
 
+func TestPrepareDatabaseUsesReportSchemaValidationInsteadOfMigrations(t *testing.T) {
+	migrations, validations := 0, 0
+	err := prepareDatabase(true,
+		func() error {
+			migrations++
+			return nil
+		},
+		func() error {
+			validations++
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if migrations != 0 || validations != 1 {
+		t.Fatalf("report database preparation migrations=%d validations=%d, want 0/1", migrations, validations)
+	}
+}
+
+func TestPrepareDatabaseKeepsMigrationsForNormalServer(t *testing.T) {
+	migrations, validations := 0, 0
+	err := prepareDatabase(false,
+		func() error {
+			migrations++
+			return nil
+		},
+		func() error {
+			validations++
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if migrations != 1 || validations != 0 {
+		t.Fatalf("server database preparation migrations=%d validations=%d, want 1/0", migrations, validations)
+	}
+}
+
+func TestValidateCustomerReturnsSchemaFailsBeforeRunOnMissingColumn(t *testing.T) {
+	requirements := customerReturnsSchemaRequirements()
+	loadColumns := func(table string) ([]string, error) {
+		columns := append([]string(nil), requirements[table]...)
+		if table == "ls_report_export_tasks" {
+			for i, column := range columns {
+				if column == "report_document_id" {
+					return append(columns[:i], columns[i+1:]...), nil
+				}
+			}
+		}
+		return columns, nil
+	}
+	err := validateCustomerReturnsSchema(loadColumns)
+	if err == nil || !strings.Contains(err.Error(), "ls_report_export_tasks.report_document_id") {
+		t.Fatalf("missing report schema error = %v", err)
+	}
+}
+
+func TestValidateCustomerReturnsSchemaAcceptsCompleteContract(t *testing.T) {
+	requirements := customerReturnsSchemaRequirements()
+	err := validateCustomerReturnsSchema(func(table string) ([]string, error) {
+		return append([]string(nil), requirements[table]...), nil
+	})
+	if err != nil {
+		t.Fatalf("complete report schema = %v", err)
+	}
+}
+
 func TestReportBusinessDatesUsesInclusiveCalendarDays(t *testing.T) {
 	from, to, err := reportBusinessDates(reportexport.Request{DateFrom: "2026-08-09T00:00:00+08:00", DateTo: "2026-08-11T23:59:59+08:00"})
 	if err != nil {
