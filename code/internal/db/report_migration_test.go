@@ -132,6 +132,7 @@ func TestFeeReportMigrationsAreIndependent(t *testing.T) {
 		{"../../migrations/051_add_fba_recommended_removal_report.sql", "LS_FBA_RECOMMENDED_REMOVALS", "SELLABLE-REMOVAL-QUANTITY"},
 		{"../../migrations/052_add_fba_removal_order_report.sql", "LS_FBA_REMOVAL_ORDER_DETAILS", "REQUESTED-QUANTITY"},
 		{"../../migrations/053_add_fba_removal_shipment_report.sql", "LS_FBA_REMOVAL_SHIPMENT_DETAILS", "TRACKING-NUMBER"},
+		{"../../migrations/054_add_amazon_all_orders_report.sql", "LS_AMAZON_ALL_ORDERS_BY_ORDER_DATE", "AMAZON-ORDER-ID"},
 	} {
 		t.Run(test.table, func(t *testing.T) {
 			raw, err := os.ReadFile(test.file)

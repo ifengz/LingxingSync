@@ -163,6 +163,10 @@ type FBARemovalShipmentStore interface {
 	SaveFBARemovalShipment(context.Context, int64, []FBARemovalShipment, string, string) error
 }
 
+type AllOrdersStore interface {
+	SaveAllOrders(context.Context, int64, []AllOrder, string, string) error
+}
+
 type Result struct {
 	AuditID          int64
 	ReportTaskID     string
@@ -503,6 +507,19 @@ func (r *Runner) saveDownloadedReport(ctx context.Context, auditID int64, reques
 			return 0, err
 		}
 		if err := store.SaveFBARemovalShipment(ctx, auditID, rows, hash, documentID); err != nil {
+			return 0, err
+		}
+		return len(rows), nil
+	case AllOrdersReportType:
+		store, ok := r.Store.(AllOrdersStore)
+		if !ok {
+			return 0, fmt.Errorf("report export: store does not support %s", AllOrdersReportType)
+		}
+		rows, err := ParseAllOrders(body, compressionAlgorithm, contentType)
+		if err != nil {
+			return 0, err
+		}
+		if err := store.SaveAllOrders(ctx, auditID, rows, hash, documentID); err != nil {
 			return 0, err
 		}
 		return len(rows), nil

@@ -328,6 +328,9 @@ func formalReportSchemaRequirements(reportType string) map[string][]string {
 	fbaRemovalShipmentSchemaColumns := []string{
 		"request-date", "order-id", "shipment-date", "sku", "fnsku", "disposition", "shipped-quantity", "carrier", "tracking-number", "removal-order-type",
 	}
+	allOrdersSchemaColumns := []string{
+		"amazon-order-id", "merchant-order-id", "purchase-date", "last-updated-date", "order-status", "fulfillment-channel", "sales-channel", "order-channel", "ship-service-level", "product-name", "sku", "asin", "item-status", "quantity", "currency", "item-price", "item-tax", "shipping-price", "shipping-tax", "gift-wrap-price", "gift-wrap-tax", "item-promotion-discount", "ship-promotion-discount", "ship-city", "ship-state", "ship-postal-code", "ship-country", "promotion-ids", "is-business-order", "purchase-order-number", "price-designation",
+	}
 	requirements := make(map[string][]string)
 	if reportRequiresDailyProjection(reportType) {
 		for table, columns := range listingdaily.CustomerReturnsSchemaRequirements() {
@@ -424,6 +427,8 @@ func formalReportSchemaRequirements(reportType string) map[string][]string {
 		requirements["ls_fba_removal_order_details"] = append([]string{"account_id", "seller_id", "store_id", "report_task_id", "row_number", "row_sha256"}, fbaRemovalOrderSchemaColumns...)
 	case reportexport.FBARemovalShipmentReportType:
 		requirements["ls_fba_removal_shipment_details"] = append([]string{"account_id", "seller_id", "store_id", "report_task_id", "row_number", "row_sha256"}, fbaRemovalShipmentSchemaColumns...)
+	case reportexport.AllOrdersReportType:
+		requirements["ls_amazon_all_orders_by_order_date"] = append([]string{"account_id", "seller_id", "store_id", "report_task_id", "row_number", "row_sha256"}, allOrdersSchemaColumns...)
 	default:
 		return nil
 	}
@@ -470,7 +475,7 @@ func normalizedReportType(request reportexport.Request) string {
 }
 
 func reportRequiresDailyProjection(reportType string) bool {
-	return reportType != reportexport.CustomerShipmentReplacementsReportType && reportType != reportexport.FBAReimbursementsReportType && reportType != reportexport.AFNInventoryByCountryReportType && reportType != reportexport.FBAStrandedInventoryReportType && reportType != reportexport.FBAEstimatedFeesReportType && reportType != reportexport.FBAInboundNoncomplianceReportType && reportType != reportexport.FBARecommendedRemovalReportType && reportType != reportexport.FBARemovalOrderReportType && reportType != reportexport.FBARemovalShipmentReportType
+	return reportType != reportexport.CustomerShipmentReplacementsReportType && reportType != reportexport.FBAReimbursementsReportType && reportType != reportexport.AFNInventoryByCountryReportType && reportType != reportexport.FBAStrandedInventoryReportType && reportType != reportexport.FBAEstimatedFeesReportType && reportType != reportexport.FBAInboundNoncomplianceReportType && reportType != reportexport.FBARecommendedRemovalReportType && reportType != reportexport.FBARemovalOrderReportType && reportType != reportexport.FBARemovalShipmentReportType && reportType != reportexport.AllOrdersReportType
 }
 
 func projectDailyBatch(ctx context.Context, dailyReader listingdaily.SourceReader, dailyStore listingdaily.Store, accountID string, targets []worker.DailyProjectionTarget, today time.Time) error {
