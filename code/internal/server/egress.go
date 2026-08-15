@@ -8,6 +8,8 @@ import (
 	"net/netip"
 	"strings"
 	"time"
+
+	"lingxing-sync/internal/httptransport"
 )
 
 // egressIPURLs 是探测出口 IP 的候选源，按顺序尝试，首个成功即返回。
@@ -18,6 +20,8 @@ var egressIPURLs = []string{
 	"https://ifconfig.me",
 	"https://icanhazip.com",
 }
+
+var egressHTTPClient = httptransport.NewIPv4Client(0)
 
 type egressIPOut struct {
 	IP        *string  `json:"ip"`
@@ -77,7 +81,7 @@ func fetchEgressIPFrom(ctx context.Context, url string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("创建出口 IP 请求 (%s): %w", url, err)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := egressHTTPClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("探测出口 IP (%s): %w", url, err)
 	}

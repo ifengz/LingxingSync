@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"io"
 	"lingxing-sync/internal/config"
+	"lingxing-sync/internal/httptransport"
 	"net"
 	"net/http"
 	"net/url"
@@ -49,7 +50,7 @@ type Client struct {
 // NewClient 创建一个业务客户端。
 // baseURL 通常是 "https://openapi.lingxing.com"；超时固定 60s。
 func NewClient(cfg *config.Account, baseURL string) *Client {
-	hc := &http.Client{Timeout: 60 * time.Second}
+	hc := httptransport.NewIPv4Client(60 * time.Second)
 	return &Client{
 		baseURL: strings.TrimRight(baseURL, "/"),
 		account: cfg,

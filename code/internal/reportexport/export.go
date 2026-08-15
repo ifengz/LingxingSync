@@ -16,6 +16,7 @@ import (
 	"unicode"
 
 	"lingxing-sync/internal/api"
+	"lingxing-sync/internal/httptransport"
 )
 
 const (
@@ -619,7 +620,7 @@ func (r *Runner) waitForDone(ctx context.Context, request Request, auditID int64
 func (r *Runner) download(ctx context.Context, request Request, data reportStatus) ([]byte, string, string, error) {
 	hc := r.HTTP
 	if hc == nil {
-		hc = &http.Client{Timeout: defaultDownloadTimeout}
+		hc = newDownloadClient()
 	}
 	get := func(url string) ([]byte, string, error) {
 		downloadCtx := ctx
@@ -668,6 +669,10 @@ func (r *Runner) download(ctx context.Context, request Request, data reportStatu
 	}
 	sum := sha256.Sum256(body)
 	return body, hex.EncodeToString(sum[:]), contentType, nil
+}
+
+func newDownloadClient() *http.Client {
+	return httptransport.NewIPv4Client(defaultDownloadTimeout)
 }
 
 func (r *Runner) call(ctx context.Context, path string, body map[string]any) ([]byte, error) {

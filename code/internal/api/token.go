@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"io"
 	"lingxing-sync/internal/config"
+	"lingxing-sync/internal/httptransport"
 	"mime/multipart"
 	"net/http"
 	"strings"
@@ -63,7 +64,7 @@ type tokenResponse struct {
 // httpClient 为 nil 时用默认 60s 超时客户端。
 func NewTokenHolder(cfg *config.Account, baseURL string, httpClient *http.Client) *TokenHolder {
 	if httpClient == nil {
-		httpClient = &http.Client{Timeout: 60 * time.Second}
+		httpClient = httptransport.NewIPv4Client(60 * time.Second)
 	}
 	return &TokenHolder{
 		cfg:        cfg,
