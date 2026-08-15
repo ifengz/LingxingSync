@@ -204,6 +204,34 @@ func TestDatasetRoutesInjectSQLReaderWhenDBProvided(t *testing.T) {
 	}
 }
 
+func TestRegisteredDetailDatasetRouteUsesBearerAuthentication(t *testing.T) {
+	rawToken := "return-reader-token"
+	cfg := &config.Config{
+		Server: config.Server{Secret: "admin-secret"},
+		DatasetAPI: config.DatasetAPIConfig{
+			CursorSecret:   "cursor-secret-for-server-test",
+			FieldAllowlist: []string{"units"},
+			FieldAllowlists: map[string][]string{
+				"return-reason-detail-v1": {"reason"},
+			},
+			Tokens: []config.DatasetToken{{
+				ID: "project-a", TokenHash: datasetapi.HashToken(rawToken), DatasetScopes: []string{"return-reason-detail-v1"}, StoreScopes: []string{"store-a"}, Fields: []string{"units"},
+			}},
+		},
+	}
+	s := New(cfg, nil, nil, nil, "", Assets{FS: renderTestFS, TemplateFS: "testdata", StaticFS: "testdata"}, nil, nil, nil, "")
+	h := s.withMiddleware(s.Routes())
+	req := httptest.NewRequest(http.MethodPost, datasetapi.SnapshotPathFor("return-reason-detail-v1"), strings.NewReader(`{"store":"store-a","date_from":"2026-08-01","date_to":"2026-08-01"}`))
+	req.Header.Set("Authorization", "Bearer "+rawToken)
+	rec := httptest.NewRecorder()
+
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("registered detail route status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 // 配置 API 必须完整保留同步合同；否则线上经 GET 后编辑一行定时配置时，
 // 广告账号迭代、协议头或主键回填会在无提示的情况下丢失。
 func TestEndpointDTORoundTripPreservesAdvancedSyncContract(t *testing.T) {

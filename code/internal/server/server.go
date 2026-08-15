@@ -56,9 +56,10 @@ type Server struct {
 	sched        *worker.Scheduler       // 热加载时 Rebuild cron
 	limiters     *worker.LimiterRegistry // rate 变化时 UpdateOrCreate
 	configPath   string                  // config.yaml 路径（消息展示用）
-	datasetAPI   *datasetapi.Handler     // 固定 listing-daily-v1 发布合同
-	dailyPreview dailyPreviewReader      // 固定日维预览查询
-	reportStatus reportStatusReader      // 正式报表任务与对账状态
+	datasetAPI   *datasetapi.Handler     // listing-daily-v1 兼容入口
+	datasetAPIs  map[string]*datasetapi.Handler
+	dailyPreview dailyPreviewReader // 固定日维预览查询
+	reportStatus reportStatusReader // 正式报表任务与对账状态
 
 	// pages: 页面名 → 该页专属的已解析模板树。
 	// 关键解耦：每页一棵独立模板树（layout + 该页 partial），这样各页的
@@ -97,50 +98,77 @@ func New(cfg *config.Config, dbx *sqlx.DB, reg *worker.Registry, clients *api.Cl
 		s.dailyPreview = sqlDailyPreviewReader{db: dbx}
 		s.reportStatus = sqlReportStatusReader{db: dbx}
 	}
-	datasetCfg := datasetapi.Config{
-		FieldAllowlist:  cfg.DatasetAPI.FieldAllowlist,
-		MaxDateSpanDays: cfg.DatasetAPI.MaxDateSpanDays,
-		MaxPageSize:     cfg.DatasetAPI.MaxPageSize,
-		CursorSecret:    []byte(cfg.DatasetAPI.CursorSecret),
-	}
-	for _, token := range cfg.DatasetAPI.Tokens {
-		parsedExpiry, err := parseDatasetTokenExpiry(token.ExpiresAt)
+	s.datasetAPIs = make(map[string]*datasetapi.Handler)
+	for _, definition := range datasetapi.Definitions() {
+		handler, err := s.newDatasetHandler(cfg, definition)
 		if err != nil {
-			log.Printf("[server] dataset token %s expires_at invalid: %v", token.ID, err)
+			log.Printf("[server] dataset %s unavailable: %v", definition.ID, err)
 			continue
 		}
-		datasetCfg.Tokens = append(datasetCfg.Tokens, datasetapi.Token{
-			ID: token.ID, ProjectID: token.ProjectID, Hash: token.TokenHash, DatasetScopes: token.DatasetScopes,
-			StoreScopes: token.StoreScopes, Fields: token.Fields, ExpiresAt: parsedExpiry, Revoked: token.Revoked,
-		})
+		s.datasetAPIs[definition.ID] = handler
 	}
-	var datasetErr error
-	s.datasetAPI, datasetErr = datasetapi.New(datasetCfg, nil)
-	if datasetErr != nil {
-		log.Printf("[server] dataset API unavailable: %v", datasetErr)
-	} else {
-		if dbx != nil {
-			s.datasetAPI.SetReader(datasetapi.NewSQLReader(dbx))
-		}
-		s.datasetAPI.SetFieldPersistence(func(tokenID string, fields []string) error {
-			if s.store == nil {
-				return fmt.Errorf("config store is not configured")
-			}
-			snap := s.store.Snapshot()
-			for i := range snap.DatasetAPI.Tokens {
-				if snap.DatasetAPI.Tokens[i].ID == tokenID {
-					snap.DatasetAPI.Tokens[i].Fields = append([]string(nil), fields...)
-					return s.store.Save(snap)
-				}
-			}
-			return fmt.Errorf("dataset token %q not found", tokenID)
-		})
-	}
+	s.datasetAPI = s.datasetAPIs[datasetapi.DatasetID]
 	if err := s.parseTemplates(); err != nil {
 		// 模板编译错属编程期错误，启动直接 fail-loud（宪法：不静默兜底）
 		log.Fatalf("[server] 模板编译失败: %v", err)
 	}
 	return s
+}
+
+func (s *Server) newDatasetHandler(cfg *config.Config, definition datasetapi.Definition) (*datasetapi.Handler, error) {
+	fields := configuredDatasetFields(cfg.DatasetAPI, definition)
+	tokens := make([]datasetapi.Token, 0, len(cfg.DatasetAPI.Tokens))
+	for _, token := range cfg.DatasetAPI.Tokens {
+		if !containsDatasetScope(token.DatasetScopes, definition.ID) {
+			continue
+		}
+		expiresAt, err := parseDatasetTokenExpiry(token.ExpiresAt)
+		if err != nil {
+			return nil, fmt.Errorf("dataset token %s expires_at invalid: %w", token.ID, err)
+		}
+		tokens = append(tokens, datasetapi.Token{ID: token.ID, ProjectID: token.ProjectID, Hash: token.TokenHash, DatasetScopes: token.DatasetScopes, StoreScopes: token.StoreScopes, Fields: fields, ExpiresAt: expiresAt, Revoked: token.Revoked})
+	}
+	handler, err := datasetapi.New(datasetapi.Config{Definition: definition, Tokens: tokens, FieldAllowlist: fields, CatalogFields: catalogDatasetFields(definition), MaxDateSpanDays: cfg.DatasetAPI.MaxDateSpanDays, MaxPageSize: cfg.DatasetAPI.MaxPageSize, CursorSecret: []byte(cfg.DatasetAPI.CursorSecret)}, nil)
+	if err != nil || s.dbx == nil {
+		return handler, err
+	}
+	switch definition.ID {
+	case datasetapi.DatasetID:
+		handler.SetReader(datasetapi.NewSQLReader(s.dbx))
+	case "return-reason-detail-v1":
+		handler.SetReader(datasetapi.NewReturnReasonDetailReader(s.dbx))
+	case "fba-inventory-snapshot-v1":
+		handler.SetReader(datasetapi.NewFBAInventorySnapshotReader(s.dbx))
+	case "order-shipping-address-detail-v1":
+		handler.SetReader(datasetapi.NewOrderShippingAddressDetailReader(s.dbx))
+	}
+	return handler, nil
+}
+
+func configuredDatasetFields(cfg config.DatasetAPIConfig, definition datasetapi.Definition) []string {
+	if definition.ID == datasetapi.DatasetID {
+		return append([]string(nil), cfg.FieldAllowlist...)
+	}
+	if fields := cfg.FieldAllowlists[definition.ID]; len(fields) > 0 {
+		return append([]string(nil), fields...)
+	}
+	return append([]string(nil), definition.Fields...)
+}
+
+func catalogDatasetFields(definition datasetapi.Definition) []string {
+	if definition.ID == datasetapi.DatasetID {
+		return append([]string(nil), availableDatasetFields...)
+	}
+	return append([]string(nil), definition.Fields...)
+}
+
+func containsDatasetScope(scopes []string, datasetID string) bool {
+	for _, scope := range scopes {
+		if scope == datasetID {
+			return true
+		}
+	}
+	return false
 }
 
 func parseDatasetTokenExpiry(raw string) (time.Time, error) {
@@ -284,11 +312,11 @@ func (s *Server) Routes() *http.ServeMux {
 	// ---- API 路由：对账 ----
 	mux.HandleFunc("POST /api/reconcile", s.apiReconcile)
 
-	// ---- API 路由：固定 listing 数据集 ----
+	// ---- API 路由：代码注册的数据表 ----
 	s.registerDailyReportRoutes(mux)
-	if s.datasetAPI != nil {
-		mux.Handle("/api/v1/datasets/listing-daily-v1/", s.datasetAPI)
-		mux.Handle(datasetapi.FieldsPath, s.datasetAPI)
+	for datasetID, handler := range s.datasetAPIs {
+		mux.Handle("/api/v1/datasets/"+datasetID+"/", handler)
+		mux.Handle(datasetapi.FieldsPathFor(datasetID), handler)
 	}
 
 	// ---- API 路由：配置读写（账号/接口 CRUD + 重启 + 字段查询）----

@@ -491,3 +491,50 @@ func TestFieldsRouteReturnsAndPersistsOnlyAllowlistedFields(t *testing.T) {
 		t.Fatalf("valid field PUT status=%d body=%s persisted=%v", put.Code, put.Body.String(), persisted)
 	}
 }
+
+func TestHandlerUsesRegisteredDetailDatasetPathAndScope(t *testing.T) {
+	definition, ok := DefinitionFor("return-reason-detail-v1")
+	if !ok {
+		t.Fatal("return detail definition is missing")
+	}
+	rawToken := "detail-project-token"
+	handler, err := New(Config{
+		Definition:     definition,
+		FieldAllowlist: []string{"reason"},
+		CatalogFields:  definition.Fields,
+		CursorSecret:   []byte("cursor-secret-for-tests"),
+		Tokens: []Token{{
+			ID: "detail-token", Hash: HashToken(rawToken), DatasetScopes: []string{definition.ID}, StoreScopes: []string{"store-a"}, Fields: []string{"reason"},
+		}},
+	}, nil)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	path := SnapshotPathFor(definition.ID)
+	rec := requestJSON(t, handler, http.MethodPost, path, rawToken, `{"store":"store-a","date_from":"2026-08-01","date_to":"2026-08-01"}`)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("detail snapshot status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if rec = requestJSON(t, handler, http.MethodPost, SnapshotPath, rawToken, `{"store":"store-a","date_from":"2026-08-01","date_to":"2026-08-01"}`); rec.Code != http.StatusNotFound {
+		t.Fatalf("listing path served by detail handler: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestDetailResponseUsesItsOwnFixedFields(t *testing.T) {
+	definition, _ := DefinitionFor("return-reason-detail-v1")
+	updated := time.Date(2026, 8, 15, 3, 4, 5, 0, time.UTC)
+	reader := &fixtureReader{page: Page{Rows: []Row{{
+		UpdatedAt: updated, StableKey: "account-a|store-a|refund-1",
+		FixedValues: map[string]any{"store": "store-a", "record_date": "2026-08-14", "stable_key": "account-a|store-a|refund-1", "updated_at": updated.UTC().Format(time.RFC3339Nano)},
+		Values:      map[string]any{"reason": "damaged"},
+	}}}}
+	rawToken := "detail-project-token"
+	handler, err := New(Config{Definition: definition, FieldAllowlist: []string{"reason"}, CatalogFields: definition.Fields, CursorSecret: []byte("cursor-secret-for-tests"), Tokens: []Token{{ID: "detail-token", Hash: HashToken(rawToken), DatasetScopes: []string{definition.ID}, StoreScopes: []string{"store-a"}, Fields: []string{"reason"}}}}, reader)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	rec := requestJSON(t, handler, http.MethodPost, SnapshotPathFor(definition.ID), rawToken, `{"store":"store-a","date_from":"2026-08-14","date_to":"2026-08-14"}`)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"record_date":"2026-08-14"`) || strings.Contains(rec.Body.String(), `"channel"`) {
+		t.Fatalf("detail response status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}

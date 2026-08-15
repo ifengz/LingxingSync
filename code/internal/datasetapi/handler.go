@@ -38,8 +38,10 @@ var FixedFields = []string{
 }
 
 type Config struct {
+	Definition      Definition
 	Tokens          []Token
 	FieldAllowlist  []string
+	CatalogFields   []string
 	MaxDateSpanDays int
 	MaxPageSize     int
 	CursorSecret    []byte
@@ -74,6 +76,7 @@ type Row struct {
 	DeletedAt          *time.Time
 	IsProvisional      bool
 	VerificationStatus string
+	FixedValues        map[string]any
 	Values             map[string]any
 }
 
@@ -98,11 +101,13 @@ type Reader interface {
 }
 
 type Handler struct {
-	reader    Reader
-	cfg       Config
-	mu        sync.RWMutex
-	available map[string]struct{}
-	tokens    map[string]Token
+	reader     Reader
+	cfg        Config
+	definition Definition
+	mu         sync.RWMutex
+	available  map[string]struct{}
+	catalog    map[string]struct{}
+	tokens     map[string]Token
 }
 
 type request struct {
@@ -147,21 +152,24 @@ type FieldsResponse struct {
 }
 
 type FieldsResponseData struct {
-	DatasetID       string          `json:"dataset_id"`
-	DatasetName     string          `json:"dataset_name"`
-	FixedFields     []string        `json:"fixed_fields"`
-	ProjectID       string          `json:"project_id,omitempty"`
-	TokenID         string          `json:"token_id,omitempty"`
-	AvailableFields []string        `json:"available_fields"`
-	Fields          []string        `json:"fields,omitempty"`
-	Projects        []ProjectFields `json:"projects"`
+	DatasetID        string          `json:"dataset_id"`
+	DatasetName      string          `json:"dataset_name"`
+	FixedFields      []string        `json:"fixed_fields"`
+	ProjectID        string          `json:"project_id,omitempty"`
+	TokenID          string          `json:"token_id,omitempty"`
+	AvailableFields  []string        `json:"available_fields"`
+	CatalogFields    []string        `json:"catalog_fields,omitempty"`
+	ConfiguredFields []string        `json:"configured_fields,omitempty"`
+	Fields           []string        `json:"fields,omitempty"`
+	Projects         []ProjectFields `json:"projects"`
 }
 
 type ProjectFields struct {
-	ProjectID   string   `json:"project_id"`
-	TokenID     string   `json:"token_id"`
-	StoreScopes []string `json:"store_scopes"`
-	Fields      []string `json:"fields"`
+	ProjectID     string   `json:"project_id"`
+	TokenID       string   `json:"token_id"`
+	DatasetScopes []string `json:"dataset_scopes"`
+	StoreScopes   []string `json:"store_scopes"`
+	Fields        []string `json:"fields"`
 }
 
 type fieldsRequest struct {
@@ -176,6 +184,13 @@ func HashToken(raw string) string {
 }
 
 func New(cfg Config, reader Reader) (*Handler, error) {
+	definition := cfg.Definition
+	if definition.ID == "" {
+		definition, _ = DefinitionFor(DatasetID)
+	}
+	if definition.ID == "" || definition.Name == "" || len(definition.FixedFields) == 0 {
+		return nil, errors.New("dataset definition is invalid")
+	}
 	if len(cfg.FieldAllowlist) == 0 && len(cfg.Tokens) > 0 {
 		return nil, errors.New("dataset field allowlist is empty")
 	}
@@ -198,6 +213,25 @@ func New(cfg Config, reader Reader) (*Handler, error) {
 			return nil, errors.New("dataset field allowlist contains duplicate field")
 		}
 		available[field] = struct{}{}
+	}
+	catalog := make(map[string]struct{}, len(cfg.CatalogFields))
+	for _, field := range cfg.CatalogFields {
+		field = strings.TrimSpace(field)
+		if field == "" || strings.ContainsAny(field, " .(),=;'") {
+			return nil, errors.New("dataset field catalog contains invalid field")
+		}
+		if _, exists := catalog[field]; exists {
+			return nil, errors.New("dataset field catalog contains duplicate field")
+		}
+		catalog[field] = struct{}{}
+	}
+	if len(catalog) == 0 {
+		for field := range available {
+			catalog[field] = struct{}{}
+		}
+	}
+	for field := range available {
+		catalog[field] = struct{}{}
 	}
 	tokens := make(map[string]Token, len(cfg.Tokens))
 	for _, token := range cfg.Tokens {
@@ -228,15 +262,15 @@ func New(cfg Config, reader Reader) (*Handler, error) {
 		}
 		tokens[token.ID] = token
 	}
-	return &Handler{reader: reader, cfg: cfg, available: available, tokens: tokens}, nil
+	return &Handler{reader: reader, cfg: cfg, definition: definition, available: available, catalog: catalog, tokens: tokens}, nil
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path == FieldsPath {
+	if r.URL.Path == h.fieldsPath() {
 		h.serveFields(w, r)
 		return
 	}
-	if r.Method != http.MethodPost || (r.URL.Path != SnapshotPath && r.URL.Path != ChangesPath) {
+	if r.Method != http.MethodPost || (r.URL.Path != h.snapshotPath() && r.URL.Path != h.changesPath()) {
 		http.NotFound(w, r)
 		return
 	}
@@ -250,7 +284,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	fields, pageSize, err := h.validateRequest(&in, r.URL.Path == SnapshotPath, token)
+	fields, pageSize, err := h.validateRequest(&in, r.URL.Path == h.snapshotPath(), token)
 	if err != nil {
 		status := http.StatusBadRequest
 		if strings.Contains(err.Error(), "scope") {
@@ -269,7 +303,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var page Page
 	var query Query
 	var snapshotWatermark *CursorKey
-	if r.URL.Path == SnapshotPath {
+	if r.URL.Path == h.snapshotPath() {
 		query = Query{Store: in.Store, DateFrom: in.DateFrom, DateTo: in.DateTo, Fields: fields, PageSize: pageSize}
 		if in.Cursor != "" {
 			cursor, err := h.decodeCursor(in.Cursor, "snapshot", token.ID, in.Store, in.DateFrom, in.DateTo)
@@ -296,7 +330,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "listing daily query failed")
 		return
 	}
-	response, err := h.response(r.URL.Path == SnapshotPath, in, page, fields, token.ID, snapshotWatermark, query.Cursor)
+	response, err := h.response(r.URL.Path == h.snapshotPath(), in, page, fields, token.ID, snapshotWatermark, query.Cursor)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -339,8 +373,23 @@ func (h *Handler) SetReader(reader Reader) {
 }
 
 func IsBearerPath(path string) bool {
-	return path == SnapshotPath || path == ChangesPath
+	for _, definition := range Definitions() {
+		if path == SnapshotPathFor(definition.ID) || path == ChangesPathFor(definition.ID) {
+			return true
+		}
+	}
+	return false
 }
+
+func SnapshotPathFor(datasetID string) string { return "/api/v1/datasets/" + datasetID + "/snapshot" }
+func ChangesPathFor(datasetID string) string  { return "/api/v1/datasets/" + datasetID + "/changes" }
+func FieldsPathFor(datasetID string) string {
+	return "/api/datasources/datasets/" + datasetID + "/fields"
+}
+
+func (h *Handler) snapshotPath() string { return SnapshotPathFor(h.definition.ID) }
+func (h *Handler) changesPath() string  { return ChangesPathFor(h.definition.ID) }
+func (h *Handler) fieldsPath() string   { return FieldsPathFor(h.definition.ID) }
 
 func (h *Handler) serveFields(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodPut {
@@ -372,9 +421,10 @@ func (h *Handler) serveFields(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet && requestedProjectID == "" && requestedTokenID == "" {
 		h.mu.RLock()
 		available := sortedKeys(h.available)
+		catalog := sortedKeys(h.catalog)
 		projects := make([]ProjectFields, 0, len(h.tokens))
 		for _, token := range h.tokens {
-			projects = append(projects, ProjectFields{ProjectID: token.ProjectID, TokenID: token.ID, StoreScopes: append([]string(nil), token.StoreScopes...), Fields: append([]string(nil), token.Fields...)})
+			projects = append(projects, ProjectFields{ProjectID: token.ProjectID, TokenID: token.ID, DatasetScopes: append([]string(nil), token.DatasetScopes...), StoreScopes: append([]string(nil), token.StoreScopes...), Fields: append([]string(nil), token.Fields...)})
 		}
 		h.mu.RUnlock()
 		sort.Slice(projects, func(i, j int) bool {
@@ -383,7 +433,7 @@ func (h *Handler) serveFields(w http.ResponseWriter, r *http.Request) {
 			}
 			return projects[i].ProjectID < projects[j].ProjectID
 		})
-		writeJSON(w, http.StatusOK, FieldsResponse{OK: true, Data: FieldsResponseData{DatasetID: DatasetID, DatasetName: DatasetName, FixedFields: append([]string(nil), FixedFields...), AvailableFields: available, Projects: projects}})
+		writeJSON(w, http.StatusOK, FieldsResponse{OK: true, Data: FieldsResponseData{DatasetID: h.definition.ID, DatasetName: h.definition.Name, FixedFields: append([]string(nil), h.definition.FixedFields...), AvailableFields: available, CatalogFields: catalog, ConfiguredFields: append([]string(nil), available...), Projects: projects}})
 		return
 	}
 	token, err := h.resolveToken(requestedProjectID, requestedTokenID)
@@ -403,7 +453,7 @@ func (h *Handler) serveFields(w http.ResponseWriter, r *http.Request) {
 		h.mu.RLock()
 		available := sortedKeys(h.available)
 		h.mu.RUnlock()
-		writeJSON(w, http.StatusOK, FieldsResponse{OK: true, Data: FieldsResponseData{DatasetID: DatasetID, DatasetName: DatasetName, FixedFields: append([]string(nil), FixedFields...), ProjectID: token.ProjectID, TokenID: token.ID, AvailableFields: available, Fields: sortedKeys(current)}})
+		writeJSON(w, http.StatusOK, FieldsResponse{OK: true, Data: FieldsResponseData{DatasetID: h.definition.ID, DatasetName: h.definition.Name, FixedFields: append([]string(nil), h.definition.FixedFields...), ProjectID: token.ProjectID, TokenID: token.ID, AvailableFields: available, Fields: sortedKeys(current)}})
 		return
 	}
 	if requestedProjectID == "" {
@@ -452,7 +502,7 @@ func (h *Handler) serveFields(w http.ResponseWriter, r *http.Request) {
 	// A PUT updates the persisted project configuration. The current request's
 	// token remains authoritative until the config is reloaded, so one project
 	// cannot mutate another project's in-memory field scope.
-	writeJSON(w, http.StatusOK, FieldsResponse{OK: true, Data: FieldsResponseData{DatasetID: DatasetID, DatasetName: DatasetName, FixedFields: append([]string(nil), FixedFields...), ProjectID: token.ProjectID, TokenID: token.ID, AvailableFields: sortedKeys(h.available), Fields: fields}})
+	writeJSON(w, http.StatusOK, FieldsResponse{OK: true, Data: FieldsResponseData{DatasetID: h.definition.ID, DatasetName: h.definition.Name, FixedFields: append([]string(nil), h.definition.FixedFields...), ProjectID: token.ProjectID, TokenID: token.ID, AvailableFields: sortedKeys(h.available), Fields: fields}})
 }
 
 func (h *Handler) resolveToken(projectID, tokenID string) (Token, error) {
@@ -492,7 +542,7 @@ func (h *Handler) validateRequest(in *request, snapshot bool, token Token) ([]st
 	if in.Store == "" {
 		return nil, 0, errors.New("store is required")
 	}
-	if !contains(token.DatasetScopes, DatasetID) {
+	if !contains(token.DatasetScopes, h.definition.ID) {
 		return nil, 0, errors.New("dataset scope is not allowed")
 	}
 	if !contains(token.StoreScopes, in.Store) {
@@ -571,9 +621,15 @@ func (h *Handler) response(snapshot bool, in request, page Page, fields []string
 			"is_provisional":      row.IsProvisional,
 			"verification_status": row.VerificationStatus,
 		}
-		if row.DeletedAt != nil {
+		if row.FixedValues != nil {
+			out = make(map[string]any, len(row.FixedValues)+len(fields))
+			for key, value := range row.FixedValues {
+				out[key] = value
+			}
+		}
+		if row.FixedValues == nil && row.DeletedAt != nil {
 			out["deleted_at"] = row.DeletedAt.UTC().Format(time.RFC3339Nano)
-		} else {
+		} else if row.FixedValues == nil {
 			out["deleted_at"] = nil
 		}
 		for _, field := range fields {
@@ -583,7 +639,7 @@ func (h *Handler) response(snapshot bool, in request, page Page, fields []string
 		}
 		rows = append(rows, out)
 	}
-	data := ResponseData{SchemaVersion: SchemaVersion, Rows: rows, HasMore: page.HasMore}
+	data := ResponseData{SchemaVersion: h.definition.ID, Rows: rows, HasMore: page.HasMore}
 	if !snapshot {
 		if !validCursorKey(changesCursor) {
 			return Response{}, errors.New("changes cursor is invalid")
@@ -593,7 +649,7 @@ func (h *Handler) response(snapshot bool, in request, page Page, fields []string
 			last := page.Rows[len(page.Rows)-1]
 			key = CursorKey{UpdatedAt: last.UpdatedAt, StableKey: last.StableKey}
 		}
-		cursor, err := h.encodeCursor(cursorEnvelope{Version: 1, Dataset: DatasetID, Kind: "changes", TokenID: tokenID, Store: in.Store, Key: key})
+		cursor, err := h.encodeCursor(cursorEnvelope{Version: 1, Dataset: h.definition.ID, Kind: "changes", TokenID: tokenID, Store: in.Store, Key: key})
 		if err != nil {
 			return Response{}, err
 		}
@@ -607,7 +663,7 @@ func (h *Handler) response(snapshot bool, in request, page Page, fields []string
 		if snapshot {
 			kind = "snapshot"
 		}
-		cursor, err := h.encodeCursor(cursorEnvelope{Version: 1, Dataset: DatasetID, Kind: kind, TokenID: tokenID, Store: in.Store, DateFrom: in.DateFrom, DateTo: in.DateTo, Key: *page.Next, Watermark: snapshotWatermark})
+		cursor, err := h.encodeCursor(cursorEnvelope{Version: 1, Dataset: h.definition.ID, Kind: kind, TokenID: tokenID, Store: in.Store, DateFrom: in.DateFrom, DateTo: in.DateTo, Key: *page.Next, Watermark: snapshotWatermark})
 		if err != nil {
 			return Response{}, err
 		}
@@ -617,7 +673,7 @@ func (h *Handler) response(snapshot bool, in request, page Page, fields []string
 		if !validCursorKey(snapshotWatermark) {
 			return Response{}, errors.New("snapshot changes watermark is invalid")
 		}
-		cursor, err := h.encodeCursor(cursorEnvelope{Version: 1, Dataset: DatasetID, Kind: "changes", TokenID: tokenID, Store: in.Store, Key: *snapshotWatermark})
+		cursor, err := h.encodeCursor(cursorEnvelope{Version: 1, Dataset: h.definition.ID, Kind: "changes", TokenID: tokenID, Store: in.Store, Key: *snapshotWatermark})
 		if err != nil {
 			return Response{}, err
 		}
@@ -663,7 +719,7 @@ func (h *Handler) decodeCursor(raw, kind, tokenID, store, dateFrom, dateTo strin
 		return cursorEnvelope{}, errors.New("cursor is invalid")
 	}
 	var cursor cursorEnvelope
-	if err := json.Unmarshal(payload, &cursor); err != nil || cursor.Version != 1 || cursor.Dataset != DatasetID || cursor.Kind != kind || cursor.DateFrom != dateFrom || cursor.DateTo != dateTo || !validCursorKey(&cursor.Key) {
+	if err := json.Unmarshal(payload, &cursor); err != nil || cursor.Version != 1 || cursor.Dataset != h.definition.ID || cursor.Kind != kind || cursor.DateFrom != dateFrom || cursor.DateTo != dateTo || !validCursorKey(&cursor.Key) {
 		return cursorEnvelope{}, errors.New("cursor is invalid")
 	}
 	if kind == "snapshot" && !validCursorKey(cursor.Watermark) {

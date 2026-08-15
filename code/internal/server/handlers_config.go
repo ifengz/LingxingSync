@@ -49,14 +49,23 @@ func (s *Server) registerConfigRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/endpoints/{name}", s.apiDeleteEndpoint)
 	mux.HandleFunc("GET /api/datasources/{table}/columns", s.apiDatasourceColumns)
 	mux.HandleFunc("POST /api/datasources/datasets/listing-daily-v1/projects", s.apiCreateDatasetProjectToken)
+	mux.HandleFunc("POST /api/datasources/datasets/projects", s.apiCreateDatasetProjectToken)
 	mux.HandleFunc("POST /api/datasources/datasets/listing-daily-v1/fields/complete", s.apiCompleteDatasetFields)
+	mux.HandleFunc("GET /api/datasources/datasets/catalog", s.apiDatasetCatalog)
+	mux.HandleFunc("GET /api/datasources/datasets/{id}/fields/config", s.apiGetDatasetFieldAllowlist)
+	mux.HandleFunc("PUT /api/datasources/datasets/{id}/fields/config", s.apiSaveDatasetFieldAllowlist)
 	mux.HandleFunc("POST /api/settings/restart", s.apiRestart)
 	mux.HandleFunc("POST /api/settings/test-connection", s.apiTestConnection)
 }
 
 type createDatasetProjectTokenRequest struct {
-	ProjectID   string   `json:"project_id"`
-	StoreScopes []string `json:"store_scopes"`
+	ProjectID     string   `json:"project_id"`
+	DatasetScopes []string `json:"dataset_scopes"`
+	StoreScopes   []string `json:"store_scopes"`
+}
+
+type saveDatasetFieldAllowlistRequest struct {
+	Fields []string `json:"fields"`
 }
 
 var availableDatasetFields = []string{
@@ -70,7 +79,7 @@ var availableDatasetFields = []string{
 	"sp_spend", "sp_sales", "sp_orders", "sd_spend", "sd_sales", "sd_orders", "hsa_spend", "hsa_sales", "hsa_orders", "sb_spend", "sb_sales", "sb_orders",
 }
 
-// apiCreateDatasetProjectToken creates one fixed listing dataset reader. Only
+// apiCreateDatasetProjectToken creates one downstream reader credential. Only
 // the SHA-256 hash is written to config; the bearer value is returned once so
 // the caller can put it in the consuming project's secret store.
 func (s *Server) apiCreateDatasetProjectToken(w http.ResponseWriter, r *http.Request) {
@@ -85,7 +94,7 @@ func (s *Server) apiCreateDatasetProjectToken(w http.ResponseWriter, r *http.Req
 	}
 	in.ProjectID = strings.TrimSpace(in.ProjectID)
 	if !config.ValidAccountID(in.ProjectID) {
-		errJSON(w, http.StatusBadRequest, "项目 ID 只能使用字母、数字、下划线或连字符，长度 1–32")
+		errJSON(w, http.StatusBadRequest, "下游项目 ID 只能使用字母、数字、下划线或连字符，长度 1–32")
 		return
 	}
 	storeScopes, err := normalizeDatasetTokenValues(in.StoreScopes, "店铺范围")
@@ -93,10 +102,15 @@ func (s *Server) apiCreateDatasetProjectToken(w http.ResponseWriter, r *http.Req
 		errJSON(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	datasetScopes, err := normalizeDatasetScopes(in.DatasetScopes)
+	if err != nil {
+		errJSON(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	current := s.store.Current()
 	for _, token := range current.DatasetAPI.Tokens {
 		if token.ProjectID == in.ProjectID {
-			errJSON(w, http.StatusConflict, "项目 ID 已存在: "+in.ProjectID)
+			errJSON(w, http.StatusConflict, "下游项目 ID 已存在: "+in.ProjectID)
 			return
 		}
 	}
@@ -124,16 +138,36 @@ func (s *Server) apiCreateDatasetProjectToken(w http.ResponseWriter, r *http.Req
 		ID:            tokenID,
 		ProjectID:     in.ProjectID,
 		TokenHash:     datasetapi.HashToken(rawToken),
-		DatasetScopes: []string{datasetapi.DatasetID},
+		DatasetScopes: datasetScopes,
 		StoreScopes:   storeScopes,
 		Fields:        append([]string(nil), availableDatasetFields...),
 	})
-	s.applyConfigWrite(w, old, snap, "项目 Token 已新增，请保存明文 Token 并重启同步机", map[string]any{
+	s.applyConfigWrite(w, old, snap, "下游项目 Token 已创建，请保存明文 Token 并重启同步机", map[string]any{
 		"project_id":   in.ProjectID,
 		"token_id":     tokenID,
 		"token":        rawToken,
 		"need_restart": true,
 	})
+}
+
+func normalizeDatasetScopes(values []string) ([]string, error) {
+	if len(values) == 0 {
+		return []string{datasetapi.DatasetID}, nil
+	}
+	seen := make(map[string]struct{}, len(values))
+	scopes := make([]string, 0, len(values))
+	for _, raw := range values {
+		value := strings.TrimSpace(raw)
+		if _, ok := datasetapi.DefinitionFor(value); !ok {
+			return nil, fmt.Errorf("数据表不可用: %s", value)
+		}
+		if _, exists := seen[value]; exists {
+			return nil, fmt.Errorf("数据表不能重复: %s", value)
+		}
+		seen[value] = struct{}{}
+		scopes = append(scopes, value)
+	}
+	return scopes, nil
 }
 
 // apiCompleteDatasetFields extends the fixed table-level business-field catalog.
@@ -147,6 +181,132 @@ func (s *Server) apiCompleteDatasetFields(w http.ResponseWriter, _ *http.Request
 	snap := s.store.Snapshot()
 	snap.DatasetAPI.FieldAllowlist = completeDatasetFieldAllowlist(snap.DatasetAPI.FieldAllowlist)
 	s.applyConfigWrite(w, old, snap, "可选字段已补全，请重启同步机后继续配置", map[string]any{"need_restart": true, "field_count": len(snap.DatasetAPI.FieldAllowlist)})
+}
+
+// apiSaveDatasetFieldAllowlist saves one table-level field selection. Every
+// project inherits the same published business fields; fixed identity fields
+// remain part of the dataset response and are never accepted here.
+func (s *Server) apiSaveDatasetFieldAllowlist(w http.ResponseWriter, r *http.Request) {
+	if s.store == nil {
+		errJSON(w, http.StatusInternalServerError, "配置存储未初始化")
+		return
+	}
+	var in saveDatasetFieldAllowlistRequest
+	if err := decodeJSON(r, &in); err != nil {
+		errJSON(w, http.StatusBadRequest, "请求体格式错误: "+err.Error())
+		return
+	}
+	definition, ok := datasetapi.DefinitionFor(r.PathValue("id"))
+	if !ok {
+		errJSON(w, http.StatusNotFound, "数据表不存在")
+		return
+	}
+	fields, err := normalizeDatasetFieldAllowlistFor(definition, in.Fields)
+	if err != nil {
+		errJSON(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	old := s.store.Current()
+	snap := s.store.Snapshot()
+	if definition.ID == datasetapi.DatasetID {
+		snap.DatasetAPI.FieldAllowlist = fields
+		for i := range snap.DatasetAPI.Tokens {
+			snap.DatasetAPI.Tokens[i].Fields = append([]string(nil), fields...)
+		}
+	} else {
+		if snap.DatasetAPI.FieldAllowlists == nil {
+			snap.DatasetAPI.FieldAllowlists = make(map[string][]string)
+		}
+		snap.DatasetAPI.FieldAllowlists[definition.ID] = fields
+	}
+	s.applyConfigWrite(w, old, snap, "数据表字段已保存，请重启同步机后生效", map[string]any{
+		"fields": fields, "field_count": len(fields),
+	})
+}
+
+// apiGetDatasetFieldAllowlist is the management catalog. available_fields is
+// the complete verified business-field catalog; configured_fields is the
+// current table publication selection.
+func (s *Server) apiGetDatasetFieldAllowlist(w http.ResponseWriter, r *http.Request) {
+	if s.store == nil {
+		errJSON(w, http.StatusInternalServerError, "配置存储未初始化")
+		return
+	}
+	definition, ok := datasetapi.DefinitionFor(r.PathValue("id"))
+	if !ok {
+		errJSON(w, http.StatusNotFound, "数据表不存在")
+		return
+	}
+	current := s.store.Current()
+	projects := make([]datasetapi.ProjectFields, 0, len(current.DatasetAPI.Tokens))
+	for _, token := range current.DatasetAPI.Tokens {
+		if !containsDatasetScope(token.DatasetScopes, definition.ID) {
+			continue
+		}
+		projects = append(projects, datasetapi.ProjectFields{
+			ProjectID: token.ProjectID, TokenID: token.ID, DatasetScopes: append([]string(nil), token.DatasetScopes...), StoreScopes: append([]string(nil), token.StoreScopes...),
+		})
+	}
+	okJSON(w, map[string]any{
+		"dataset_id":        definition.ID,
+		"dataset_name":      definition.Name,
+		"dataset_kind":      definition.Kind,
+		"source":            definition.Source,
+		"grain":             definition.Grain,
+		"fixed_fields":      append([]string(nil), definition.FixedFields...),
+		"available_fields":  catalogDatasetFields(definition),
+		"configured_fields": configuredDatasetFields(current.DatasetAPI, definition),
+		"projects":          projects,
+	})
+}
+
+func (s *Server) apiDatasetCatalog(w http.ResponseWriter, _ *http.Request) {
+	if s.store == nil {
+		errJSON(w, http.StatusInternalServerError, "配置存储未初始化")
+		return
+	}
+	current := s.store.Current()
+	items := make([]map[string]any, 0)
+	for _, definition := range datasetapi.Definitions() {
+		items = append(items, map[string]any{
+			"id": definition.ID, "name": definition.Name, "kind": definition.Kind, "source": definition.Source, "grain": definition.Grain,
+			"fixed_fields": definition.FixedFields, "available_fields": catalogDatasetFields(definition), "configured_fields": configuredDatasetFields(current.DatasetAPI, definition),
+		})
+	}
+	okJSON(w, map[string]any{"datasets": items})
+}
+
+func normalizeDatasetFieldAllowlist(values []string) ([]string, error) {
+	definition, _ := datasetapi.DefinitionFor(datasetapi.DatasetID)
+	return normalizeDatasetFieldAllowlistFor(definition, values)
+}
+
+func normalizeDatasetFieldAllowlistFor(definition datasetapi.Definition, values []string) ([]string, error) {
+	if len(values) == 0 {
+		return nil, fmt.Errorf("字段不能为空")
+	}
+	availableFields := catalogDatasetFields(definition)
+	available := make(map[string]struct{}, len(availableFields))
+	for _, field := range availableFields {
+		available[field] = struct{}{}
+	}
+	seen := make(map[string]struct{}, len(values))
+	fields := make([]string, 0, len(values))
+	for _, raw := range values {
+		field := strings.TrimSpace(raw)
+		if field == "" {
+			return nil, fmt.Errorf("字段不能包含空值")
+		}
+		if _, ok := available[field]; !ok {
+			return nil, fmt.Errorf("字段不可用: %s", field)
+		}
+		if _, duplicate := seen[field]; duplicate {
+			return nil, fmt.Errorf("字段不能重复: %s", field)
+		}
+		seen[field] = struct{}{}
+		fields = append(fields, field)
+	}
+	return fields, nil
 }
 
 func normalizeDatasetTokenValues(values []string, label string) ([]string, error) {

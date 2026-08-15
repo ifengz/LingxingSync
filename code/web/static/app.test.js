@@ -47,26 +47,33 @@ assert.equal(entryManage.advancedAdd, false);
   assert.doesNotMatch(template, /absolute left-1\/2 top-full/);
 }
 
-// 数据表配置与新增项目是两个切卡；表定义不依赖项目，且不接受表名或 SQL 输入。
+// 数据表配置与新增下游项目是两个切卡；表定义不依赖下游项目，且不接受表名或 SQL 输入。
 {
   const template = fs.readFileSync(__dirname + '/../templates/dataset_fields.html', 'utf8');
   assert.match(template, /数据表配置/);
-  assert.match(template, /新增项目/);
+  assert.match(template, /新增下游项目/);
+  assert.doesNotMatch(template, /新增项目/);
   assert.match(template, /数据表 ID/);
   assert.match(template, /x-text="datasetID"/);
   assert.match(template, /flex flex-wrap items-center justify-between gap-3/);
   assert.match(template, /<nav class="flex items-center gap-1\.5" aria-label="数据表管理">/);
   assert.match(template, /x-data="dataSources\(\)"/);
   assert.match(template, /x-init="loadDatasetCatalog\(\); loadDatasetStores\(\)"/);
-  assert.match(template, /业务字段/);
+  assert.match(template, /可添加字段/);
+  assert.match(template, /已发布字段/);
   assert.match(template, /固定字段/);
   assert.match(template, /固定字段，不能删除/);
+  assert.match(template, /fieldGroupSource\(group\.source\)/);
+  assert.match(template, /availableTableFieldGroups/);
   assert.match(template, /Token ID/);
   assert.match(template, /店铺范围/);
   assert.match(template, /createDatasetProjectToken\(\)/);
-  assert.match(template, /尚未登记业务字段/);
-  assert.doesNotMatch(template, /saveDatasetFields\(\)/);
-  assert.doesNotMatch(template, /<input[^>]*(?:table|sql)/i);
+  assert.match(template, /addTableField\(field\.name\)/);
+  assert.match(template, /removeTableField\(field\.name\)/);
+  assert.match(template, /h-\[720px\] overflow-y-auto/);
+  assert.match(template, /saveDatasetFieldAllowlist\(\)/);
+  assert.match(template, /暂无可添加字段/);
+  assert.doesNotMatch(template, /<input[^>]*x-model[^>]*(?:table|sql)/i);
   assert.doesNotMatch(template, /type=["']password/i);
   assert.doesNotMatch(template, /CREATE\s+TABLE|ALTER\s+TABLE|DROP\s+TABLE|SQL\s*:/i);
   const dataSourcesTemplate = fs.readFileSync(__dirname + '/../templates/datasources.html', 'utf8');
@@ -238,23 +245,56 @@ root.confirmResolve(true);
 confirmation.then((accepted) => assert.equal(accepted, true));
 
 void (async () => {
-  // 数据表目录独立于项目：完整业务字段和固定字段先可见，项目只带读取范围。
+  // 数据表目录独立于下游项目：完整业务字段和固定字段先可见，下游项目只带读取范围。
   {
     const catalog = sandbox.window.dataSources();
     sandbox.window.apiGet = async (url) => {
-      assert.equal(url, '/api/datasources/datasets/listing-daily-v1/fields');
+      if (url === '/api/datasources/datasets/catalog') {
+        return { datasets: [
+          { id: 'listing-daily-v1', name: 'Listing 日维指标表', kind: 'daily', source: 'listing_dimensions + listing_daily_metrics', grain: 'store + channel + asin + sku + business_date' },
+          { id: 'return-reason-detail-v1', name: '退货原因明细表', kind: 'detail', source: 'ls_sc_refunds', grain: 'store + license_plate_number' },
+        ] };
+      }
+      assert.equal(url, '/api/datasources/datasets/listing-daily-v1/fields/config');
       return {
         dataset_id: 'listing-daily-v1',
         dataset_name: 'Listing 日维指标表',
         fixed_fields: ['store', 'channel', 'asin', 'sku', 'business_date', 'updated_at', 'is_provisional', 'verification_status'],
         available_fields: ['sales_units', 'inventory_sellable', 'sessions_total'],
+        configured_fields: ['sales_units', 'sessions_total'],
         projects: [{ project_id: 'polabel2', token_id: 'tok_reader', store_scopes: ['12534'] }],
       };
     };
     await catalog.loadDatasetCatalog();
     assert.equal(catalog.datasetName, 'Listing 日维指标表');
+    assert.equal(catalog.datasetDefinitions.length, 2, '下游项目必须能从静态目录选择多张数据表');
     assert.equal(catalog.fixedFields.length, 8);
-    assert.equal(catalog.catalogFieldCount, 3);
+    assert.equal(catalog.availableTableFieldCount, 1);
+    assert.equal(JSON.stringify(catalog.availableTableFieldGroups.map((group) => group.fields.map((field) => field.name))), JSON.stringify([['inventory_sellable']]));
+    assert.match(catalog.fieldGroupSource('销量'), /ls_sc_sales_report/);
+    assert.equal(JSON.stringify(catalog.tableSelectedFields), JSON.stringify(['sales_units', 'sessions_total']));
+    assert.equal(catalog.tableFieldDirty, false);
+    catalog.addTableField('inventory_sellable');
+    assert.equal(JSON.stringify(catalog.tableSelectedFields), JSON.stringify(['sales_units', 'sessions_total', 'inventory_sellable']));
+    assert.equal(catalog.availableTableFieldCount, 0);
+    assert.equal(JSON.stringify(catalog.publishedTableFields.map((field) => field.name)), JSON.stringify(['sales_units', 'sessions_total', 'inventory_sellable']));
+    catalog.removeTableField('sessions_total');
+    assert.equal(JSON.stringify(catalog.publishedTableFields.map((field) => field.name)), JSON.stringify(['sales_units', 'inventory_sellable']));
+    assert.equal(catalog.availableTableFieldCount, 1);
+    catalog.addTableField('sessions_total');
+    assert.equal(catalog.tableFieldDirty, true);
+    let tableFieldRequest = null;
+    sandbox.window.apiPut = async (url, body) => {
+      tableFieldRequest = { url, body };
+      return { fields: body.fields, need_restart: true };
+    };
+    await catalog.saveDatasetFieldAllowlist();
+    assert.equal(JSON.stringify(tableFieldRequest), JSON.stringify({
+      url: '/api/datasources/datasets/listing-daily-v1/fields/config',
+      body: { fields: ['sales_units', 'inventory_sellable', 'sessions_total'] },
+    }));
+    assert.equal(catalog.tableFieldDirty, false);
+    assert.equal(catalog.tableFieldsNeedRestart, true);
     assert.equal(catalog.datasetProjects[0].token_id, 'tok_reader');
     assert.equal(JSON.stringify(catalog.datasetProjects[0].store_scopes), JSON.stringify(['12534']));
 
@@ -263,12 +303,16 @@ void (async () => {
       storeCalls.push(url);
       if (url === '/api/config') return { accounts: [{ id: 'sc_us_1', name: '美国自营' }] };
       if (url === '/api/accounts/sc_us_1/stores') return {
-        items: [{ sid: '12534', store_name: '美国主店', country: 'US', store_type: 'SC' }],
+        items: [
+          { sid: '12534', store_name: '美国主店', country: 'US', store_type: 'SC', enabled: true },
+          { sid: '12535', store_name: '未授权店铺', country: 'US', store_type: 'SC', enabled: false },
+        ],
       };
       throw new Error('unexpected store URL ' + url);
     };
     await catalog.loadDatasetStores();
     assert.equal(JSON.stringify(storeCalls), JSON.stringify(['/api/config', '/api/accounts/sc_us_1/stores']));
+    assert.equal(catalog.datasetStores.length, 1, '未勾选的店铺不得进入数据表项目范围');
     assert.equal(catalog.datasetStores[0].store_name, '美国主店');
     catalog.toggleAllDatasetStores(true);
     assert.equal(JSON.stringify(catalog.datasetStoreScopes()), JSON.stringify(['12534']));
@@ -280,10 +324,11 @@ void (async () => {
       return { project_id: 'reader', token_id: 'tok_new', token: 'secret' };
     };
     catalog.datasetCreateForm = { project_id: 'reader' };
+    catalog.toggleDatasetScope('return-reason-detail-v1');
     await catalog.createDatasetProjectToken();
     assert.equal(JSON.stringify(createRequest), JSON.stringify({
-      url: '/api/datasources/datasets/listing-daily-v1/projects',
-      body: { project_id: 'reader', store_scopes: ['12534'] },
+      url: '/api/datasources/datasets/projects',
+      body: { project_id: 'reader', dataset_scopes: ['listing-daily-v1', 'return-reason-detail-v1'], store_scopes: ['12534'] },
     }));
   }
 
@@ -656,7 +701,7 @@ void (async () => {
   ] };
   sandbox.window.apiGet = async (url) => {
     fieldCalls.push({ method: 'GET', url });
-    if (url === '/api/datasources/datasets/listing-daily-v1/fields') return projectResponse;
+    if (url === '/api/datasources/datasets/listing-daily-v1/fields/config') return projectResponse;
     if (url === '/api/datasources/datasets/listing-daily-v1/fields?project_id=project-a&token_id=token-a') return fieldLoad;
     if (url === '/api/datasources/datasets/listing-daily-v1/fields?project_id=project-b&token_id=token-b') return projectBLoad;
     throw new Error('unexpected dataset GET ' + url);
@@ -668,7 +713,7 @@ void (async () => {
   const fields = sandbox.window.dataSources();
   await fields.loadDatasetProjects();
   assert.equal(JSON.stringify(fieldCalls.slice(0, 2).map(call => call.url)), JSON.stringify([
-    '/api/datasources/datasets/listing-daily-v1/fields',
+    '/api/datasources/datasets/listing-daily-v1/fields/config',
     '/api/datasources/datasets/listing-daily-v1/fields?project_id=project-a&token_id=token-a',
   ]));
   assert.equal(fields.selectedProjectId, 'project-a');
@@ -785,7 +830,7 @@ void (async () => {
   const singleCalls = [];
   sandbox.window.apiGet = async (url) => {
     singleCalls.push(url);
-    if (url === '/api/datasources/datasets/listing-daily-v1/fields') {
+    if (url === '/api/datasources/datasets/listing-daily-v1/fields/config') {
       return { projects: [{ project_id: 'project-a', token_id: 'token-a', fields: ['store'] }] };
     }
     return { ...fieldLoad, project_id: 'project-a', token_id: 'token-a' };
@@ -793,7 +838,7 @@ void (async () => {
   await single.loadDatasetProjects();
   assert.equal(single.selectedProjectId, 'project-a');
   assert.equal(JSON.stringify(singleCalls), JSON.stringify([
-    '/api/datasources/datasets/listing-daily-v1/fields',
+    '/api/datasources/datasets/listing-daily-v1/fields/config',
     '/api/datasources/datasets/listing-daily-v1/fields?project_id=project-a&token_id=token-a',
   ]));
 

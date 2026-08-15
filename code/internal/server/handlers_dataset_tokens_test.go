@@ -13,6 +13,68 @@ import (
 
 const datasetProjectsPath = "/api/datasources/datasets/listing-daily-v1/projects"
 const datasetFieldsCompletePath = "/api/datasources/datasets/listing-daily-v1/fields/complete"
+const datasetFieldsConfigPath = "/api/datasources/datasets/listing-daily-v1/fields/config"
+
+func TestSaveDatasetFieldAllowlistPersistsTableSelectionForAllProjects(t *testing.T) {
+	cfg := validDatasetProjectTestConfig()
+	cfg.DatasetAPI.FieldAllowlist = []string{"sales_units", "returns_qty"}
+	cfg.DatasetAPI.Tokens = []config.DatasetToken{{
+		ID: "tok_reader", ProjectID: "reader", TokenHash: strings.Repeat("a", 64),
+		DatasetScopes: []string{datasetapi.DatasetID}, StoreScopes: []string{"12534"},
+		Fields: []string{"sales_units", "returns_qty"},
+	}}
+	store := config.NewStore(t.TempDir()+"/config.yaml", cfg)
+	s := New(cfg, nil, nil, nil, "", Assets{FS: renderTestFS, TemplateFS: "testdata", StaticFS: "testdata"}, store, nil, nil, "")
+	req := httptest.NewRequest(http.MethodPut, datasetFieldsConfigPath, strings.NewReader(`{"fields":["returns_qty","sessions_total"]}`))
+	rec := httptest.NewRecorder()
+
+	s.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("save dataset fields status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	saved := store.Current().DatasetAPI
+	if got, want := strings.Join(saved.FieldAllowlist, ","), "returns_qty,sessions_total"; got != want {
+		t.Fatalf("saved table fields=%q, want %q", got, want)
+	}
+	if got, want := strings.Join(saved.Tokens[0].Fields, ","), "returns_qty,sessions_total"; got != want {
+		t.Fatalf("saved project fields=%q, want %q", got, want)
+	}
+	getRec := httptest.NewRecorder()
+	s.Routes().ServeHTTP(getRec, httptest.NewRequest(http.MethodGet, datasetFieldsConfigPath, nil))
+	if getRec.Code != http.StatusOK || !strings.Contains(getRec.Body.String(), `"configured_fields":["returns_qty","sessions_total"]`) || !strings.Contains(getRec.Body.String(), `"sales_amount"`) {
+		t.Fatalf("get dataset field config status=%d body=%s", getRec.Code, getRec.Body.String())
+	}
+}
+
+func TestSaveDatasetFieldAllowlistRejectsUnknownDuplicateOrEmptyFields(t *testing.T) {
+	cfg := validDatasetProjectTestConfig()
+	cfg.DatasetAPI.Tokens = []config.DatasetToken{{
+		ID: "tok_reader", ProjectID: "reader", TokenHash: strings.Repeat("a", 64),
+		DatasetScopes: []string{datasetapi.DatasetID}, StoreScopes: []string{"12534"},
+		Fields: []string{"sales_units", "returns_qty"},
+	}}
+	store := config.NewStore(t.TempDir()+"/config.yaml", cfg)
+	s := New(cfg, nil, nil, nil, "", Assets{FS: renderTestFS, TemplateFS: "testdata", StaticFS: "testdata"}, store, nil, nil, "")
+	for _, tc := range []struct {
+		name string
+		body string
+		want string
+	}{
+		{name: "empty", body: `{"fields":[]}`, want: "字段不能为空"},
+		{name: "unknown", body: `{"fields":["not_a_field"]}`, want: "字段不可用"},
+		{name: "duplicate", body: `{"fields":["sales_units","sales_units"]}`, want: "字段不能重复"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPut, datasetFieldsConfigPath, strings.NewReader(tc.body))
+			rec := httptest.NewRecorder()
+			s.Routes().ServeHTTP(rec, req)
+			if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), tc.want) {
+				t.Fatalf("status=%d body=%s, want %d containing %q", rec.Code, rec.Body.String(), http.StatusBadRequest, tc.want)
+			}
+		})
+	}
+}
 
 func TestCreateDatasetProjectTokenReturnsPlaintextOnceAndPersistsOnlyHash(t *testing.T) {
 	cfg := validDatasetProjectTestConfig()
@@ -58,6 +120,28 @@ func TestCreateDatasetProjectTokenReturnsPlaintextOnceAndPersistsOnlyHash(t *tes
 	}
 }
 
+func TestCreateDownstreamProjectTokenPersistsSelectedDatasetScopes(t *testing.T) {
+	cfg := validDatasetProjectTestConfig()
+	store := config.NewStore(t.TempDir()+"/config.yaml", cfg)
+	s := New(cfg, nil, nil, nil, "", Assets{FS: renderTestFS, TemplateFS: "testdata", StaticFS: "testdata"}, store, nil, nil, "")
+	req := httptest.NewRequest(http.MethodPost, "/api/datasources/datasets/projects", strings.NewReader(`{
+		"project_id":"warehouse_reader",
+		"dataset_scopes":["listing-daily-v1","return-reason-detail-v1"],
+		"store_scopes":["12534"]
+	}`))
+	rec := httptest.NewRecorder()
+
+	s.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("create multi-dataset token status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	saved := store.Current().DatasetAPI.Tokens
+	if len(saved) != 1 || strings.Join(saved[0].DatasetScopes, ",") != "listing-daily-v1,return-reason-detail-v1" {
+		t.Fatalf("saved dataset scopes=%+v", saved)
+	}
+}
+
 func TestCreateDatasetProjectTokenRejectsDuplicateAndInvalidScope(t *testing.T) {
 	cfg := validDatasetProjectTestConfig()
 	cfg.DatasetAPI.Tokens = []config.DatasetToken{{ID: "existing", ProjectID: "polabel2", TokenHash: strings.Repeat("a", 64), DatasetScopes: []string{datasetapi.DatasetID}, StoreScopes: []string{"12534"}, Fields: []string{"sales_units"}}}
@@ -69,7 +153,7 @@ func TestCreateDatasetProjectTokenRejectsDuplicateAndInvalidScope(t *testing.T) 
 		code int
 		want string
 	}{
-		{name: "project exists", body: `{"project_id":"polabel2","store_scopes":["12534"]}`, code: http.StatusConflict, want: "项目 ID 已存在"},
+		{name: "project exists", body: `{"project_id":"polabel2","store_scopes":["12534"]}`, code: http.StatusConflict, want: "下游项目 ID 已存在"},
 		{name: "empty stores", body: `{"project_id":"new_reader","store_scopes":[]}`, code: http.StatusBadRequest, want: "店铺范围不能为空"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

@@ -89,15 +89,16 @@ type ReportExport struct {
 	WindowDays     int      `yaml:"window_days"`
 }
 
-// DatasetAPIConfig stores only the fixed listing dataset publication contract.
+// DatasetAPIConfig stores system-owned data-product publication contracts.
 // Project tokens are supplied as hashes; plaintext bearer tokens never belong
 // in config.yaml.
 type DatasetAPIConfig struct {
-	CursorSecret    string         `yaml:"cursor_secret"`
-	MaxDateSpanDays int            `yaml:"max_date_span_days"`
-	MaxPageSize     int            `yaml:"max_page_size"`
-	FieldAllowlist  []string       `yaml:"field_allowlist"`
-	Tokens          []DatasetToken `yaml:"tokens"`
+	CursorSecret    string              `yaml:"cursor_secret"`
+	MaxDateSpanDays int                 `yaml:"max_date_span_days"`
+	MaxPageSize     int                 `yaml:"max_page_size"`
+	FieldAllowlist  []string            `yaml:"field_allowlist"`
+	FieldAllowlists map[string][]string `yaml:"field_allowlists"`
+	Tokens          []DatasetToken      `yaml:"tokens"`
 }
 
 type DatasetToken struct {

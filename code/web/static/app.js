@@ -1160,8 +1160,16 @@ function datasetProjectKey(projectId, tokenId) {
 
 function listingDailyFieldsPath(projectId, tokenId) {
   const path = '/api/datasources/datasets/listing-daily-v1/fields';
-  if (!projectId && !tokenId) return path;
+  if (!projectId && !tokenId) return listingDailyFieldConfigPath();
   return path + '?' + new URLSearchParams({ project_id: projectId, token_id: tokenId }).toString();
+}
+
+function datasetFieldConfigPath(datasetID) {
+  return '/api/datasources/datasets/' + encodeURIComponent(datasetID) + '/fields/config';
+}
+
+function listingDailyFieldConfigPath() {
+  return datasetFieldConfigPath('listing-daily-v1');
 }
 
 function normalizeDatasetProjects(data) {
@@ -1193,6 +1201,7 @@ function normalizeDatasetProjects(data) {
       project_id: projectId,
       token_id: tokenId,
       store_scopes: Array.isArray(item.store_scopes) ? item.store_scopes.filter((scope) => typeof scope === 'string' && scope.trim()) : [],
+      dataset_scopes: Array.isArray(item.dataset_scopes) ? item.dataset_scopes.filter((scope) => typeof scope === 'string' && scope.trim()) : [],
       key,
       label: typeof item.label === 'string' && item.label.trim() ? item.label.trim() : projectId + ' / ' + tokenId,
     };
@@ -1201,7 +1210,7 @@ function normalizeDatasetProjects(data) {
 }
 
 function normalizeListingDailyCatalog(data) {
-  if (!data || data.dataset_id !== 'listing-daily-v1' || typeof data.dataset_name !== 'string' || !data.dataset_name.trim() ||
+  if (!data || typeof data.dataset_id !== 'string' || !data.dataset_id.trim() || typeof data.dataset_name !== 'string' || !data.dataset_name.trim() ||
       !Array.isArray(data.fixed_fields) || !Array.isArray(data.available_fields)) {
     throw new Error('数据表配置响应格式错误');
   }
@@ -1211,24 +1220,27 @@ function normalizeListingDailyCatalog(data) {
   };
   const seen = new Set();
   const fixedFields = data.fixed_fields.map((name) => {
-    if (typeof name !== 'string' || !fixedLabels[name] || seen.has(name)) throw new Error('固定字段响应格式错误');
+    if (typeof name !== 'string' || !name.trim() || seen.has(name)) throw new Error('固定字段响应格式错误');
     seen.add(name);
-    return { name, label: fixedLabels[name] };
+    return { name, label: fixedLabels[name] || name };
   });
-  const fields = normalizeListingDailyFields({
-    dataset_id: data.dataset_id, project_id: '', token_id: '', available_fields: data.available_fields, fields: [],
-  }, '', '');
+  const catalogFields = data.catalog_fields === undefined ? data.available_fields : data.catalog_fields;
+  if (!Array.isArray(catalogFields)) throw new Error('数据表字段目录格式错误');
+  const configuredFields = data.configured_fields === undefined ? data.available_fields : data.configured_fields;
+  if (!Array.isArray(configuredFields)) throw new Error('数据表已选字段格式错误');
+  const fields = normalizeListingDailyFields({ dataset_id: data.dataset_id, project_id: '', token_id: '', available_fields: catalogFields, fields: configuredFields }, '', '');
   return {
     datasetID: data.dataset_id,
     datasetName: data.dataset_name.trim(),
     fixedFields,
     fieldGroups: fields.groups,
+    tableSelectedFields: fields.selectedFields,
     projects: normalizeDatasetProjects(data).projects,
   };
 }
 
 function normalizeListingDailyFields(data, projectId, tokenId) {
-  if (!data || data.dataset_id !== 'listing-daily-v1' || data.project_id !== projectId || data.token_id !== tokenId ||
+  if (!data || typeof data.dataset_id !== 'string' || !data.dataset_id || data.project_id !== projectId || data.token_id !== tokenId ||
       !Array.isArray(data.available_fields) || !Array.isArray(data.fields)) {
     throw new Error('数据集字段响应格式错误');
   }
@@ -1293,9 +1305,16 @@ window.dataSources = function () {
     refreshing: false,  // 刷新主表工作态（只重拉 /api/endpoints，不动整页）
     datasetTab: 'table',
     datasetID: 'listing-daily-v1',
+    datasetDefinitions: [],
+    datasetScopeSelection: { 'listing-daily-v1': true },
     datasetName: '',
     fixedFields: [],
     fieldGroups: [],
+    tableSelectedFields: [],
+    tableSavedFields: [],
+    tableFieldsSaving: false,
+    tableFieldsSaveError: '',
+    tableFieldsNeedRestart: false,
     selectedFields: [],
     savedFields: [],
     datasetProjects: [],
@@ -1328,14 +1347,35 @@ window.dataSources = function () {
     get fieldsDirty() {
       return JSON.stringify(this.selectedFields) !== JSON.stringify(this.savedFields);
     },
+    get tableFieldDirty() {
+      return JSON.stringify(this.tableSelectedFields) !== JSON.stringify(this.tableSavedFields);
+    },
     get catalogFieldCount() {
       return this.fieldGroups.reduce((count, group) => count + this.displayFields(group).length, 0);
+    },
+    get availableTableFieldGroups() {
+      return this.fieldGroups.map((group) => ({
+        ...group,
+        fields: this.displayFields(group).filter((field) => !this.isTableFieldSelected(field.name)),
+      })).filter((group) => group.fields.length > 0);
+    },
+    get availableTableFieldCount() {
+      return this.availableTableFieldGroups.reduce((count, group) => count + group.fields.length, 0);
+    },
+    get publishedTableFieldGroups() {
+      return this.fieldGroups.map((group) => ({
+        ...group,
+        fields: this.displayFields(group).filter((field) => this.isTableFieldSelected(field.name)),
+      })).filter((group) => group.fields.length > 0);
     },
     get selectedFieldCount() { return this.selectedFields.length; },
     get hasDatasetSelection() { return Boolean(this.selectedProjectKey && this.selectedProjectId && this.selectedTokenId); },
     get projectOptions() { return this.datasetProjects; },
     get datasetSelectedStoreCount() {
       return this.datasetStores.filter((store) => this.isDatasetStoreSelected(store)).length;
+    },
+    get selectedDatasetScopes() {
+      return this.datasetDefinitions.filter((definition) => this.datasetScopeSelection[definition.id]).map((definition) => definition.id);
     },
     get dailyPreviewPages() {
       return Math.max(1, Math.ceil(this.dailyPreviewTotal / this.dailyPreviewFilters.page_size));
@@ -1350,19 +1390,37 @@ window.dataSources = function () {
       this.fieldsLoading = true;
       this.fieldsError = '';
       try {
-        const data = await window.apiGet(listingDailyFieldsPath());
+        const definitions = await window.apiGet('/api/datasources/datasets/catalog');
+        this.datasetDefinitions = Array.isArray(definitions && definitions.datasets) ? definitions.datasets : [];
+        if (!this.datasetDefinitions.some((definition) => definition && definition.id === this.datasetID)) throw new Error('当前数据表不在系统目录中');
+        const data = await window.apiGet(datasetFieldConfigPath(this.datasetID));
         if (requestVersion !== this.fieldsRequestVersion) return;
+        if (!data || data.dataset_id !== this.datasetID) throw new Error('数据表配置响应格式错误');
         const catalog = normalizeListingDailyCatalog(data);
         this.datasetID = catalog.datasetID;
         this.datasetName = catalog.datasetName;
         this.fixedFields = catalog.fixedFields;
         this.fieldGroups = catalog.fieldGroups;
+        this.tableSelectedFields = [...catalog.tableSelectedFields];
+        this.tableSavedFields = [...catalog.tableSelectedFields];
+        this.tableFieldsSaveError = '';
         this.datasetProjects = catalog.projects;
       } catch (error) {
         if (requestVersion === this.fieldsRequestVersion) this.fieldsError = errorMessage(error, '未能读取数据表配置');
       } finally {
         if (requestVersion === this.fieldsRequestVersion) this.fieldsLoading = false;
       }
+    },
+    selectDatasetTable(datasetID) {
+      if (datasetID === this.datasetID) return;
+      this.datasetID = datasetID;
+      this.loadDatasetCatalog();
+    },
+    toggleDatasetScope(datasetID) {
+      const next = { ...this.datasetScopeSelection };
+      if (next[datasetID]) delete next[datasetID];
+      else next[datasetID] = true;
+      this.datasetScopeSelection = next;
     },
     async loadDatasetStores() {
       this.datasetStoresLoading = true;
@@ -1373,7 +1431,7 @@ window.dataSources = function () {
         const batches = await Promise.all(accounts.map(async (account) => {
           const data = await window.apiGet('/api/accounts/' + encodeURIComponent(account.id) + '/stores');
           const items = Array.isArray(data && data.items) ? data.items : [];
-          return items.map((store) => ({
+          return items.filter((store) => store.enabled === true).map((store) => ({
             account_id: account.id,
             account_name: account.name || account.id,
             sid: String(store.sid || '').trim(),
@@ -1442,25 +1500,31 @@ window.dataSources = function () {
         this.datasetCreateError = '请至少选择一个可读取店铺';
         return;
       }
+      if (this.selectedDatasetScopes.length === 0) {
+        this.datasetCreateError = '请至少选择一张可读取数据表';
+        return;
+      }
       const body = {
         project_id: this.datasetCreateForm.project_id,
+        dataset_scopes: this.selectedDatasetScopes,
         store_scopes: storeScopes,
       };
       this.datasetCreating = true;
       try {
-        this.datasetCreateResult = await window.apiPost('/api/datasources/datasets/listing-daily-v1/projects', body);
+        this.datasetCreateResult = await window.apiPost('/api/datasources/datasets/projects', body);
         this.datasetProjects.push({
           project_id: this.datasetCreateResult.project_id,
           token_id: this.datasetCreateResult.token_id,
+          dataset_scopes: [...body.dataset_scopes],
           store_scopes: [...body.store_scopes],
           key: datasetProjectKey(this.datasetCreateResult.project_id, this.datasetCreateResult.token_id),
           label: this.datasetCreateResult.project_id + ' / ' + this.datasetCreateResult.token_id,
         });
         this.datasetCreateForm = { project_id: '' };
         this.datasetStoreSelection = {};
-        window.toast('success', '项目 Token 已创建，请先复制明文 Token');
+        window.toast('success', '下游项目 Token 已创建，请先复制明文 Token');
       } catch (error) {
-        this.datasetCreateError = errorMessage(error, '创建项目 Token 失败');
+        this.datasetCreateError = errorMessage(error, '创建下游项目 Token 失败');
       } finally {
         this.datasetCreating = false;
       }
@@ -1485,6 +1549,55 @@ window.dataSources = function () {
         window.toast('error', errorMessage(error, '补全可选字段失败'));
       } finally {
         this.fieldsCompleting = false;
+      }
+    },
+    isTableFieldSelected(name) {
+      return this.tableSelectedFields.includes(name);
+    },
+    get publishedTableFields() {
+      return this.tableSelectedFields.map((name) => this.fieldMeta(name)).filter(Boolean);
+    },
+    fieldGroupSource(source) {
+      const sources = {
+        '销量': '来源：SC ls_sc_sales_report / ls_sc_sales_revenue / ls_sc_refunds；VC ls_vc_sales_report',
+        '库存': '来源：ls_fba_inventory / ls_vc_inventory',
+        'Performance': '来源：ls_sc_performance_daily',
+        'SP': '来源：ls_ad_sp_product',
+        'SD': '来源：ls_ad_sd_product',
+        'HSA': '来源：ls_ad_hsa_campaign',
+        'SB': '来源：暂未接入日维投影',
+      };
+      return sources[source] || '来源：未登记';
+    },
+    addTableField(name) {
+      if (!this.isTableFieldSelected(name) && this.fieldMeta(name)) {
+        this.tableSelectedFields = [...this.tableSelectedFields, name];
+      }
+    },
+    removeTableField(name) {
+      this.tableSelectedFields = this.tableSelectedFields.filter((field) => field !== name);
+    },
+    toggleTableField(name) {
+      if (!this.fieldMeta(name)) return;
+      this.tableSelectedFields = this.isTableFieldSelected(name)
+        ? this.tableSelectedFields.filter((field) => field !== name)
+        : [...this.tableSelectedFields, name];
+    },
+    async saveDatasetFieldAllowlist() {
+      if (this.tableFieldsSaving || !this.tableFieldDirty) return;
+      this.tableFieldsSaving = true;
+      this.tableFieldsSaveError = '';
+      const fields = [...this.tableSelectedFields];
+      try {
+        const result = await window.apiPut(datasetFieldConfigPath(this.datasetID), { fields });
+        const saved = result && Array.isArray(result.fields) ? result.fields : fields;
+        this.tableSelectedFields = [...saved];
+        this.tableSavedFields = [...saved];
+        this.tableFieldsNeedRestart = Boolean(result && result.need_restart);
+      } catch (error) {
+        this.tableFieldsSaveError = errorMessage(error, '保存数据表字段失败');
+      } finally {
+        this.tableFieldsSaving = false;
       }
     },
     async loadEndpoints() {
@@ -1654,6 +1767,7 @@ window.dataSources = function () {
       try {
         const data = await window.apiGet(listingDailyFieldsPath(projectId, tokenId));
         if (requestVersion !== this.fieldsRequestVersion || projectKey !== this.selectedProjectKey) return;
+        if (!data || data.dataset_id !== this.datasetID) throw new Error('数据集字段响应格式错误');
         const normalized = normalizeListingDailyFields(data, projectId, tokenId);
         this.applyDatasetFields(normalized);
       } catch (error) {
