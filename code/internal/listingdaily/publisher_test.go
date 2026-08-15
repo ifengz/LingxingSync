@@ -163,6 +163,12 @@ func TestMetricsUpsertSQLPreventsAPIAfterReportRegression(t *testing.T) {
 	}
 }
 
+func TestMetricsUpsertSQLDoesNotExplicitlyRefreshUpdatedAt(t *testing.T) {
+	if sql := buildMetricsUpsertSQL(); strings.Contains(sql, "updated_at = CURRENT_TIMESTAMP(6)") {
+		t.Fatalf("no-change upsert must preserve updated_at: %s", sql)
+	}
+}
+
 func TestPublishBatchDoesNotWriteWhenReportReconciliationFails(t *testing.T) {
 	store := &fakeStore{}
 	batch := Batch{ReportState: ReportFailed, Rows: []Metric{{Key: Key{Store: "store-1", Channel: "sc_fba", ASIN: "B01", SKU: "SKU-1", BusinessDate: time.Now().UTC()}, Scope: ScopeListing}}}

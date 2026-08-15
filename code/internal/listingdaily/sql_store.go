@@ -170,7 +170,6 @@ func buildMetricsUpsertSQL() string {
 		"is_verified = GREATEST(is_verified, VALUES(is_verified))",
 		"verified_fields = JSON_MERGE_PATCH(verified_fields, VALUES(verified_fields))",
 		"report_verified_at = IF(VALUES(is_verified), CURRENT_TIMESTAMP, report_verified_at)",
-		"updated_at = CURRENT_TIMESTAMP(6)",
 	)
 	return "INSERT INTO listing_daily_metrics (\n" + strings.Join(columns, ", ") + "\n) VALUES (\n" + strings.Join(values, ", ") + "\n) ON DUPLICATE KEY UPDATE\n" + strings.Join(updates, ",\n")
 }
