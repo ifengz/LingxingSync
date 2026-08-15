@@ -358,7 +358,7 @@ POST /api/v1/datasets/listing-daily-v1/changes
 ### 认证与 scope
 
 - 使用 `Authorization: Bearer <project-token>`；服务端只保存明文 token 的小写 SHA-256，不得复用领星 OpenAPI token、ERP `auth-token` 或 UI 的 `X-Sync-Secret`。
-- 每个 token 固定绑定 `project_id`，同一项目允许配置多个独立 `token_id`；token 必须同时具备 `listing-daily-v1` dataset scope、请求店铺的 store scope 和自己的字段清单。
+- 每个 token 固定绑定一个 `project_id`，每个项目当前只登记一个自动生成的 `token_id`；token 必须同时具备 `listing-daily-v1` dataset scope 和请求店铺的 store scope。业务字段由数据表统一定义，不按项目裁剪。
 - 请求超出 dataset、store 或字段 scope 返回 `403`/`400`，不能静默裁剪为部分结果。token 已撤销或过期返回 `401`。
 - 消费者只经 HTTPS 调用；不得直连 MySQL、提交远程 SQL 或从 7799 明文公网访问。
 
@@ -378,7 +378,7 @@ POST /api/v1/datasets/listing-daily-v1/changes
 ```
 
 - `store`、`date_from`、`date_to` 必填；日期格式固定为 `YYYY-MM-DD`，范围受 `dataset_api.max_date_span_days` 限制。
-- `fields` 可省略；省略时返回该 token 当前获准的全部字段。传入时每项仍必须属于该 token 的字段清单。
+- `fields` 可省略；省略时返回该数据表全部已登记业务字段。传入时每项必须属于该数据表的字段目录。
 - `page_size` 可省略，默认 100，且不得超过 `dataset_api.max_page_size`。
 - `cursor` 只用于继续读取同一次 snapshot；它绑定 token、店铺和日期范围，不能跨 scope 或改作 changes cursor。
 - 最后一页返回独立的 `changes_cursor`，消费者保存它，后续交给 `changes` 获取此次快照之后的变化。
@@ -443,23 +443,20 @@ POST /api/v1/datasets/listing-daily-v1/changes
 
 ## 数据集字段 allowlist 管理（已实现）
 
-管理员可在第五页创建 listing-daily-v1 的项目 Token：`POST /api/datasources/datasets/listing-daily-v1/projects`，请求只需 `project_id` 和非空 `store_scopes`；Token ID 自动等于项目 ID，字段自动取当前已验证的 `dataset_api.field_allowlist`。响应只返回一次随机明文 `token`，配置文件仅保存其 SHA-256 `token_hash`，并返回 `need_restart: true`；明文不进入日志或后续 GET。没有已验证字段时创建会明确失败。
+管理员可在“新增项目”切卡创建 `listing-daily-v1` 的读取凭证：`POST /api/datasources/datasets/listing-daily-v1/projects`，请求只需 `project_id` 和非空 `store_scopes`。系统独立生成稳定的 `token_id`，并自动给新项目绑定该数据表的全部已登记业务字段。响应只返回一次随机明文 `token`，配置文件仅保存其 SHA-256 `token_hash`，并返回 `need_restart: true`；明文不进入日志或后续 GET。没有已验证字段时创建会明确失败。
 
 独立 `/dataset-fields` 页面使用以下固定管理端点，仍受 `X-Sync-Secret` 中间件保护：
 
 ```text
 GET /api/datasources/datasets/listing-daily-v1/fields
-PUT /api/datasources/datasets/listing-daily-v1/fields
 ```
 
 字段管理属于现有管理面，继续受 `X-Sync-Secret` 中间件保护，不使用消费者 Bearer token：
 
-- 无查询参数的 `GET` 返回全局 `available_fields` 和可管理的 `projects[]`；每项只含 `project_id`、`token_id`、`fields`，不得返回 token 明文或 hash。
-- 带 `project_id`、`token_id` 的 `GET` 返回该项目/Token 的可选字段与当前已选字段。同项目只有一个 token 时可只传 `project_id`；存在多个 token 时必须同时传 `token_id`。
-- `PUT` 使用同一路径，并提交 `{ "project_id": "project-a", "token_id": "token-a", "fields": ["sales_units"] }`；字段不能为空、不能重复，且必须来自服务端登记的 `available_fields`。
-- 字段清单按 `project_id + token_id` 隔离；修改一个 token 不得改变同项目的其他 token。
+- 无查询参数的 `GET` 返回数据表 `dataset_id`、`dataset_name`、不可删除的 `fixed_fields`、全部 `available_fields`，以及项目/Token/店铺范围列表；没有任何项目时固定返回 `projects: []`，不能省略字段。
+- 数据表字段不随项目变化。项目只标识读取方、Token 与可读取店铺范围，不能修改表字段、表名、SQL、路径或 token hash。
 
-该设置只裁剪 `listing-daily-v1` 的指标响应字段，绝不能创建、修改、删除 MySQL 表或列，也不能接受表名、SQL 或动态 path。
+该设置只描述 `listing-daily-v1` 已映射的指标字段，绝不能创建、修改、删除 MySQL 表或列，也不能接受表名、SQL 或动态 path。
 
 ## 正式报表检验管理（已实现）
 
