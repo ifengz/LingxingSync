@@ -611,7 +611,9 @@ func (d *DBReportStore) SaveFBARecommendedRemoval(ctx context.Context, id int64,
 		"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\n" +
 		"ON DUPLICATE KEY UPDATE row_sha256=VALUES(row_sha256), `snapshot-date`=VALUES(`snapshot-date`), sku=VALUES(sku), fnsku=VALUES(fnsku), asin=VALUES(asin), `product-name`=VALUES(`product-name`), `condition`=VALUES(`condition`), `sellable-quantity`=VALUES(`sellable-quantity`), `sellable-271-365-days`=VALUES(`sellable-271-365-days`), `sellable-365+-days`=VALUES(`sellable-365+-days`), `sellable-removal-quantity`=VALUES(`sellable-removal-quantity`), `unsellable-quantity`=VALUES(`unsellable-quantity`), `unsellable-0-7-days`=VALUES(`unsellable-0-7-days`), `unsellable-8-60-days`=VALUES(`unsellable-8-60-days`), `unsellable-61-90-days`=VALUES(`unsellable-61-90-days`), `sellable-121-180-days`=VALUES(`sellable-121-180-days`), `sellable-181-270-days`=VALUES(`sellable-181-270-days`)"
 	values := make([][]string, len(rows))
-	for i, row := range rows { values[i] = row.Values }
+	for i, row := range rows {
+		values[i] = row.Values
+	}
 	return d.saveFixedReportRows(ctx, id, "FBA recommended removal", insert, values, downloadSHA, documentID)
 }
 
@@ -621,7 +623,9 @@ func (d *DBReportStore) SaveFBARemovalOrder(ctx context.Context, id int64, rows 
 		"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\n" +
 		"ON DUPLICATE KEY UPDATE row_sha256=VALUES(row_sha256), `request-date`=VALUES(`request-date`), `order-id`=VALUES(`order-id`), `order-type`=VALUES(`order-type`), `service-speed`=VALUES(`service-speed`), `order-status`=VALUES(`order-status`), `last-updated-date`=VALUES(`last-updated-date`), sku=VALUES(sku), fnsku=VALUES(fnsku), disposition=VALUES(disposition), `requested-quantity`=VALUES(`requested-quantity`), `cancelled-quantity`=VALUES(`cancelled-quantity`), `disposed-quantity`=VALUES(`disposed-quantity`), `shipped-quantity`=VALUES(`shipped-quantity`), `in-process-quantity`=VALUES(`in-process-quantity`), `removal-fee`=VALUES(`removal-fee`), currency=VALUES(currency)"
 	values := make([][]string, len(rows))
-	for i, row := range rows { values[i] = row.Values }
+	for i, row := range rows {
+		values[i] = row.Values
+	}
 	return d.saveFixedReportRows(ctx, id, "FBA removal order", insert, values, downloadSHA, documentID)
 }
 
@@ -631,15 +635,17 @@ func (d *DBReportStore) SaveFBARemovalShipment(ctx context.Context, id int64, ro
 		"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\n" +
 		"ON DUPLICATE KEY UPDATE row_sha256=VALUES(row_sha256), `request-date`=VALUES(`request-date`), `order-id`=VALUES(`order-id`), `shipment-date`=VALUES(`shipment-date`), sku=VALUES(sku), fnsku=VALUES(fnsku), disposition=VALUES(disposition), `shipped-quantity`=VALUES(`shipped-quantity`), carrier=VALUES(carrier), `tracking-number`=VALUES(`tracking-number`), `removal-order-type`=VALUES(`removal-order-type`)"
 	values := make([][]string, len(rows))
-	for i, row := range rows { values[i] = row.Values }
+	for i, row := range rows {
+		values[i] = row.Values
+	}
 	return d.saveFixedReportRows(ctx, id, "FBA removal shipment", insert, values, downloadSHA, documentID)
 }
 
 func (d *DBReportStore) SaveAllOrders(ctx context.Context, id int64, rows []reportexport.AllOrder, downloadSHA, documentID string) error {
 	const insert = "INSERT INTO ls_amazon_all_orders_by_order_date\n" +
-		"(account_id, seller_id, store_id, report_task_id, `row_number`, row_sha256, `amazon-order-id`, `merchant-order-id`, `purchase-date`, `last-updated-date`, `order-status`, `fulfillment-channel`, `sales-channel`, `order-channel`, `ship-service-level`, `product-name`, sku, asin, `item-status`, quantity, currency, `item-price`, `item-tax`, `shipping-price`, `shipping-tax`, `gift-wrap-price`, `gift-wrap-tax`, `item-promotion-discount`, `ship-promotion-discount`, `ship-city`, `ship-state`, `ship-postal-code`, `ship-country`, `promotion-ids`, `is-business-order`, `purchase-order-number`, `price-designation`)\n" +
-		"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\n" +
-		"ON DUPLICATE KEY UPDATE row_sha256=VALUES(row_sha256), `amazon-order-id`=VALUES(`amazon-order-id`), `merchant-order-id`=VALUES(`merchant-order-id`), `purchase-date`=VALUES(`purchase-date`), `last-updated-date`=VALUES(`last-updated-date`), `order-status`=VALUES(`order-status`), `fulfillment-channel`=VALUES(`fulfillment-channel`), `sales-channel`=VALUES(`sales-channel`), `order-channel`=VALUES(`order-channel`), `ship-service-level`=VALUES(`ship-service-level`), `product-name`=VALUES(`product-name`), sku=VALUES(sku), asin=VALUES(asin), `item-status`=VALUES(`item-status`), quantity=VALUES(quantity), currency=VALUES(currency), `item-price`=VALUES(`item-price`), `item-tax`=VALUES(`item-tax`), `shipping-price`=VALUES(`shipping-price`), `shipping-tax`=VALUES(`shipping-tax`), `gift-wrap-price`=VALUES(`gift-wrap-price`), `gift-wrap-tax`=VALUES(`gift-wrap-tax`), `item-promotion-discount`=VALUES(`item-promotion-discount`), `ship-promotion-discount`=VALUES(`ship-promotion-discount`), `ship-city`=VALUES(`ship-city`), `ship-state`=VALUES(`ship-state`), `ship-postal-code`=VALUES(`ship-postal-code`), `ship-country`=VALUES(`ship-country`), `promotion-ids`=VALUES(`promotion-ids`), `is-business-order`=VALUES(`is-business-order`), `purchase-order-number`=VALUES(`purchase-order-number`), `price-designation`=VALUES(`price-designation`)"
+		"(account_id, seller_id, store_id, report_task_id, `row_number`, row_sha256, `amazon-order-id`, `merchant-order-id`, `purchase-date`, `last-updated-date`, `order-status`, `order-item-id`, `fulfillment-channel`, `sales-channel`, `order-channel`, `ship-service-level`, `product-name`, sku, asin, `item-status`, quantity, currency, `item-price`, `item-tax`, `shipping-price`, `shipping-tax`, `gift-wrap-price`, `gift-wrap-tax`, `item-promotion-discount`, `ship-promotion-discount`, `ship-city`, `ship-state`, `ship-postal-code`, `ship-country`, `promotion-ids`, cpf, `is-business-order`, `purchase-order-number`, `price-designation`)\n" +
+		"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\n" +
+		"ON DUPLICATE KEY UPDATE row_sha256=VALUES(row_sha256), `amazon-order-id`=VALUES(`amazon-order-id`), `merchant-order-id`=VALUES(`merchant-order-id`), `purchase-date`=VALUES(`purchase-date`), `last-updated-date`=VALUES(`last-updated-date`), `order-status`=VALUES(`order-status`), `order-item-id`=VALUES(`order-item-id`), `fulfillment-channel`=VALUES(`fulfillment-channel`), `sales-channel`=VALUES(`sales-channel`), `order-channel`=VALUES(`order-channel`), `ship-service-level`=VALUES(`ship-service-level`), `product-name`=VALUES(`product-name`), sku=VALUES(sku), asin=VALUES(asin), `item-status`=VALUES(`item-status`), quantity=VALUES(quantity), currency=VALUES(currency), `item-price`=VALUES(`item-price`), `item-tax`=VALUES(`item-tax`), `shipping-price`=VALUES(`shipping-price`), `shipping-tax`=VALUES(`shipping-tax`), `gift-wrap-price`=VALUES(`gift-wrap-price`), `gift-wrap-tax`=VALUES(`gift-wrap-tax`), `item-promotion-discount`=VALUES(`item-promotion-discount`), `ship-promotion-discount`=VALUES(`ship-promotion-discount`), `ship-city`=VALUES(`ship-city`), `ship-state`=VALUES(`ship-state`), `ship-postal-code`=VALUES(`ship-postal-code`), `ship-country`=VALUES(`ship-country`), `promotion-ids`=VALUES(`promotion-ids`), cpf=VALUES(cpf), `is-business-order`=VALUES(`is-business-order`), `purchase-order-number`=VALUES(`purchase-order-number`), `price-designation`=VALUES(`price-designation`)"
 	values := make([][]string, len(rows))
 	for i, row := range rows {
 		values[i] = row.Values

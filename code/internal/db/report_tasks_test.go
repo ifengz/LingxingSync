@@ -32,6 +32,14 @@ func TestSaveFixedReportRowsRejectsPlaceholderMismatchBeforeDatabase(t *testing.
 	}
 }
 
+func TestSaveAllOrdersAcceptsCanonicalThirtyThreeColumnRow(t *testing.T) {
+	store := &DBReportStore{}
+	err := store.SaveAllOrders(context.Background(), 1, []reportexport.AllOrder{{Values: make([]string, 33)}}, "sha", "doc")
+	if err == nil || !strings.Contains(err.Error(), "nil database") {
+		t.Fatalf("error = %v, want placeholder validation to pass before nil database", err)
+	}
+}
+
 func TestMarkReportProgressRejectsUnknownStatusBeforeDatabase(t *testing.T) {
 	store := &DBReportStore{}
 	if err := store.MarkReportProgress(context.Background(), 1, "new_status", "", "", ""); err == nil || !strings.Contains(err.Error(), "invalid progress status") {

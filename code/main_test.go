@@ -133,9 +133,12 @@ func TestShipmentReplacementsIsRawOnlyWithoutDailyProjection(t *testing.T) {
 
 func TestAdditionalFBAReportsHaveIndependentRawSchemas(t *testing.T) {
 	tests := map[string]string{
-		reportexport.FBAStrandedInventoryReportType:    "ls_fba_stranded_inventory",
-		reportexport.FBAEstimatedFeesReportType:        "ls_fba_estimated_fees",
-		reportexport.FBAInboundNoncomplianceReportType: "ls_fba_inbound_noncompliance",
+		reportexport.FBAStrandedInventoryReportType:         "ls_fba_stranded_inventory",
+		reportexport.FBAEstimatedFeesReportType:             "ls_fba_estimated_fees",
+		reportexport.FBAInboundNoncomplianceReportType:      "ls_fba_inbound_noncompliance",
+		reportexport.FBAStorageFeeChargesReportType:         "ls_fba_storage_fee_charges",
+		reportexport.FBAOverageFeeChargesReportType:         "ls_fba_overage_fee_charges",
+		reportexport.FBALongtermStorageFeeChargesReportType: "ls_fba_longterm_storage_fee_charges",
 	}
 	for reportType, table := range tests {
 		requirements := formalReportSchemaRequirements(reportType)

@@ -13,13 +13,21 @@ var allOrdersHeaderWithItemIDAndCPF = []string{
 type AllOrder struct{ Values []string }
 
 func ParseAllOrders(downloaded []byte, compressionAlgorithm, contentType string) ([]AllOrder, error) {
-	records, _, err := readExactTSVVariants(downloaded, compressionAlgorithm, contentType, "Amazon all orders", [][]string{allOrdersHeader, allOrdersHeaderWithItemIDAndCPF})
+	records, header, err := readExactTSVVariants(downloaded, compressionAlgorithm, contentType, "Amazon all orders", [][]string{allOrdersHeader, allOrdersHeaderWithItemIDAndCPF})
 	if err != nil {
 		return nil, err
 	}
+	canonicalIndex := make(map[string]int, len(allOrdersHeaderWithItemIDAndCPF))
+	for i, name := range allOrdersHeaderWithItemIDAndCPF {
+		canonicalIndex[name] = i
+	}
 	rows := make([]AllOrder, 0, len(records))
 	for _, record := range records {
-		rows = append(rows, AllOrder{Values: record})
+		values := make([]string, len(allOrdersHeaderWithItemIDAndCPF))
+		for i, name := range header {
+			values[canonicalIndex[name]] = record[i]
+		}
+		rows = append(rows, AllOrder{Values: values})
 	}
 	return rows, nil
 }
