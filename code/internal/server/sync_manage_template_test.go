@@ -68,3 +68,13 @@ func TestSyncTemplateExposesScheduleBatchAndReportRowActions(t *testing.T) {
 		}
 	}
 }
+
+func TestSyncTemplateLabelsAmazonFulfilledShipments(t *testing.T) {
+	raw, err := os.ReadFile("../../web/templates/sync_manage.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "Amazon FBA 履约发货明细") {
+		t.Fatal("同步页缺少 Amazon FBA 履约发货明细标签")
+	}
+}

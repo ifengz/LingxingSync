@@ -131,6 +131,20 @@ func TestShipmentReplacementsIsRawOnlyWithoutDailyProjection(t *testing.T) {
 	}
 }
 
+func TestAmazonFulfilledShipmentsHasIndependentRawOnlySchema(t *testing.T) {
+	requirements := formalReportSchemaRequirements(reportexport.FulfilledShipmentsReportType)
+	columns := requirements["ls_amazon_fulfilled_shipments"]
+	if len(columns) != 54 || !slices.Contains(columns, "buyer-email") || !slices.Contains(columns, "bill-address-1") {
+		t.Fatalf("fulfilled shipments schema = %#v", columns)
+	}
+	if reportRequiresDailyProjection(reportexport.FulfilledShipmentsReportType) {
+		t.Fatal("Amazon fulfilled shipments with PII must remain raw-only")
+	}
+	if _, coupled := requirements["listing_daily_metrics"]; coupled {
+		t.Fatal("Amazon fulfilled shipments raw schema must not require listing_daily_metrics")
+	}
+}
+
 func TestAdditionalFBAReportsHaveIndependentRawSchemas(t *testing.T) {
 	tests := map[string]string{
 		reportexport.FBAStrandedInventoryReportType:         "ls_fba_stranded_inventory",

@@ -85,7 +85,7 @@ func TestReportExportConfigGetReturnsDisabledDefault(t *testing.T) {
 
 	s.apiGetReportExportConfig(rec, httptest.NewRequest(http.MethodGet, "/api/report-exports/config", nil))
 
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"type":"fba_customer_returns"`) || !strings.Contains(rec.Body.String(), `"fba_customer_shipment_sales"`) || !strings.Contains(rec.Body.String(), `"enabled":false`) {
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"type":"fba_customer_returns"`) || !strings.Contains(rec.Body.String(), `"fba_customer_shipment_sales"`) || !strings.Contains(rec.Body.String(), `"amazon_fulfilled_shipments"`) || !strings.Contains(rec.Body.String(), `"enabled":false`) {
 		t.Fatalf("default config status=%d body=%s", rec.Code, rec.Body.String())
 	}
 	if len(store.Current().ReportExports) != 0 {
@@ -147,6 +147,18 @@ func TestReportExportConfigPutAcceptsCustomerShipmentSales(t *testing.T) {
 	s.apiPutReportExportConfig(rec, httptest.NewRequest(http.MethodPut, "/api/report-exports/config", strings.NewReader(body)))
 	if rec.Code != http.StatusOK || len(store.Current().ReportExports) != 1 || store.Current().ReportExports[0].Type != config.ReportExportCustomerShipmentSales {
 		t.Fatalf("shipment sales PUT status=%d reports=%+v body=%s", rec.Code, store.Current().ReportExports, rec.Body.String())
+	}
+}
+
+func TestReportExportConfigPutAcceptsAmazonFulfilledShipments(t *testing.T) {
+	cfg := validReportTestConfig()
+	store := config.NewStore(t.TempDir()+"/config.yaml", cfg)
+	s := &Server{cfg: cfg, store: store}
+	body := `{"report_exports":[{"type":"amazon_fulfilled_shipments","enabled":true,"account":"sc_us","seller_id":"SELLER-1","store_id":"STORE-1","region":"na","marketplace_ids":["ATVPDKIKX0DER"],"cron":"0 4 * * *","window_days":31}]}`
+	rec := httptest.NewRecorder()
+	s.apiPutReportExportConfig(rec, httptest.NewRequest(http.MethodPut, "/api/report-exports/config", strings.NewReader(body)))
+	if rec.Code != http.StatusOK || len(store.Current().ReportExports) != 1 || store.Current().ReportExports[0].Type != config.ReportExportFulfilledShipments {
+		t.Fatalf("fulfilled shipments PUT status=%d reports=%+v body=%s", rec.Code, store.Current().ReportExports, rec.Body.String())
 	}
 }
 

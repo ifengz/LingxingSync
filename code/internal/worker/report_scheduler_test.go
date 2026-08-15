@@ -65,6 +65,20 @@ func TestReportJobCarriesConfiguredReportType(t *testing.T) {
 	}
 }
 
+func TestAmazonFulfilledShipmentsJobCarriesOfficialReportType(t *testing.T) {
+	report := config.ReportExport{
+		Type: config.ReportExportFulfilledShipments, Account: "sc_us", SellerID: "SELLER-1", StoreID: "STORE-1",
+		Region: "na", MarketplaceIDs: []string{"ATVPDKIKX0DER"}, WindowDays: 31,
+	}
+	request, err := customerReturnsRequest(report, time.Date(2026, 8, 15, 10, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if request.ReportType != reportexport.FulfilledShipmentsReportType {
+		t.Fatalf("report type = %q, want %q", request.ReportType, reportexport.FulfilledShipmentsReportType)
+	}
+}
+
 func TestDisabledCustomerReturnsScheduleDoesNotRequireRunner(t *testing.T) {
 	s := NewScheduler(&config.Config{ReportExports: []config.ReportExport{{
 		Type: config.ReportExportCustomerReturns, Enabled: false,

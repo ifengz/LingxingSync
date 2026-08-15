@@ -92,6 +92,7 @@ type fakeStore struct {
 	savedRecommended      int
 	savedRemovalOrders    int
 	savedRemovalShipments int
+	savedFulfilled        int
 	errors                int
 	markErrorErr          error
 }
@@ -219,6 +220,10 @@ func (s *fakeStore) SaveFBARemovalShipment(_ context.Context, _ int64, rows []FB
 	s.savedRemovalShipments += len(rows)
 	return nil
 }
+func (s *fakeStore) SaveFulfilledShipments(_ context.Context, _ int64, rows []FulfilledShipment, _ string, _ string) error {
+	s.savedFulfilled += len(rows)
+	return nil
+}
 func (s *fakeStore) MarkReportError(_ context.Context, _ int64, _ string, _ error) error {
 	s.errors++
 	return s.markErrorErr
@@ -280,6 +285,7 @@ func TestRunnerPersistsEachInventoryReportThroughItsTypedStore(t *testing.T) {
 		FBARecommendedRemovalReportType:        []byte(strings.Join(fbaRecommendedRemovalHeader, "\t") + "\n" + strings.Repeat("x\t", len(fbaRecommendedRemovalHeader)-1) + "x\n"),
 		FBARemovalOrderReportType:              []byte(strings.Join(fbaRemovalOrderHeader, "\t") + "\n" + strings.Repeat("x\t", len(fbaRemovalOrderHeader)-1) + "x\n"),
 		FBARemovalShipmentReportType:           []byte(strings.Join(fbaRemovalShipmentHeader, "\t") + "\n" + strings.Repeat("x\t", len(fbaRemovalShipmentHeader)-1) + "x\n"),
+		FulfilledShipmentsReportType:           []byte(officialFulfilledShipmentsHeader + "\n" + strings.Repeat("x\t", 47) + "x\n"),
 	}
 	for reportType, body := range fixtures {
 		t.Run(reportType, func(t *testing.T) {
@@ -353,6 +359,10 @@ func TestRunnerPersistsEachInventoryReportThroughItsTypedStore(t *testing.T) {
 			case FBARemovalShipmentReportType:
 				if store.savedRemovalShipments != 1 {
 					t.Fatalf("removal shipment saves=%d", store.savedRemovalShipments)
+				}
+			case FulfilledShipmentsReportType:
+				if store.savedFulfilled != 1 {
+					t.Fatalf("fulfilled shipment saves=%d", store.savedFulfilled)
 				}
 			}
 		})

@@ -72,6 +72,7 @@ const (
 	ReportExportFBARemovalOrder              = "fba_removal_order"
 	ReportExportFBARemovalShipment           = "fba_removal_shipment"
 	ReportExportAllOrders                    = "amazon_all_orders_by_order_date"
+	ReportExportFulfilledShipments           = "amazon_fulfilled_shipments"
 )
 
 // ReportExport is a fixed formal-report schedule. Disabled entries are kept
@@ -446,7 +447,7 @@ func (c *Config) validate() error {
 	}
 	reportScopes := make(map[string]struct{}, len(c.ReportExports))
 	for i, report := range c.ReportExports {
-		if report.Type != ReportExportCustomerReturns && report.Type != ReportExportCustomerShipmentSales && report.Type != ReportExportFBAInventory && report.Type != ReportExportFBAAllInventory && report.Type != ReportExportReservedInventory && report.Type != ReportExportAFNInventory && report.Type != ReportExportAFNInventoryByCountry && report.Type != ReportExportFBAStorageFeeCharges && report.Type != ReportExportFBAOverageFeeCharges && report.Type != ReportExportFBALongtermStorageFeeCharges && report.Type != ReportExportCustomerShipmentReplacements && report.Type != ReportExportFBAReimbursements && report.Type != ReportExportFBAStrandedInventory && report.Type != ReportExportFBAEstimatedFees && report.Type != ReportExportFBAInboundNoncompliance && report.Type != ReportExportFBARecommendedRemoval && report.Type != ReportExportFBARemovalOrder && report.Type != ReportExportFBARemovalShipment && report.Type != ReportExportAllOrders {
+		if report.Type != ReportExportCustomerReturns && report.Type != ReportExportCustomerShipmentSales && report.Type != ReportExportFBAInventory && report.Type != ReportExportFBAAllInventory && report.Type != ReportExportReservedInventory && report.Type != ReportExportAFNInventory && report.Type != ReportExportAFNInventoryByCountry && report.Type != ReportExportFBAStorageFeeCharges && report.Type != ReportExportFBAOverageFeeCharges && report.Type != ReportExportFBALongtermStorageFeeCharges && report.Type != ReportExportCustomerShipmentReplacements && report.Type != ReportExportFBAReimbursements && report.Type != ReportExportFBAStrandedInventory && report.Type != ReportExportFBAEstimatedFees && report.Type != ReportExportFBAInboundNoncompliance && report.Type != ReportExportFBARecommendedRemoval && report.Type != ReportExportFBARemovalOrder && report.Type != ReportExportFBARemovalShipment && report.Type != ReportExportAllOrders && report.Type != ReportExportFulfilledShipments {
 			return fmt.Errorf("report_exports[%d].type=%q 非法", i, report.Type)
 		}
 		scope := report.Type + "\x00" + NormID(report.Account) + "\x00" + report.StoreID

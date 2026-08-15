@@ -204,6 +204,16 @@ report_exports:
     marketplace_ids: []
     cron: ""
     window_days: 0
+  # Contains buyer, recipient, shipping, and billing PII. Raw evidence only.
+  - type: "amazon_fulfilled_shipments"
+    enabled: false
+    account: ""
+    seller_id: ""
+    store_id: ""
+    region: ""
+    marketplace_ids: []
+    cron: ""
+    window_days: 0
 
 # ===== 对外日维数据集 =====
 # 可选：未配置时 /datasources 显示空态，snapshot/changes 不对外开放。

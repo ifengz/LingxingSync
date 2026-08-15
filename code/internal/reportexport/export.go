@@ -168,6 +168,10 @@ type AllOrdersStore interface {
 	SaveAllOrders(context.Context, int64, []AllOrder, string, string) error
 }
 
+type FulfilledShipmentsStore interface {
+	SaveFulfilledShipments(context.Context, int64, []FulfilledShipment, string, string) error
+}
+
 type Result struct {
 	AuditID          int64
 	ReportTaskID     string
@@ -527,6 +531,19 @@ func (r *Runner) saveDownloadedReport(ctx context.Context, auditID int64, reques
 			return 0, err
 		}
 		return len(rows), nil
+	case FulfilledShipmentsReportType:
+		store, ok := r.Store.(FulfilledShipmentsStore)
+		if !ok {
+			return 0, fmt.Errorf("report export: store does not support %s", FulfilledShipmentsReportType)
+		}
+		rows, err := ParseFulfilledShipments(body, compressionAlgorithm, contentType)
+		if err != nil {
+			return 0, err
+		}
+		if err := store.SaveFulfilledShipments(ctx, auditID, rows, hash, documentID); err != nil {
+			return 0, err
+		}
+		return len(rows), nil
 	default:
 		return 0, fmt.Errorf("report export: unsupported report type %q", normalizedReportType(request))
 	}
@@ -745,7 +762,7 @@ func normalizedReportType(request Request) string {
 
 func validateRequest(request Request) error {
 	switch normalizedReportType(request) {
-	case CustomerReturnsReportType, CustomerShipmentSalesReportType, FBAInventoryReportType, FBAAllInventoryReportType, ReservedInventoryReportType, AFNInventoryReportType, AFNInventoryByCountryReportType, FBAStorageFeeChargesReportType, FBAOverageFeeChargesReportType, FBALongtermStorageFeeChargesReportType, CustomerShipmentReplacementsReportType, FBAReimbursementsReportType, FBAStrandedInventoryReportType, FBAEstimatedFeesReportType, FBAInboundNoncomplianceReportType, FBARecommendedRemovalReportType, FBARemovalOrderReportType, FBARemovalShipmentReportType, AllOrdersReportType:
+	case CustomerReturnsReportType, CustomerShipmentSalesReportType, FBAInventoryReportType, FBAAllInventoryReportType, ReservedInventoryReportType, AFNInventoryReportType, AFNInventoryByCountryReportType, FBAStorageFeeChargesReportType, FBAOverageFeeChargesReportType, FBALongtermStorageFeeChargesReportType, CustomerShipmentReplacementsReportType, FBAReimbursementsReportType, FBAStrandedInventoryReportType, FBAEstimatedFeesReportType, FBAInboundNoncomplianceReportType, FBARecommendedRemovalReportType, FBARemovalOrderReportType, FBARemovalShipmentReportType, AllOrdersReportType, FulfilledShipmentsReportType:
 	default:
 		return fmt.Errorf("report export: unsupported report type %q", normalizedReportType(request))
 	}

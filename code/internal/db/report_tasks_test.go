@@ -40,6 +40,14 @@ func TestSaveAllOrdersAcceptsCanonicalThirtyThreeColumnRow(t *testing.T) {
 	}
 }
 
+func TestSaveFulfilledShipmentsAcceptsOfficialFortyEightColumnRow(t *testing.T) {
+	store := &DBReportStore{}
+	err := store.SaveFulfilledShipments(context.Background(), 1, []reportexport.FulfilledShipment{{Values: make([]string, 48)}}, "sha", "doc")
+	if err == nil || !strings.Contains(err.Error(), "nil database") {
+		t.Fatalf("error = %v, want placeholder validation to pass before nil database", err)
+	}
+}
+
 func TestMarkReportProgressRejectsUnknownStatusBeforeDatabase(t *testing.T) {
 	store := &DBReportStore{}
 	if err := store.MarkReportProgress(context.Background(), 1, "new_status", "", "", ""); err == nil || !strings.Contains(err.Error(), "invalid progress status") {
