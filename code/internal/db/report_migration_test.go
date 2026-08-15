@@ -126,6 +126,9 @@ func TestFeeReportMigrationsAreIndependent(t *testing.T) {
 		{"../../migrations/045_add_fba_storage_fee_charges_report.sql", "LS_FBA_STORAGE_FEE_CHARGES", "ESTIMATED_MONTHLY_STORAGE_FEE"},
 		{"../../migrations/046_add_fba_overage_fee_charges_report.sql", "LS_FBA_OVERAGE_FEE_CHARGES", "CHARGED_FEE_AMOUNT"},
 		{"../../migrations/047_add_fba_longterm_storage_fee_charges_report.sql", "LS_FBA_LONGTERM_STORAGE_FEE_CHARGES", "AMOUNT-CHARGED"},
+		{"../../migrations/048_add_fba_stranded_inventory_report.sql", "LS_FBA_STRANDED_INVENTORY", "DATE-STRANDED"},
+		{"../../migrations/049_add_fba_estimated_fees_report.sql", "LS_FBA_ESTIMATED_FEES", "ESTIMATED-FEE-TOTAL"},
+		{"../../migrations/050_add_fba_inbound_noncompliance_report.sql", "LS_FBA_INBOUND_NONCOMPLIANCE", "ISSUE-REPORTED-DATE"},
 	} {
 		t.Run(test.table, func(t *testing.T) {
 			raw, err := os.ReadFile(test.file)

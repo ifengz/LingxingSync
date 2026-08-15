@@ -310,6 +310,15 @@ func formalReportSchemaRequirements(reportType string) map[string][]string {
 	fbaLongtermStorageFeeChargesSchemaColumns := []string{
 		"snapshot-date", "sku", "fnsku", "asin", "product-name", "condition", "per-unit-volume", "currency", "volume-unit", "country", "qty-charged", "amount-charged", "surcharge-age-tier", "rate-surcharge",
 	}
+	fbaStrandedInventorySchemaColumns := []string{
+		"primary-action", "date-stranded", "Date-to-take-auto-removal", "status-primary", "status-secondary", "error-message", "stranded-reason", "asin", "sku", "fnsku", "product-name", "condition", "fulfilled-by", "fulfillable-qty", "your-price", "unfulfillable-qty", "reserved-quantity", "inbound-shipped-qty",
+	}
+	fbaEstimatedFeesSchemaColumns := []string{
+		"sku", "fnsku", "asin", "product-name", "product-group", "brand", "fulfilled-by", "has-local-inventory", "your-price", "sales-price", "longest-side", "median-side", "shortest-side", "length-and-girth", "unit-of-dimension", "item-package-weight", "unit-of-weight", "product-size-weight-band", "currency", "estimated-fee-total", "estimated-referral-fee-per-unit", "estimated-variable-closing-fee", "expected-domestic-fulfilment-fee-per-unit", "expected-efn-fulfilment-fee-per-unit-uk", "expected-efn-fulfilment-fee-per-unit-de", "expected-efn-fulfilment-fee-per-unit-fr", "expected-efn-fulfilment-fee-per-unit-it", "expected-efn-fulfilment-fee-per-unit-es", "expected-efn-fulfilment-fee-per-unit-se",
+	}
+	fbaInboundNoncomplianceSchemaColumns := []string{
+		"issue-reported-date", "shipment-creation-date", "fba-shipment-id", "fba-carton-id", "fulfillment-center-id", "sku", "fnsku", "asin", "product-name", "problem-type", "problem-quantity", "expected-quantity", "received-quantity", "performance-measurement-unit", "coaching-level", "fee-type", "currency", "fee-total", "problem-level", "alert-status",
+	}
 	requirements := listingdaily.CustomerReturnsSchemaRequirements()
 	requirements["ls_report_export_tasks"] = []string{
 		"id", "account_id", "seller_id", "store_id", "report_type", "region", "marketplace_ids",
@@ -383,6 +392,18 @@ func formalReportSchemaRequirements(reportType string) map[string][]string {
 		requirements["ls_fba_reimbursements"] = append([]string{
 			"account_id", "seller_id", "store_id", "report_task_id", "row_number", "row_sha256",
 		}, []string{"approval-date", "reimbursement-id", "case-id", "amazon-order-id", "reason", "sku", "fnsku", "asin", "product-name", "condition", "currency-unit", "amount-per-unit", "amount-total", "quantity-reimbursed-cash", "quantity-reimbursed-inventory", "quantity-reimbursed-total", "original-reimbursement-id", "original-reimbursement-type"}...)
+	case reportexport.FBAStrandedInventoryReportType:
+		requirements["ls_fba_stranded_inventory"] = append([]string{
+			"account_id", "seller_id", "store_id", "report_task_id", "row_number", "row_sha256",
+		}, fbaStrandedInventorySchemaColumns...)
+	case reportexport.FBAEstimatedFeesReportType:
+		requirements["ls_fba_estimated_fees"] = append([]string{
+			"account_id", "seller_id", "store_id", "report_task_id", "row_number", "row_sha256",
+		}, fbaEstimatedFeesSchemaColumns...)
+	case reportexport.FBAInboundNoncomplianceReportType:
+		requirements["ls_fba_inbound_noncompliance"] = append([]string{
+			"account_id", "seller_id", "store_id", "report_task_id", "row_number", "row_sha256",
+		}, fbaInboundNoncomplianceSchemaColumns...)
 	default:
 		return nil
 	}
@@ -429,7 +450,7 @@ func normalizedReportType(request reportexport.Request) string {
 }
 
 func reportRequiresDailyProjection(reportType string) bool {
-	return reportType != reportexport.CustomerShipmentReplacementsReportType && reportType != reportexport.FBAReimbursementsReportType && reportType != reportexport.AFNInventoryByCountryReportType
+	return reportType != reportexport.CustomerShipmentReplacementsReportType && reportType != reportexport.FBAReimbursementsReportType && reportType != reportexport.AFNInventoryByCountryReportType && reportType != reportexport.FBAStrandedInventoryReportType && reportType != reportexport.FBAEstimatedFeesReportType && reportType != reportexport.FBAInboundNoncomplianceReportType
 }
 
 func projectDailyBatch(ctx context.Context, dailyReader listingdaily.SourceReader, dailyStore listingdaily.Store, accountID string, targets []worker.DailyProjectionTarget, today time.Time) error {

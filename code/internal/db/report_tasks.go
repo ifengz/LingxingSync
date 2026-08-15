@@ -532,6 +532,12 @@ func (d *DBReportStore) SaveFBALongtermStorageFeeCharges(ctx context.Context, id
 }
 
 func (d *DBReportStore) saveFixedReportRows(ctx context.Context, id int64, label, insert string, rows [][]string, downloadSHA, documentID string) error {
+	if len(rows) > 0 {
+		want := 6 + len(rows[0])
+		if got := strings.Count(insert, "?"); got != want {
+			return fmt.Errorf("db report: %s insert placeholders=%d, want %d", label, got, want)
+		}
+	}
 	if err := d.ensure(); err != nil {
 		return err
 	}
@@ -561,6 +567,42 @@ func (d *DBReportStore) saveFixedReportRows(ctx context.Context, id int64, label
 		return fmt.Errorf("db report: commit %s transaction: %w", label, err)
 	}
 	return nil
+}
+
+func (d *DBReportStore) SaveFBAStrandedInventory(ctx context.Context, id int64, rows []reportexport.FBAStrandedInventory, downloadSHA, documentID string) error {
+	const insert = "INSERT INTO ls_fba_stranded_inventory\n" +
+		"(account_id, seller_id, store_id, report_task_id, `row_number`, row_sha256, `primary-action`, `date-stranded`, `Date-to-take-auto-removal`, `status-primary`, `status-secondary`, `error-message`, `stranded-reason`, asin, sku, fnsku, `product-name`, `condition`, `fulfilled-by`, `fulfillable-qty`, `your-price`, `unfulfillable-qty`, `reserved-quantity`, `inbound-shipped-qty`)\n" +
+		"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\n" +
+		"ON DUPLICATE KEY UPDATE row_sha256=VALUES(row_sha256), `primary-action`=VALUES(`primary-action`), `date-stranded`=VALUES(`date-stranded`), `Date-to-take-auto-removal`=VALUES(`Date-to-take-auto-removal`), `status-primary`=VALUES(`status-primary`), `status-secondary`=VALUES(`status-secondary`), `error-message`=VALUES(`error-message`), `stranded-reason`=VALUES(`stranded-reason`), asin=VALUES(asin), sku=VALUES(sku), fnsku=VALUES(fnsku), `product-name`=VALUES(`product-name`), `condition`=VALUES(`condition`), `fulfilled-by`=VALUES(`fulfilled-by`), `fulfillable-qty`=VALUES(`fulfillable-qty`), `your-price`=VALUES(`your-price`), `unfulfillable-qty`=VALUES(`unfulfillable-qty`), `reserved-quantity`=VALUES(`reserved-quantity`), `inbound-shipped-qty`=VALUES(`inbound-shipped-qty`)"
+	values := make([][]string, len(rows))
+	for i, row := range rows {
+		values[i] = row.Values
+	}
+	return d.saveFixedReportRows(ctx, id, "FBA stranded inventory", insert, values, downloadSHA, documentID)
+}
+
+func (d *DBReportStore) SaveFBAEstimatedFees(ctx context.Context, id int64, rows []reportexport.FBAEstimatedFees, downloadSHA, documentID string) error {
+	const insert = "INSERT INTO ls_fba_estimated_fees\n" +
+		"(account_id, seller_id, store_id, report_task_id, `row_number`, row_sha256, sku, fnsku, asin, `product-name`, `product-group`, brand, `fulfilled-by`, `has-local-inventory`, `your-price`, `sales-price`, `longest-side`, `median-side`, `shortest-side`, `length-and-girth`, `unit-of-dimension`, `item-package-weight`, `unit-of-weight`, `product-size-weight-band`, currency, `estimated-fee-total`, `estimated-referral-fee-per-unit`, `estimated-variable-closing-fee`, `expected-domestic-fulfilment-fee-per-unit`, `expected-efn-fulfilment-fee-per-unit-uk`, `expected-efn-fulfilment-fee-per-unit-de`, `expected-efn-fulfilment-fee-per-unit-fr`, `expected-efn-fulfilment-fee-per-unit-it`, `expected-efn-fulfilment-fee-per-unit-es`, `expected-efn-fulfilment-fee-per-unit-se`)\n" +
+		"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\n" +
+		"ON DUPLICATE KEY UPDATE row_sha256=VALUES(row_sha256), sku=VALUES(sku), fnsku=VALUES(fnsku), asin=VALUES(asin), `product-name`=VALUES(`product-name`), `product-group`=VALUES(`product-group`), brand=VALUES(brand), `fulfilled-by`=VALUES(`fulfilled-by`), `has-local-inventory`=VALUES(`has-local-inventory`), `your-price`=VALUES(`your-price`), `sales-price`=VALUES(`sales-price`), `longest-side`=VALUES(`longest-side`), `median-side`=VALUES(`median-side`), `shortest-side`=VALUES(`shortest-side`), `length-and-girth`=VALUES(`length-and-girth`), `unit-of-dimension`=VALUES(`unit-of-dimension`), `item-package-weight`=VALUES(`item-package-weight`), `unit-of-weight`=VALUES(`unit-of-weight`), `product-size-weight-band`=VALUES(`product-size-weight-band`), currency=VALUES(currency), `estimated-fee-total`=VALUES(`estimated-fee-total`), `estimated-referral-fee-per-unit`=VALUES(`estimated-referral-fee-per-unit`), `estimated-variable-closing-fee`=VALUES(`estimated-variable-closing-fee`), `expected-domestic-fulfilment-fee-per-unit`=VALUES(`expected-domestic-fulfilment-fee-per-unit`), `expected-efn-fulfilment-fee-per-unit-uk`=VALUES(`expected-efn-fulfilment-fee-per-unit-uk`), `expected-efn-fulfilment-fee-per-unit-de`=VALUES(`expected-efn-fulfilment-fee-per-unit-de`), `expected-efn-fulfilment-fee-per-unit-fr`=VALUES(`expected-efn-fulfilment-fee-per-unit-fr`), `expected-efn-fulfilment-fee-per-unit-it`=VALUES(`expected-efn-fulfilment-fee-per-unit-it`), `expected-efn-fulfilment-fee-per-unit-es`=VALUES(`expected-efn-fulfilment-fee-per-unit-es`), `expected-efn-fulfilment-fee-per-unit-se`=VALUES(`expected-efn-fulfilment-fee-per-unit-se`)"
+	values := make([][]string, len(rows))
+	for i, row := range rows {
+		values[i] = row.Values
+	}
+	return d.saveFixedReportRows(ctx, id, "FBA estimated fees", insert, values, downloadSHA, documentID)
+}
+
+func (d *DBReportStore) SaveFBAInboundNoncompliance(ctx context.Context, id int64, rows []reportexport.FBAInboundNoncompliance, downloadSHA, documentID string) error {
+	const insert = "INSERT INTO ls_fba_inbound_noncompliance\n" +
+		"(account_id, seller_id, store_id, report_task_id, `row_number`, row_sha256, `issue-reported-date`, `shipment-creation-date`, `fba-shipment-id`, `fba-carton-id`, `fulfillment-center-id`, sku, fnsku, asin, `product-name`, `problem-type`, `problem-quantity`, `expected-quantity`, `received-quantity`, `performance-measurement-unit`, `coaching-level`, `fee-type`, currency, `fee-total`, `problem-level`, `alert-status`)\n" +
+		"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\n" +
+		"ON DUPLICATE KEY UPDATE row_sha256=VALUES(row_sha256), `issue-reported-date`=VALUES(`issue-reported-date`), `shipment-creation-date`=VALUES(`shipment-creation-date`), `fba-shipment-id`=VALUES(`fba-shipment-id`), `fba-carton-id`=VALUES(`fba-carton-id`), `fulfillment-center-id`=VALUES(`fulfillment-center-id`), sku=VALUES(sku), fnsku=VALUES(fnsku), asin=VALUES(asin), `product-name`=VALUES(`product-name`), `problem-type`=VALUES(`problem-type`), `problem-quantity`=VALUES(`problem-quantity`), `expected-quantity`=VALUES(`expected-quantity`), `received-quantity`=VALUES(`received-quantity`), `performance-measurement-unit`=VALUES(`performance-measurement-unit`), `coaching-level`=VALUES(`coaching-level`), `fee-type`=VALUES(`fee-type`), currency=VALUES(currency), `fee-total`=VALUES(`fee-total`), `problem-level`=VALUES(`problem-level`), `alert-status`=VALUES(`alert-status`)"
+	values := make([][]string, len(rows))
+	for i, row := range rows {
+		values[i] = row.Values
+	}
+	return d.saveFixedReportRows(ctx, id, "FBA inbound noncompliance", insert, values, downloadSHA, documentID)
 }
 
 func (d *DBReportStore) SaveCustomerShipmentReplacements(ctx context.Context, id int64, rows []reportexport.CustomerShipmentReplacement, downloadSHA string, documentID string) error {

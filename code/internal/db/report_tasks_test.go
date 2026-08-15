@@ -24,6 +24,14 @@ func TestIsDuplicateKeyErrorOnlyAcceptsMySQL1062(t *testing.T) {
 	}
 }
 
+func TestSaveFixedReportRowsRejectsPlaceholderMismatchBeforeDatabase(t *testing.T) {
+	store := &DBReportStore{}
+	err := store.saveFixedReportRows(context.Background(), 1, "test report", "INSERT INTO t VALUES (?, ?)", [][]string{{"a"}}, "sha", "doc")
+	if err == nil || !strings.Contains(err.Error(), "placeholders=2, want 7") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
 func TestMarkReportProgressRejectsUnknownStatusBeforeDatabase(t *testing.T) {
 	store := &DBReportStore{}
 	if err := store.MarkReportProgress(context.Background(), 1, "new_status", "", "", ""); err == nil || !strings.Contains(err.Error(), "invalid progress status") {

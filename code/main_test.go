@@ -131,6 +131,23 @@ func TestShipmentReplacementsIsRawOnlyWithoutDailyProjection(t *testing.T) {
 	}
 }
 
+func TestAdditionalFBAReportsHaveIndependentRawSchemas(t *testing.T) {
+	tests := map[string]string{
+		reportexport.FBAStrandedInventoryReportType:    "ls_fba_stranded_inventory",
+		reportexport.FBAEstimatedFeesReportType:        "ls_fba_estimated_fees",
+		reportexport.FBAInboundNoncomplianceReportType: "ls_fba_inbound_noncompliance",
+	}
+	for reportType, table := range tests {
+		requirements := formalReportSchemaRequirements(reportType)
+		if len(requirements[table]) <= 6 {
+			t.Fatalf("%s raw schema = %#v", reportType, requirements)
+		}
+		if reportRequiresDailyProjection(reportType) {
+			t.Fatalf("%s must remain raw-only without a matching daily metric", reportType)
+		}
+	}
+}
+
 func TestValidateFormalReportSchemaRejectsUnsupportedType(t *testing.T) {
 	err := validateFormalReportSchema("GET_UNSUPPORTED_REPORT", func(string) ([]string, error) {
 		t.Fatal("unsupported report type must fail before schema reads")

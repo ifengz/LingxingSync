@@ -64,6 +64,9 @@ const (
 	ReportExportFBALongtermStorageFeeCharges = "fba_longterm_storage_fee_charges"
 	ReportExportCustomerShipmentReplacements = "fba_customer_shipment_replacements"
 	ReportExportFBAReimbursements            = "fba_reimbursements"
+	ReportExportFBAStrandedInventory         = "fba_stranded_inventory"
+	ReportExportFBAEstimatedFees             = "fba_estimated_fees"
+	ReportExportFBAInboundNoncompliance      = "fba_inbound_noncompliance"
 )
 
 // ReportExport is a fixed formal-report schedule. Disabled entries are kept
@@ -438,7 +441,7 @@ func (c *Config) validate() error {
 	}
 	reportScopes := make(map[string]struct{}, len(c.ReportExports))
 	for i, report := range c.ReportExports {
-		if report.Type != ReportExportCustomerReturns && report.Type != ReportExportCustomerShipmentSales && report.Type != ReportExportFBAInventory && report.Type != ReportExportFBAAllInventory && report.Type != ReportExportReservedInventory && report.Type != ReportExportAFNInventory && report.Type != ReportExportAFNInventoryByCountry && report.Type != ReportExportFBAStorageFeeCharges && report.Type != ReportExportFBAOverageFeeCharges && report.Type != ReportExportFBALongtermStorageFeeCharges && report.Type != ReportExportCustomerShipmentReplacements && report.Type != ReportExportFBAReimbursements {
+		if report.Type != ReportExportCustomerReturns && report.Type != ReportExportCustomerShipmentSales && report.Type != ReportExportFBAInventory && report.Type != ReportExportFBAAllInventory && report.Type != ReportExportReservedInventory && report.Type != ReportExportAFNInventory && report.Type != ReportExportAFNInventoryByCountry && report.Type != ReportExportFBAStorageFeeCharges && report.Type != ReportExportFBAOverageFeeCharges && report.Type != ReportExportFBALongtermStorageFeeCharges && report.Type != ReportExportCustomerShipmentReplacements && report.Type != ReportExportFBAReimbursements && report.Type != ReportExportFBAStrandedInventory && report.Type != ReportExportFBAEstimatedFees && report.Type != ReportExportFBAInboundNoncompliance {
 			return fmt.Errorf("report_exports[%d].type=%q 非法", i, report.Type)
 		}
 		scope := report.Type + "\x00" + NormID(report.Account) + "\x00" + report.StoreID

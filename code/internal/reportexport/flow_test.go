@@ -86,6 +86,9 @@ type fakeStore struct {
 	savedLongtermFees   int
 	savedReplacements   int
 	savedReimbursements int
+	savedStranded       int
+	savedEstimatedFees  int
+	savedNoncompliance  int
 	errors              int
 	markErrorErr        error
 }
@@ -164,6 +167,18 @@ func (s *fakeStore) SaveFBAReimbursements(_ context.Context, _ int64, rows []FBA
 	s.savedReimbursements += len(rows)
 	return nil
 }
+func (s *fakeStore) SaveFBAStrandedInventory(_ context.Context, _ int64, rows []FBAStrandedInventory, _ string, _ string) error {
+	s.savedStranded += len(rows)
+	return nil
+}
+func (s *fakeStore) SaveFBAEstimatedFees(_ context.Context, _ int64, rows []FBAEstimatedFees, _ string, _ string) error {
+	s.savedEstimatedFees += len(rows)
+	return nil
+}
+func (s *fakeStore) SaveFBAInboundNoncompliance(_ context.Context, _ int64, rows []FBAInboundNoncompliance, _ string, _ string) error {
+	s.savedNoncompliance += len(rows)
+	return nil
+}
 func (s *fakeStore) MarkReportError(_ context.Context, _ int64, _ string, _ error) error {
 	s.errors++
 	return s.markErrorErr
@@ -219,6 +234,9 @@ func TestRunnerPersistsEachInventoryReportThroughItsTypedStore(t *testing.T) {
 		FBALongtermStorageFeeChargesReportType: []byte(strings.Join(fbaLongtermStorageFeeChargesHeader, "\t") + "\nx\t" + strings.Repeat("x\t", len(fbaLongtermStorageFeeChargesHeader)-2) + "x\n"),
 		CustomerShipmentReplacementsReportType: []byte("shipment-date\tsku\tasin\tfulfillment-center-id\toriginal-fulfillment-center-id\tquantity\treplacement-reason-code\treplacement-amazon-order-id\toriginal-amazon-order-id\n2026-08-11\tSKU-1\tASIN-1\tFC-1\tFC-2\t2\tDAMAGED\tORDER-2\tORDER-1\n"),
 		FBAReimbursementsReportType:            []byte("approval-date\treimbursement-id\tcase-id\tamazon-order-id\treason\tsku\tfnsku\tasin\tproduct-name\tcondition\tcurrency-unit\tamount-per-unit\tamount-total\tquantity-reimbursed-cash\tquantity-reimbursed-inventory\tquantity-reimbursed-total\toriginal-reimbursement-id\toriginal-reimbursement-type\n2026-08-11\tR-1\tC-1\tO-1\tDAMAGED\tSKU-1\tFNSKU-1\tASIN-1\tWidget\tNew\tUSD\t2.00\t4.00\t1\t1\t2\tR-0\tINVENTORY\n"),
+		FBAStrandedInventoryReportType:         []byte(strings.Join(fbaStrandedInventoryHeader, "\t") + "\n" + strings.Repeat("x\t", len(fbaStrandedInventoryHeader)-1) + "x\n"),
+		FBAEstimatedFeesReportType:             []byte(strings.Join(fbaEstimatedFeesHeader, "\t") + "\n" + strings.Repeat("x\t", len(fbaEstimatedFeesHeader)-1) + "x\n"),
+		FBAInboundNoncomplianceReportType:      []byte(strings.Join(fbaInboundNoncomplianceHeader, "\t") + "\n" + strings.Repeat("x\t", len(fbaInboundNoncomplianceHeader)-1) + "x\n"),
 	}
 	for reportType, body := range fixtures {
 		t.Run(reportType, func(t *testing.T) {
@@ -268,6 +286,18 @@ func TestRunnerPersistsEachInventoryReportThroughItsTypedStore(t *testing.T) {
 			case FBAReimbursementsReportType:
 				if store.savedReimbursements != 1 {
 					t.Fatalf("reimbursement saves=%d", store.savedReimbursements)
+				}
+			case FBAStrandedInventoryReportType:
+				if store.savedStranded != 1 {
+					t.Fatalf("stranded saves=%d", store.savedStranded)
+				}
+			case FBAEstimatedFeesReportType:
+				if store.savedEstimatedFees != 1 {
+					t.Fatalf("estimated fee saves=%d", store.savedEstimatedFees)
+				}
+			case FBAInboundNoncomplianceReportType:
+				if store.savedNoncompliance != 1 {
+					t.Fatalf("noncompliance saves=%d", store.savedNoncompliance)
 				}
 			}
 		})

@@ -139,6 +139,18 @@ type FBAReimbursementsStore interface {
 	SaveFBAReimbursements(context.Context, int64, []FBAReimbursement, string, string) error
 }
 
+type FBAStrandedInventoryStore interface {
+	SaveFBAStrandedInventory(context.Context, int64, []FBAStrandedInventory, string, string) error
+}
+
+type FBAEstimatedFeesStore interface {
+	SaveFBAEstimatedFees(context.Context, int64, []FBAEstimatedFees, string, string) error
+}
+
+type FBAInboundNoncomplianceStore interface {
+	SaveFBAInboundNoncompliance(context.Context, int64, []FBAInboundNoncompliance, string, string) error
+}
+
 type Result struct {
 	AuditID          int64
 	ReportTaskID     string
@@ -404,6 +416,45 @@ func (r *Runner) saveDownloadedReport(ctx context.Context, auditID int64, reques
 			return 0, err
 		}
 		return len(rows), nil
+	case FBAStrandedInventoryReportType:
+		store, ok := r.Store.(FBAStrandedInventoryStore)
+		if !ok {
+			return 0, fmt.Errorf("report export: store does not support %s", FBAStrandedInventoryReportType)
+		}
+		rows, err := ParseFBAStrandedInventory(body, compressionAlgorithm, contentType)
+		if err != nil {
+			return 0, err
+		}
+		if err := store.SaveFBAStrandedInventory(ctx, auditID, rows, hash, documentID); err != nil {
+			return 0, err
+		}
+		return len(rows), nil
+	case FBAEstimatedFeesReportType:
+		store, ok := r.Store.(FBAEstimatedFeesStore)
+		if !ok {
+			return 0, fmt.Errorf("report export: store does not support %s", FBAEstimatedFeesReportType)
+		}
+		rows, err := ParseFBAEstimatedFees(body, compressionAlgorithm, contentType)
+		if err != nil {
+			return 0, err
+		}
+		if err := store.SaveFBAEstimatedFees(ctx, auditID, rows, hash, documentID); err != nil {
+			return 0, err
+		}
+		return len(rows), nil
+	case FBAInboundNoncomplianceReportType:
+		store, ok := r.Store.(FBAInboundNoncomplianceStore)
+		if !ok {
+			return 0, fmt.Errorf("report export: store does not support %s", FBAInboundNoncomplianceReportType)
+		}
+		rows, err := ParseFBAInboundNoncompliance(body, compressionAlgorithm, contentType)
+		if err != nil {
+			return 0, err
+		}
+		if err := store.SaveFBAInboundNoncompliance(ctx, auditID, rows, hash, documentID); err != nil {
+			return 0, err
+		}
+		return len(rows), nil
 	default:
 		return 0, fmt.Errorf("report export: unsupported report type %q", normalizedReportType(request))
 	}
@@ -618,7 +669,7 @@ func normalizedReportType(request Request) string {
 
 func validateRequest(request Request) error {
 	switch normalizedReportType(request) {
-	case CustomerReturnsReportType, CustomerShipmentSalesReportType, FBAInventoryReportType, FBAAllInventoryReportType, ReservedInventoryReportType, AFNInventoryReportType, AFNInventoryByCountryReportType, FBAStorageFeeChargesReportType, FBAOverageFeeChargesReportType, FBALongtermStorageFeeChargesReportType, CustomerShipmentReplacementsReportType, FBAReimbursementsReportType:
+	case CustomerReturnsReportType, CustomerShipmentSalesReportType, FBAInventoryReportType, FBAAllInventoryReportType, ReservedInventoryReportType, AFNInventoryReportType, AFNInventoryByCountryReportType, FBAStorageFeeChargesReportType, FBAOverageFeeChargesReportType, FBALongtermStorageFeeChargesReportType, CustomerShipmentReplacementsReportType, FBAReimbursementsReportType, FBAStrandedInventoryReportType, FBAEstimatedFeesReportType, FBAInboundNoncomplianceReportType:
 	default:
 		return fmt.Errorf("report export: unsupported report type %q", normalizedReportType(request))
 	}
