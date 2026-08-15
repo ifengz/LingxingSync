@@ -214,6 +214,30 @@ func defaultReportExportDTO() reportExportConfigDTO {
 	return reportExportConfigDTO{Type: config.ReportExportCustomerReturns, Region: "na", Cron: "0 4 * * *", WindowDays: 3, MarketplaceIDs: []string{}}
 }
 
+func availableReportExportTypes() []string {
+	return []string{config.ReportExportCustomerReturns, config.ReportExportCustomerShipmentSales}
+}
+
+func supportedReportExportType(value string) bool {
+	switch value {
+	case config.ReportExportCustomerReturns, config.ReportExportCustomerShipmentSales:
+		return true
+	default:
+		return false
+	}
+}
+
+func reportExportAPIType(value string) string {
+	switch value {
+	case config.ReportExportCustomerReturns:
+		return reportexport.CustomerReturnsReportType
+	case config.ReportExportCustomerShipmentSales:
+		return reportexport.CustomerShipmentSalesReportType
+	default:
+		return ""
+	}
+}
+
 func reportExportToDTO(report config.ReportExport) reportExportConfigDTO {
 	return reportExportConfigDTO{Type: report.Type, Enabled: report.Enabled, Account: report.Account, SellerID: report.SellerID, StoreID: report.StoreID, Region: report.Region, MarketplaceIDs: append([]string(nil), report.MarketplaceIDs...), Cron: report.Cron, WindowDays: report.WindowDays}
 }
@@ -228,14 +252,14 @@ func (s *Server) apiGetReportExportConfig(w http.ResponseWriter, _ *http.Request
 		cfg = s.store.Current()
 	}
 	if cfg == nil || len(cfg.ReportExports) == 0 {
-		okJSON(w, map[string]any{"report_exports": []reportExportConfigDTO{}, "available_types": []string{config.ReportExportCustomerReturns}, "default": defaultReportExportDTO()})
+		okJSON(w, map[string]any{"report_exports": []reportExportConfigDTO{}, "available_types": availableReportExportTypes(), "default": defaultReportExportDTO()})
 		return
 	}
 	result := make([]reportExportConfigDTO, 0, len(cfg.ReportExports))
 	for _, report := range cfg.ReportExports {
 		result = append(result, reportExportToDTO(report))
 	}
-	okJSON(w, map[string]any{"report_exports": result, "available_types": []string{config.ReportExportCustomerReturns}, "default": defaultReportExportDTO()})
+	okJSON(w, map[string]any{"report_exports": result, "available_types": availableReportExportTypes(), "default": defaultReportExportDTO()})
 }
 
 func (s *Server) apiPutReportExportConfig(w http.ResponseWriter, r *http.Request) {
@@ -256,8 +280,8 @@ func (s *Server) apiPutReportExportConfig(w http.ResponseWriter, r *http.Request
 	snap := s.store.Snapshot()
 	snap.ReportExports = make([]config.ReportExport, 0, len(input.ReportExports))
 	for _, report := range input.ReportExports {
-		if report.Type != config.ReportExportCustomerReturns {
-			errJSON(w, http.StatusBadRequest, "当前只支持 fba_customer_returns")
+		if !supportedReportExportType(report.Type) {
+			errJSON(w, http.StatusBadRequest, "不支持的正式报表类型")
 			return
 		}
 		snap.ReportExports = append(snap.ReportExports, reportExportFromDTO(report))
@@ -290,7 +314,7 @@ type reportExportStatusOut struct {
 }
 
 type reportStatusReader interface {
-	Latest(context.Context, string, string) (reportExportStatusOut, error)
+	Latest(context.Context, string, string, string) (reportExportStatusOut, error)
 }
 
 type sqlReportStatusReader struct{ db *sqlx.DB }
@@ -306,7 +330,7 @@ COALESCE(SUM(JSON_LENGTH(field_diffs)), 0) AS value_mismatch,
 MAX(error_message) AS reconciliation_error
 FROM listing_daily_reconciliations WHERE report_audit_id = ?`
 
-func (r sqlReportStatusReader) Latest(ctx context.Context, accountID, storeID string) (reportExportStatusOut, error) {
+func (r sqlReportStatusReader) Latest(ctx context.Context, accountID, storeID, reportType string) (reportExportStatusOut, error) {
 	if r.db == nil {
 		return reportExportStatusOut{}, fmt.Errorf("正式报表状态数据库未配置")
 	}
@@ -320,7 +344,11 @@ func (r sqlReportStatusReader) Latest(ctx context.Context, accountID, storeID st
 		UpdatedAt    time.Time      `db:"updated_at"`
 	}
 	noTask := false
-	if err := r.db.GetContext(ctx, &row, latestReportTaskSQL, reportexport.CustomerReturnsReportType, accountID, storeID); err != nil {
+	apiReportType := reportExportAPIType(reportType)
+	if apiReportType == "" {
+		return reportExportStatusOut{}, fmt.Errorf("不支持的正式报表类型 %q", reportType)
+	}
+	if err := r.db.GetContext(ctx, &row, latestReportTaskSQL, apiReportType, accountID, storeID); err != nil {
 		noTask = err == sql.ErrNoRows
 		if !noTask {
 			return reportExportStatusOut{}, fmt.Errorf("查询正式报表任务: %w", err)
@@ -378,11 +406,19 @@ func (s *Server) apiReportExportStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	accountID := strings.TrimSpace(r.URL.Query().Get("account"))
 	storeID := strings.TrimSpace(r.URL.Query().Get("store_id"))
+	reportType := strings.TrimSpace(r.URL.Query().Get("type"))
+	if reportType == "" {
+		reportType = config.ReportExportCustomerReturns
+	}
+	if !supportedReportExportType(reportType) {
+		errJSON(w, http.StatusBadRequest, "不支持的正式报表类型")
+		return
+	}
 	if accountID == "" || storeID == "" {
 		errJSON(w, http.StatusBadRequest, "account 和 store_id 必填")
 		return
 	}
-	status, err := s.reportStatus.Latest(r.Context(), accountID, storeID)
+	status, err := s.reportStatus.Latest(r.Context(), accountID, storeID, reportType)
 	if err != nil {
 		errJSON(w, http.StatusInternalServerError, err.Error())
 		return
@@ -391,16 +427,16 @@ func (s *Server) apiReportExportStatus(w http.ResponseWriter, r *http.Request) {
 	if s.store != nil {
 		cfg = s.store.Current()
 	}
-	status.Configured = reportScopeConfigured(cfg, accountID, storeID)
+	status.Configured = reportScopeConfigured(cfg, accountID, storeID, reportType)
 	okJSON(w, status)
 }
 
-func reportScopeConfigured(cfg *config.Config, accountID, storeID string) bool {
+func reportScopeConfigured(cfg *config.Config, accountID, storeID, reportType string) bool {
 	if cfg == nil {
 		return false
 	}
 	for _, report := range cfg.ReportExports {
-		if report.Type == config.ReportExportCustomerReturns && config.NormID(report.Account) == config.NormID(accountID) && report.StoreID == storeID {
+		if report.Type == reportType && config.NormID(report.Account) == config.NormID(accountID) && report.StoreID == storeID {
 			return true
 		}
 	}

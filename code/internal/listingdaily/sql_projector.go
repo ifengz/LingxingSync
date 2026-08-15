@@ -30,6 +30,7 @@ type SQLProjection struct {
 type ReportEvidence struct {
 	AuditID      int64
 	ReportTaskID string
+	ReportType   string
 }
 
 type ReconciliationStatus string
@@ -64,6 +65,16 @@ const reportReturnsSQL = "SELECT raw.asin, raw.sku, CAST(SUM(CAST(raw.quantity A
 	"  AND LEFT(raw.`return-date`, 10) = ?\n" +
 	"GROUP BY raw.asin, raw.sku"
 
+const reportShipmentSalesSQL = "SELECT raw.asin, raw.sku, CAST(SUM(CAST(raw.quantity AS SIGNED)) AS CHAR) AS quantity\n" +
+	"FROM ls_fba_fulfillment_customer_shipment_sales raw\n" +
+	"JOIN ls_report_export_tasks task ON task.report_task_id = raw.report_task_id\n" +
+	"WHERE task.id = ? AND task.report_task_id = ? AND raw.account_id = ? AND raw.store_id = ?\n" +
+	"  AND task.account_id = raw.account_id AND task.store_id = raw.store_id\n" +
+	"  AND task.status = 'SUCCESS'\n" +
+	"  AND LEFT(task.date_from, 10) <= ? AND LEFT(task.date_to, 10) >= ?\n" +
+	"  AND LEFT(raw.`shipment-date`, 10) = ?\n" +
+	"GROUP BY raw.asin, raw.sku"
+
 const vcSalesSQL = "SELECT asin, shippedUnits, shippedRevenueAmount, customerReturns FROM ls_vc_sales_report WHERE account_id = ? AND sid = ? AND `date` = ?"
 
 // SQLSourceReader reads only the already-retained raw evidence tables. The
@@ -77,6 +88,10 @@ type SourceReader interface {
 
 type ReportSourceReader interface {
 	ReadReportReturns(context.Context, string, string, string, time.Time, ReportEvidence) ([]RawRecord, error)
+}
+
+type ReportSalesSourceReader interface {
+	ReadReportSales(context.Context, string, string, string, time.Time, ReportEvidence) ([]RawRecord, error)
 }
 
 func (r SQLSourceReader) Read(ctx context.Context, accountID, storeID, channel string, businessDate time.Time) (SQLProjection, error) {
@@ -154,23 +169,38 @@ func BuildFromSQL(ctx context.Context, reader SourceReader, accountID, storeID, 
 		if len(evidence) != 1 || evidence[0].AuditID <= 0 || strings.TrimSpace(evidence[0].ReportTaskID) == "" {
 			return projection, nil, fmt.Errorf("listing daily: reconciled report requires exact audit and task evidence")
 		}
-		reportReader, ok := reader.(ReportSourceReader)
-		if !ok {
-			return projection, nil, fmt.Errorf("listing daily: reconciled report requires report raw reader")
+		reportType := evidence[0].ReportType
+		field := "returns_qty"
+		if reportType == "GET_FBA_FULFILLMENT_CUSTOMER_SHIPMENT_SALES_DATA" {
+			field = "sales_units"
+			reportReader, ok := reader.(ReportSalesSourceReader)
+			if !ok {
+				return projection, nil, fmt.Errorf("listing daily: shipment sales report requires report raw reader")
+			}
+			reportRaw, err = reportReader.ReadReportSales(ctx, accountID, storeID, channel, businessDate, evidence[0])
+		} else {
+			reportReader, ok := reader.(ReportSourceReader)
+			if !ok {
+				return projection, nil, fmt.Errorf("listing daily: reconciled report requires report raw reader")
+			}
+			reportRaw, err = reportReader.ReadReportReturns(ctx, accountID, storeID, channel, businessDate, evidence[0])
 		}
-		reportRaw, err = reportReader.ReadReportReturns(ctx, accountID, storeID, channel, businessDate, evidence[0])
 		if err != nil {
 			return projection, nil, err
 		}
-		apiMetrics := metricsWithField(metricsFromRaw(projection.Records), "returns_qty")
-		reportMetrics := metricsWithField(metricsFromRaw(reportRaw), "returns_qty")
-		reconciliation, reconcileErr := ReconcileFields(apiMetrics, reportMetrics, []string{"returns_qty"})
+		apiMetrics := metricsWithField(metricsFromRaw(projection.Records), field)
+		reportMetrics := metricsWithField(metricsFromRaw(reportRaw), field)
+		reconciliation, reconcileErr := ReconcileFields(apiMetrics, reportMetrics, []string{field})
 		if reconcileErr != nil {
 			return projection, nil, reconcileErr
 		}
 		projection.Reconciliation = &reconciliation
 		if len(apiMetrics) > 0 && len(reportMetrics) == 0 {
-			return projection, nil, fmt.Errorf("listing daily: report reconciliation failed: report has no returns rows while API has %d", len(apiMetrics))
+			label := "returns"
+			if field == "sales_units" {
+				label = "sales"
+			}
+			return projection, nil, fmt.Errorf("listing daily: report reconciliation failed: report has no %s rows while API has %d", label, len(apiMetrics))
 		}
 	}
 	if reportState != ReportReconciled && len(evidence) != 0 {
@@ -196,6 +226,8 @@ func metricsWithField(rows []Metric, field string) []Metric {
 		}
 		values := Values{}
 		switch field {
+		case "sales_units":
+			values.SalesUnits = row.Values.SalesUnits
 		case "returns_qty":
 			values.ReturnsQty = row.Values.ReturnsQty
 		default:
@@ -208,6 +240,8 @@ func metricsWithField(rows []Metric, field string) []Metric {
 
 func hasMetricField(values Values, field string) bool {
 	switch field {
+	case "sales_units":
+		return values.SalesUnits != nil
 	case "returns_qty":
 		return values.ReturnsQty != nil
 	default:
@@ -679,6 +713,36 @@ func (r SQLSourceReader) ReadReportReturns(ctx context.Context, accountID, store
 			return nil, fmt.Errorf("listing daily: parse formal customer returns quantity asin=%s: %w", row.ASIN, err)
 		}
 		records = append(records, RawRecord{Source: SourceReport, Input: Input{Key: Key{Store: storeID, Channel: channel, ASIN: row.ASIN, SKU: row.SKU, BusinessDate: date}, Scope: ScopeListing, Values: Values{ReturnsQty: &quantity}}})
+	}
+	return records, nil
+}
+
+func (r SQLSourceReader) ReadReportSales(ctx context.Context, accountID, storeID, channel string, date time.Time, evidence ReportEvidence) ([]RawRecord, error) {
+	if r.DB == nil {
+		return nil, fmt.Errorf("listing daily: nil source database")
+	}
+	if evidence.AuditID <= 0 || strings.TrimSpace(evidence.ReportTaskID) == "" {
+		return nil, fmt.Errorf("listing daily: formal shipment sales requires exact audit and task evidence")
+	}
+	var rows []struct {
+		ASIN     string         `db:"asin"`
+		SKU      string         `db:"sku"`
+		Quantity sql.NullString `db:"quantity"`
+	}
+	dateText := date.Format("2006-01-02")
+	if err := r.DB.SelectContext(ctx, &rows, reportShipmentSalesSQL, evidence.AuditID, evidence.ReportTaskID, accountID, storeID, dateText, dateText, dateText); err != nil {
+		return nil, fmt.Errorf("listing daily: read formal customer shipment sales: %w", err)
+	}
+	records := make([]RawRecord, 0, len(rows))
+	for _, row := range rows {
+		if strings.TrimSpace(row.ASIN) == "" || strings.TrimSpace(row.SKU) == "" {
+			return nil, fmt.Errorf("listing daily: formal customer shipment sales missing ASIN/SKU for date %s", dateText)
+		}
+		quantity, err := integer(row.Quantity)
+		if err != nil {
+			return nil, fmt.Errorf("listing daily: parse formal customer shipment sales quantity asin=%s: %w", row.ASIN, err)
+		}
+		records = append(records, RawRecord{Source: SourceReport, Input: Input{Key: Key{Store: storeID, Channel: channel, ASIN: row.ASIN, SKU: row.SKU, BusinessDate: date}, Scope: ScopeListing, Values: Values{SalesUnits: &quantity}}})
 	}
 	return records, nil
 }

@@ -308,12 +308,13 @@ void (async () => {
       if (url === '/api/catalog') return { templates: [], accounts: [] };
       if (url === '/api/tasks?page=1&page_size=50') return { items: [] };
       if (url === '/api/report-exports/config') return {
+        available_types: ['fba_customer_returns', 'fba_customer_shipment_sales'],
         report_exports: [{
           type: 'fba_customer_returns', enabled: true, account: 'sc_us', seller_id: 'SELLER-1',
           store_id: 'STORE-1', region: 'na', marketplace_ids: ['ATVPDKIKX0DER'], cron: '0 4 * * *', window_days: 3,
         }],
       };
-      if (url === '/api/report-exports/status?account=sc_us&store_id=STORE-1') return {
+      if (url === '/api/report-exports/status?type=fba_customer_returns&account=sc_us&store_id=STORE-1') return {
         configured: true,
         latest_task: { status: 'success', rows: 18, finished_at: '2026-08-13T04:00:00Z' },
         differences: { database_missing: 1, report_missing: 2, value_mismatch: 3 },
@@ -323,6 +324,8 @@ void (async () => {
     const report = sandbox.window.syncManage();
     await report.load();
     assert.equal(report.reportExportConfigs.length, 1);
+    assert.deepEqual(report.reportAvailableTypes, ['fba_customer_returns', 'fba_customer_shipment_sales']);
+    assert.equal(report.reportTypeLabel('fba_customer_shipment_sales'), 'FBA 发货销售');
     assert.equal(report.reportStatusText(report.reportExportConfigs[0]), '已完成');
     assert.equal(report.reportDifferenceFor(report.reportExportConfigs[0], 'database_missing'), 1);
   }
@@ -353,13 +356,23 @@ void (async () => {
       ['1002', 'SELLER-2', 'MKT-2', '0 5 * * *', 7],
     ]);
 
+    report.reportBatch.type = 'fba_customer_shipment_sales';
+    report.reportBatch.store_sids = ['1001'];
+    await report.saveReportExportBatch();
+    assert.equal(put.body.report_exports.find(row => row.store_id === '1001').type, 'fba_customer_shipment_sales');
+    report.reportBatch.type = 'fba_customer_returns';
+
     report.reportStatuses[report.reportScopeKey(report.reportExportConfigs[0])] = {
       latest_task: { status: 'success' }, differences: { database_missing: 2 },
     };
     assert.equal(report.reportStatusText(report.reportExportConfigs[0]), '已完成');
     assert.equal(report.reportDifferenceFor(report.reportExportConfigs[0], 'database_missing'), 2);
 
-    report.reportExportConfigs = put.body.report_exports;
+    report.reportExportConfigs = [
+      { type: 'fba_customer_returns', account: 'sc_us', store_id: 'OLD' },
+      { type: 'fba_customer_returns', account: 'sc_us', store_id: '1001' },
+      { type: 'fba_customer_returns', account: 'sc_us', store_id: '1002' },
+    ];
     sandbox.window.syncConfirm = async () => true;
     await report.deleteReportExport(report.reportExportConfigs[1]);
     assert.deepEqual(put.body.report_exports.map(row => row.store_id), ['OLD', '1002']);

@@ -36,6 +36,7 @@ type Limiter interface {
 }
 
 type Request struct {
+	ReportType     string
 	AccountID      string
 	SellerID       string
 	StoreID        string
@@ -58,7 +59,7 @@ func CanonicalMarketplaceIDs(ids []string) string {
 // an account/seller/store/report/region/marketplace/date scope.
 func ActiveScopeKey(request Request) string {
 	sum := sha256.Sum256([]byte(strings.Join([]string{
-		request.AccountID, request.SellerID, request.StoreID, CustomerReturnsReportType,
+		request.AccountID, request.SellerID, request.StoreID, normalizedReportType(request),
 		request.Region, CanonicalMarketplaceIDs(request.MarketplaceIDs), canonicalDate(request.DateFrom), canonicalDate(request.DateTo),
 	}, "\x00")))
 	return hex.EncodeToString(sum[:])
@@ -87,6 +88,10 @@ type Store interface {
 	MarkReportProgress(context.Context, int64, string, string, string, string) error
 	SaveCustomerReturns(context.Context, int64, []CustomerReturn, string, string) error
 	MarkReportError(context.Context, int64, string, error) error
+}
+
+type CustomerShipmentSalesStore interface {
+	SaveCustomerShipmentSales(context.Context, int64, []CustomerShipmentSale, string, string) error
 }
 
 type Result struct {
@@ -184,18 +189,44 @@ func (r *Runner) Run(ctx context.Context, request Request) (result Result, err e
 	if downloadErr != nil {
 		return fail(downloadErr)
 	}
-	rows, parseErr := ParseCustomerReturns(body, data.CompressionAlgorithm, contentType)
-	if parseErr != nil {
-		return fail(parseErr)
-	}
-	if err := r.Store.SaveCustomerReturns(ctx, audit.ID, rows, hash, data.ReportDocumentID); err != nil {
-		return fail(err)
+	rows, saveErr := r.saveDownloadedReport(ctx, audit.ID, request, body, data.CompressionAlgorithm, contentType, hash, data.ReportDocumentID)
+	if saveErr != nil {
+		return fail(saveErr)
 	}
 	result.Status = "SUCCESS"
 	result.DownloadSHA256 = hash
 	result.DownloadedBytes = int64(len(body))
-	result.Rows = len(rows)
+	result.Rows = rows
 	return result, nil
+}
+
+func (r *Runner) saveDownloadedReport(ctx context.Context, auditID int64, request Request, body []byte, compressionAlgorithm, contentType, hash, documentID string) (int, error) {
+	switch normalizedReportType(request) {
+	case CustomerReturnsReportType:
+		rows, err := ParseCustomerReturns(body, compressionAlgorithm, contentType)
+		if err != nil {
+			return 0, err
+		}
+		if err := r.Store.SaveCustomerReturns(ctx, auditID, rows, hash, documentID); err != nil {
+			return 0, err
+		}
+		return len(rows), nil
+	case CustomerShipmentSalesReportType:
+		store, ok := r.Store.(CustomerShipmentSalesStore)
+		if !ok {
+			return 0, fmt.Errorf("report export: store does not support %s", CustomerShipmentSalesReportType)
+		}
+		rows, err := ParseCustomerShipmentSales(body, compressionAlgorithm, contentType)
+		if err != nil {
+			return 0, err
+		}
+		if err := store.SaveCustomerShipmentSales(ctx, auditID, rows, hash, documentID); err != nil {
+			return 0, err
+		}
+		return len(rows), nil
+	default:
+		return 0, fmt.Errorf("report export: unsupported report type %q", normalizedReportType(request))
+	}
 }
 
 func (r *Runner) waitForTask(ctx context.Context, auditID int64) (Audit, error) {
@@ -351,7 +382,7 @@ func (r *Runner) call(ctx context.Context, path string, body map[string]any) ([]
 }
 
 func createBody(request Request) map[string]any {
-	body := map[string]any{"seller_id": request.SellerID, "report_type": CustomerReturnsReportType, "marketplace_ids": request.MarketplaceIDs, "region": request.Region}
+	body := map[string]any{"seller_id": request.SellerID, "report_type": normalizedReportType(request), "marketplace_ids": request.MarketplaceIDs, "region": request.Region}
 	if request.DateFrom != "" {
 		body["data_start_time"] = request.DateFrom
 	}
@@ -361,7 +392,19 @@ func createBody(request Request) map[string]any {
 	return body
 }
 
+func normalizedReportType(request Request) string {
+	if strings.TrimSpace(request.ReportType) == "" {
+		return CustomerReturnsReportType
+	}
+	return strings.TrimSpace(request.ReportType)
+}
+
 func validateRequest(request Request) error {
+	switch normalizedReportType(request) {
+	case CustomerReturnsReportType, CustomerShipmentSalesReportType:
+	default:
+		return fmt.Errorf("report export: unsupported report type %q", normalizedReportType(request))
+	}
 	if !validIdentifier(request.AccountID, 32) {
 		return fmt.Errorf("report export: invalid account_id")
 	}

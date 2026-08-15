@@ -127,7 +127,7 @@ func (s *Scheduler) registerReportJobsLocked(cfg *config.Config) error {
 			continue
 		}
 		if s.customerReturnsRun == nil {
-			return fmt.Errorf("启用了 Customer Returns 报表计划，但未注入执行器")
+			return fmt.Errorf("启用了正式报表计划，但未注入执行器")
 		}
 		report := report
 		entryID, err := s.cron.AddFunc(report.Cron, func() {
@@ -137,18 +137,18 @@ func (s *Scheduler) registerReportJobsLocked(cfg *config.Config) error {
 			}
 			request, requestErr := customerReturnsRequest(report, now())
 			if requestErr != nil {
-				log.Printf("[scheduler] Customer Returns 窗口无效: %v", requestErr)
+				log.Printf("[scheduler] 正式报表窗口无效 type=%s: %v", report.Type, requestErr)
 				return
 			}
 			result, runErr := s.customerReturnsRun(s.ctx, request)
 			if runErr != nil {
-				log.Printf("[scheduler] Customer Returns 报表失败 account=%s store=%s: %v", report.Account, report.StoreID, runErr)
+				log.Printf("[scheduler] 正式报表失败 type=%s account=%s store=%s: %v", report.Type, report.Account, report.StoreID, runErr)
 				return
 			}
-			log.Printf("[scheduler] Customer Returns 报表完成 account=%s store=%s audit=%d rows=%d", report.Account, report.StoreID, result.AuditID, result.Rows)
+			log.Printf("[scheduler] 正式报表完成 type=%s account=%s store=%s audit=%d rows=%d", report.Type, report.Account, report.StoreID, result.AuditID, result.Rows)
 		})
 		if err != nil {
-			return fmt.Errorf("注册 Customer Returns cron 失败 spec=%q: %w", report.Cron, err)
+			return fmt.Errorf("注册正式报表 cron 失败 type=%s spec=%q: %w", report.Type, report.Cron, err)
 		}
 		s.reportEntries[entryID] = struct{}{}
 	}
@@ -159,8 +159,13 @@ func customerReturnsRequest(report config.ReportExport, now time.Time) (reportex
 	if report.WindowDays <= 0 {
 		return reportexport.Request{}, fmt.Errorf("window_days 必须 > 0")
 	}
+	reportType, err := reportExportType(report.Type)
+	if err != nil {
+		return reportexport.Request{}, err
+	}
 	startOfToday := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 	return reportexport.Request{
+		ReportType:     reportType,
 		AccountID:      report.Account,
 		SellerID:       report.SellerID,
 		StoreID:        report.StoreID,
@@ -169,6 +174,17 @@ func customerReturnsRequest(report config.ReportExport, now time.Time) (reportex
 		DateFrom:       startOfToday.AddDate(0, 0, -report.WindowDays).Format(time.RFC3339),
 		DateTo:         startOfToday.Add(-time.Second).Format(time.RFC3339),
 	}, nil
+}
+
+func reportExportType(value string) (string, error) {
+	switch value {
+	case config.ReportExportCustomerReturns:
+		return reportexport.CustomerReturnsReportType, nil
+	case config.ReportExportCustomerShipmentSales:
+		return reportexport.CustomerShipmentSalesReportType, nil
+	default:
+		return "", fmt.Errorf("不支持的正式报告类型 %q", value)
+	}
 }
 
 func (s *Scheduler) registerConnectionCheckJobsLocked(cfg *config.Config) error {

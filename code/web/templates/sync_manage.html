@@ -240,16 +240,15 @@
   <!-- ══════════ 报表检验 Tab ══════════ -->
   <div x-show="tab==='reports'" x-cloak class="space-y-4">
 
-    <!-- 当前仅展示已落地的 FBA Customer Returns 合同。 -->
     <section class="overflow-hidden rounded-lg border border-slate-200 bg-white">
       <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-slate-50 px-4 py-3">
         <div>
           <div class="flex items-center gap-2">
             <svg class="h-4 w-4 text-brand-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v16H4z"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>
             <h2 class="text-sm font-bold text-slate-800">正式报表校验</h2>
-            <span class="rounded bg-blue-50 px-1.5 py-0.5 text-[10px] font-bold text-blue-700">FBA 退货</span>
+            <span class="rounded bg-blue-50 px-1.5 py-0.5 text-[10px] font-bold text-blue-700">Amazon 正式报表</span>
           </div>
-          <p class="mt-1 text-xs text-slate-500">定时下载 Customer Returns 报表，与 API 数据逐行对账，报表值优先修正日维结果。</p>
+          <p class="mt-1 text-xs text-slate-500">定时下载所选正式报表，与 API 数据逐行对账，报表值优先修正日维结果。</p>
         </div>
         <button type="button" @click="saveReportExportBatch()" :disabled="reportExportSaving || reportExportLoading || reportBatch.store_sids.length===0"
                 class="inline-flex items-center gap-1.5 rounded-md bg-brand-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50">
@@ -264,6 +263,12 @@
       </div>
       <div x-show="!reportExportLoading && !reportExportError" class="space-y-4 p-4">
         <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <label class="text-xs font-medium text-slate-600">
+            <span class="mb-1 block">报表类型</span>
+            <select x-model="reportBatch.type" class="h-9 w-full rounded-md border border-slate-300 bg-white px-2.5 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500">
+              <template x-for="type in reportAvailableTypes" :key="type"><option :value="type" x-text="reportTypeLabel(type)"></option></template>
+            </select>
+          </label>
           <label class="text-xs font-medium text-slate-600">
             <span class="mb-1 block">运行状态</span>
             <span class="flex h-9 items-center gap-2 rounded-md border border-slate-300 px-2.5">
@@ -308,7 +313,7 @@
 
         <section class="overflow-hidden rounded-md border border-slate-200">
           <div class="border-b border-slate-200 bg-slate-50 px-3 py-2"><h3 class="text-xs font-bold text-slate-700">已配置报表</h3></div>
-          <div class="overflow-x-auto"><table class="w-full min-w-[860px] text-xs"><thead class="border-b border-slate-200 text-left text-slate-400"><tr><th class="px-3 py-2">报表</th><th class="px-3 py-2">账号 / 店铺</th><th class="px-3 py-2">调度</th><th class="px-3 py-2">状态</th><th class="px-3 py-2">数据库缺少</th><th class="px-3 py-2">报表缺少</th><th class="px-3 py-2">值不一致</th><th class="px-3 py-2 text-right">操作</th></tr></thead><tbody class="divide-y divide-slate-100"><template x-for="row in reportExportConfigs" :key="reportScopeKey(row)"><tr><td class="px-3 py-2 font-medium text-slate-700">FBA 退货</td><td class="px-3 py-2 text-slate-600" x-text="accountName(row.account) + ' / ' + row.store_id"></td><td class="px-3 py-2 text-slate-500" x-text="row.cron + ' · ' + row.window_days + '天'"></td><td class="px-3 py-2 text-slate-600" x-text="reportStatusText(row)"></td><td class="px-3 py-2 tabular-nums" x-text="reportDifferenceFor(row, 'database_missing')"></td><td class="px-3 py-2 tabular-nums" x-text="reportDifferenceFor(row, 'report_missing')"></td><td class="px-3 py-2 tabular-nums" x-text="reportDifferenceFor(row, 'value_mismatch')"></td><td class="px-3 py-2 text-right"><button type="button" @click="deleteReportExport(row)" :disabled="reportExportSaving" class="rounded border border-red-200 px-2 py-1 font-medium text-red-600 hover:bg-red-50 disabled:opacity-50">删除</button></td></tr></template><tr x-show="reportExportConfigs.length===0"><td colspan="8" class="px-3 py-7 text-center text-slate-400">尚未配置报表</td></tr></tbody></table></div>
+          <div class="overflow-x-auto"><table class="w-full min-w-[860px] text-xs"><thead class="border-b border-slate-200 text-left text-slate-400"><tr><th class="px-3 py-2">报表</th><th class="px-3 py-2">账号 / 店铺</th><th class="px-3 py-2">调度</th><th class="px-3 py-2">状态</th><th class="px-3 py-2">数据库缺少</th><th class="px-3 py-2">报表缺少</th><th class="px-3 py-2">值不一致</th><th class="px-3 py-2 text-right">操作</th></tr></thead><tbody class="divide-y divide-slate-100"><template x-for="row in reportExportConfigs" :key="reportScopeKey(row)"><tr><td class="px-3 py-2 font-medium text-slate-700" x-text="reportTypeLabel(row.type)"></td><td class="px-3 py-2 text-slate-600" x-text="accountName(row.account) + ' / ' + row.store_id"></td><td class="px-3 py-2 text-slate-500" x-text="row.cron + ' · ' + row.window_days + '天'"></td><td class="px-3 py-2 text-slate-600" x-text="reportStatusText(row)"></td><td class="px-3 py-2 tabular-nums" x-text="reportDifferenceFor(row, 'database_missing')"></td><td class="px-3 py-2 tabular-nums" x-text="reportDifferenceFor(row, 'report_missing')"></td><td class="px-3 py-2 tabular-nums" x-text="reportDifferenceFor(row, 'value_mismatch')"></td><td class="px-3 py-2 text-right"><button type="button" @click="deleteReportExport(row)" :disabled="reportExportSaving" class="rounded border border-red-200 px-2 py-1 font-medium text-red-600 hover:bg-red-50 disabled:opacity-50">删除</button></td></tr></template><tr x-show="reportExportConfigs.length===0"><td colspan="8" class="px-3 py-7 text-center text-slate-400">尚未配置报表</td></tr></tbody></table></div>
         </section>
       </div>
     </section>

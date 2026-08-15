@@ -224,7 +224,8 @@ window.syncManage = function () {
     catalogBatchAccount: '',
     catalogBatchKeys: [],
     reportExportConfigs: [],
-    reportBatch: { account: '', store_sids: [], region: 'na', cron: '0 4 * * *', window_days: 3, enabled: true },
+    reportAvailableTypes: ['fba_customer_returns'],
+    reportBatch: { type: 'fba_customer_returns', account: '', store_sids: [], region: 'na', cron: '0 4 * * *', window_days: 3, enabled: true },
     reportStatuses: {},
     reportExportLoading: false,
     reportExportSaving: false,
@@ -300,9 +301,10 @@ window.syncManage = function () {
       try {
         const response = await window.apiGet('/api/report-exports/config') || {};
         this.reportExportConfigs = Array.isArray(response.report_exports) ? response.report_exports.slice() : [];
+        this.reportAvailableTypes = Array.isArray(response.available_types) && response.available_types.length ? response.available_types.slice() : ['fba_customer_returns'];
         this.reportStatuses = {};
         const statuses = await Promise.all(this.reportExportConfigs.map(async row => {
-          const query = new URLSearchParams({ account: row.account, store_id: row.store_id });
+          const query = new URLSearchParams({ type: row.type || 'fba_customer_returns', account: row.account, store_id: row.store_id });
           const status = await window.apiGet('/api/report-exports/status?' + query.toString());
           return [this.reportScopeKey(row), status];
         }));
@@ -314,6 +316,9 @@ window.syncManage = function () {
       }
     },
     reportScopeKey(row) { return [row.type, row.account, row.store_id].join('|'); },
+    reportTypeLabel(type) {
+      return { fba_customer_returns: 'FBA 退货', fba_customer_shipment_sales: 'FBA 发货销售' }[type] || type || '未知正式报表';
+    },
     reportStatusFor(row) { return this.reportStatuses[this.reportScopeKey(row)] || { latest_task: null, differences: {} }; },
     reportStatusText(row) {
       const task = this.reportStatusFor(row).latest_task;
@@ -358,10 +363,11 @@ window.syncManage = function () {
         this.reportExportError = '所选店铺缺少 Seller ID 或 Marketplace ID：' + incomplete.map(store => store.store_name || store.sid).join('、');
         return;
       }
-      const existingScopes = new Set(stores.map(store => ['fba_customer_returns', account, store.sid].join('|')));
+      const reportType = this.reportBatch.type || 'fba_customer_returns';
+      const existingScopes = new Set(stores.map(store => [reportType, account, store.sid].join('|')));
       const keep = this.reportExportConfigs.filter(row => !existingScopes.has([row.type, row.account, row.store_id].join('|')));
       const additions = stores.map(store => ({
-        type: 'fba_customer_returns', enabled: !!this.reportBatch.enabled, account,
+        type: reportType, enabled: !!this.reportBatch.enabled, account,
         seller_id: store.seller_id, store_id: store.sid, region: this.reportBatch.region,
         marketplace_ids: [store.marketplace_id], cron: this.reportBatch.cron,
         window_days: Number(this.reportBatch.window_days),

@@ -181,6 +181,29 @@ func TestBuildFromSQLRejectsEmptyReportWhenAPIHasReturns(t *testing.T) {
 	}
 }
 
+func TestBuildFromSQLReconcilesShipmentSalesUnitsFromFormalReport(t *testing.T) {
+	date := time.Date(2026, 8, 12, 0, 0, 0, 0, time.UTC)
+	apiUnits, reportUnits := int64(1), int64(3)
+	reader := &reconciledSourceReader{
+		api: SQLProjection{Records: []RawRecord{{Source: SourceAPI, Input: Input{
+			Key: Key{Store: "store-1", Channel: "sc_fba", ASIN: "B01", SKU: "SKU-1", BusinessDate: date}, Scope: ScopeListing, Values: Values{SalesUnits: &apiUnits},
+		}}}},
+		salesReport: []RawRecord{{Source: SourceReport, Input: Input{
+			Key: Key{Store: "store-1", Channel: "sc_fba", ASIN: "B01", SKU: "SKU-1", BusinessDate: date}, Scope: ScopeListing, Values: Values{SalesUnits: &reportUnits},
+		}}},
+	}
+	projection, rows, err := BuildFromSQL(context.Background(), reader, "account-1", "store-1", "sc_fba", date, date.AddDate(0, 0, 1), ReportReconciled, ReportEvidence{AuditID: 43, ReportTaskID: "sales-task-43", ReportType: "GET_FBA_FULFILLMENT_CUSTOMER_SHIPMENT_SALES_DATA"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if projection.Reconciliation == nil || len(projection.Reconciliation.FieldDiffs) != 1 {
+		t.Fatalf("sales reconciliation = %#v", projection.Reconciliation)
+	}
+	if len(rows) != 1 || rows[0].Values.SalesUnits == nil || *rows[0].Values.SalesUnits != reportUnits || rows[0].Sources["sales_units"] != SourceReport {
+		t.Fatalf("sales correction = %#v", rows)
+	}
+}
+
 type sourceReaderFunc func(context.Context, string, string, string, time.Time) (SQLProjection, error)
 
 func (f sourceReaderFunc) Read(ctx context.Context, accountID, storeID, channel string, businessDate time.Time) (SQLProjection, error) {
@@ -188,9 +211,10 @@ func (f sourceReaderFunc) Read(ctx context.Context, accountID, storeID, channel 
 }
 
 type reconciledSourceReader struct {
-	api      SQLProjection
-	report   []RawRecord
-	evidence ReportEvidence
+	api         SQLProjection
+	report      []RawRecord
+	salesReport []RawRecord
+	evidence    ReportEvidence
 }
 
 func (r reconciledSourceReader) Read(context.Context, string, string, string, time.Time) (SQLProjection, error) {
@@ -200,4 +224,9 @@ func (r reconciledSourceReader) Read(context.Context, string, string, string, ti
 func (r *reconciledSourceReader) ReadReportReturns(_ context.Context, _ string, _ string, _ string, _ time.Time, evidence ReportEvidence) ([]RawRecord, error) {
 	r.evidence = evidence
 	return r.report, nil
+}
+
+func (r *reconciledSourceReader) ReadReportSales(_ context.Context, _ string, _ string, _ string, _ time.Time, evidence ReportEvidence) ([]RawRecord, error) {
+	r.evidence = evidence
+	return r.salesReport, nil
 }

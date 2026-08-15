@@ -465,11 +465,11 @@ GET /api/datasources/datasets/listing-daily-v1/fields
 ```text
 GET /api/report-exports/config
 PUT /api/report-exports/config
-GET /api/report-exports/status?account={account_id}&store_id={store_id}
+GET /api/report-exports/status?type={report_type}&account={account_id}&store_id={store_id}
 ```
 
-- `GET config` 返回 `report_exports[]`、`available_types[]` 和空配置默认值；当前 `available_types` 只能包含已实现的 `fba_customer_returns`。
+- `GET config` 返回 `report_exports[]`、`available_types[]` 和空配置默认值；当前 `available_types` 固定为已实现的 `fba_customer_returns`、`fba_customer_shipment_sales`。
 - `PUT config` 一次提交完整 `report_exports[]`。每项粒度固定为 `type + account + store_id`，重复项整批拒绝；写盘和现有 Scheduler 热重建沿用配置保存原子边界。
 - Seller ID、store ID 和 Marketplace ID 由 UI 从已选账号的本地店铺资料带入；服务端仍按正式配置合同校验，缺失时不得猜值。
-- `GET status` 必须同时传 `account` 和 `store_id`，只返回该账号+店铺最近一次 Customer Returns 任务及其三类对账差异。临时下载 URL、签名凭证、token 或 hash 不得返回。
+- `GET status` 按 `type + account + store_id` 返回指定报表最近一次任务及其三类对账差异；旧调用省略 `type` 时只兼容 Customer Returns。临时下载 URL、签名凭证、token 或 hash 不得返回。
 - 新报表类型只有在创建、查询、下载、解析、原始表和对账合同均实现并测试后，才能加入 `available_types`；管理 API 不接受动态 report type 或表名。

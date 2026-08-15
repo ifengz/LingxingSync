@@ -43,7 +43,7 @@ func (d *DBReportStore) EnsureReport(ctx context.Context, req reportexport.Reque
 	const q = `INSERT INTO ls_report_export_tasks
 (account_id, seller_id, store_id, report_type, region, marketplace_ids, date_from, date_to, status, active_scope_key)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?)`
-	result, err := d.db.ExecContext(ctx, q, req.AccountID, req.SellerID, req.StoreID, reportexport.CustomerReturnsReportType, req.Region, reportexport.CanonicalMarketplaceIDs(req.MarketplaceIDs), req.DateFrom, req.DateTo, activeKey)
+	result, err := d.db.ExecContext(ctx, q, req.AccountID, req.SellerID, req.StoreID, reportType(req), req.Region, reportexport.CanonicalMarketplaceIDs(req.MarketplaceIDs), req.DateFrom, req.DateTo, activeKey)
 	if err != nil {
 		if !isDuplicateKeyError(err) {
 			return reportexport.Audit{}, fmt.Errorf("db report: create audit row: %w", err)
@@ -131,7 +131,7 @@ WHERE status IN ('PENDING', 'CREATING', 'IN_QUEUE', 'IN_PROGRESS', 'UNKNOWN', 'D
   ))
 ORDER BY id DESC LIMIT 1`
 	marketplaces := reportexport.CanonicalMarketplaceIDs(req.MarketplaceIDs)
-	if err := d.db.GetContext(ctx, &row, q, activeKey, req.AccountID, req.SellerID, req.StoreID, reportexport.CustomerReturnsReportType, req.Region, req.DateFrom, req.DateTo, marketplaces, marketplaces); err != nil {
+	if err := d.db.GetContext(ctx, &row, q, activeKey, req.AccountID, req.SellerID, req.StoreID, reportType(req), req.Region, req.DateFrom, req.DateTo, marketplaces, marketplaces); err != nil {
 		if err == sql.ErrNoRows {
 			return reportexport.Audit{}, nil
 		}
@@ -251,6 +251,70 @@ func (d *DBReportStore) SaveCustomerReturns(ctx context.Context, id int64, rows 
 		return fmt.Errorf("db report: commit raw transaction: %w", err)
 	}
 	return nil
+}
+
+func (d *DBReportStore) SaveCustomerShipmentSales(ctx context.Context, id int64, rows []reportexport.CustomerShipmentSale, downloadSHA string, documentID string) error {
+	if err := d.ensure(); err != nil {
+		return err
+	}
+	tx, err := d.db.BeginTxx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("db report: begin shipment sales transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	var meta struct {
+		AccountID    string `db:"account_id"`
+		SellerID     string `db:"seller_id"`
+		StoreID      string `db:"store_id"`
+		ReportTaskID string `db:"report_task_id"`
+	}
+	if err := tx.GetContext(ctx, &meta, `SELECT account_id, seller_id, store_id, report_task_id FROM ls_report_export_tasks WHERE id = ?`, id); err != nil {
+		return fmt.Errorf("db report: load audit id=%d: %w", id, err)
+	}
+	if strings.TrimSpace(meta.ReportTaskID) == "" {
+		return fmt.Errorf("db report: audit id=%d has no report task id", id)
+	}
+	const insert = "INSERT INTO ls_fba_fulfillment_customer_shipment_sales\n" +
+		"(account_id, seller_id, store_id, report_task_id, `row_number`, row_sha256,\n" +
+		" `shipment-date`, sku, fnsku, asin, `fulfillment-center-id`, quantity, `amazon-order-id`, currency,\n" +
+		" `item-price-per-unit`, `shipping-price`, `gift-wrap-price`, `ship-city`, `ship-state`, `ship-postal-code`)\n" +
+		"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\n" +
+		"ON DUPLICATE KEY UPDATE row_sha256 = VALUES(row_sha256), `shipment-date` = VALUES(`shipment-date`), sku = VALUES(sku), fnsku = VALUES(fnsku), asin = VALUES(asin), `fulfillment-center-id` = VALUES(`fulfillment-center-id`), quantity = VALUES(quantity), `amazon-order-id` = VALUES(`amazon-order-id`), currency = VALUES(currency), `item-price-per-unit` = VALUES(`item-price-per-unit`), `shipping-price` = VALUES(`shipping-price`), `gift-wrap-price` = VALUES(`gift-wrap-price`), `ship-city` = VALUES(`ship-city`), `ship-state` = VALUES(`ship-state`), `ship-postal-code` = VALUES(`ship-postal-code`)"
+	stmt, err := tx.PrepareContext(ctx, insert)
+	if err != nil {
+		return fmt.Errorf("db report: prepare shipment sales insert: %w", err)
+	}
+	defer stmt.Close()
+	for i, row := range rows {
+		quantity := row.QuantityRaw
+		if quantity == "" {
+			quantity = strconv.Itoa(row.Quantity)
+		}
+		price := row.ItemPricePerUnitRaw
+		if price == "" {
+			price = strconv.FormatFloat(row.ItemPricePerUnit, 'f', -1, 64)
+		}
+		rawKey := strings.Join([]string{row.ShipmentDate, row.SKU, row.FNSKU, row.ASIN, row.FulfillmentCenterID, quantity, row.AmazonOrderID, row.Currency, price, row.ShippingPrice, row.GiftWrapPrice, row.ShipCity, row.ShipState, row.ShipPostalCode}, "\x00")
+		sum := sha256.Sum256([]byte(rawKey))
+		if _, err := stmt.ExecContext(ctx, meta.AccountID, meta.SellerID, meta.StoreID, meta.ReportTaskID, i+1, hex.EncodeToString(sum[:]), row.ShipmentDate, row.SKU, row.FNSKU, row.ASIN, row.FulfillmentCenterID, quantity, row.AmazonOrderID, row.Currency, price, row.ShippingPrice, row.GiftWrapPrice, row.ShipCity, row.ShipState, row.ShipPostalCode); err != nil {
+			return fmt.Errorf("db report: insert shipment sales row %d: %w", i+1, err)
+		}
+	}
+	const update = `UPDATE ls_report_export_tasks SET status = 'SUCCESS', active_scope_key = NULL, report_document_id = NULLIF(?, ''), download_sha256 = ?, downloaded_at = CURRENT_TIMESTAMP, rows_imported = ?, error_message = NULL WHERE id = ?`
+	if _, err := tx.ExecContext(ctx, update, documentID, downloadSHA, len(rows), id); err != nil {
+		return fmt.Errorf("db report: finalize shipment sales audit id=%d: %w", id, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("db report: commit shipment sales transaction: %w", err)
+	}
+	return nil
+}
+
+func reportType(req reportexport.Request) string {
+	if strings.TrimSpace(req.ReportType) == "" {
+		return reportexport.CustomerReturnsReportType
+	}
+	return strings.TrimSpace(req.ReportType)
 }
 
 func (d *DBReportStore) update(ctx context.Context, id int64, status, assignment, value string) error {

@@ -51,6 +51,8 @@ func main() {
 	validateConfig := flag.Bool("validate-config", false, "只校验配置，不连接数据库或启动服务")
 	baseURL := flag.String("base-url", "https://openapi.lingxing.com", "领星 OpenAPI 根地址")
 	reportReturns := flag.Bool("export-fba-customer-returns", false, "显式导出一份 Amazon FBA Customer Returns 正式报告后退出")
+	reportExport := flag.Bool("export-amazon-report", false, "显式导出一份已支持的 Amazon 正式报告后退出；配合 -report-type")
+	reportType := flag.String("report-type", reportexport.CustomerReturnsReportType, "Amazon report_type；默认 FBA Customer Returns")
 	reportAccount := flag.String("report-account", "", "报告导出使用的本地 account id")
 	reportSeller := flag.String("report-seller-id", "", "Amazon seller_id")
 	reportStore := flag.String("report-store-id", "", "本地归属 store_id（必填，不传领星）")
@@ -61,6 +63,10 @@ func main() {
 	// The explicit CLI lane remains available for manual backfills; configured
 	// report_exports are registered with the existing in-process scheduler.
 	flag.Parse()
+	reportMode := *reportReturns || *reportExport
+	if *reportReturns && *reportType != reportexport.CustomerReturnsReportType {
+		log.Fatalf("[main] -export-fba-customer-returns 不能与其他 report_type 同时使用")
+	}
 
 	// 1. 加载配置（启动断言式校验，缺字段直接 FATAL）
 	cfg, err := config.Load(*configPath)
@@ -79,22 +85,22 @@ func main() {
 		log.Fatalf("[main] 连接 MySQL 失败: %v", err)
 	}
 	defer dbx.Close()
-	if err := prepareDatabase(*reportReturns,
+	if err := prepareDatabase(reportMode,
 		func() error { return db.RunMigrations(dbx, "migrations") },
 		func() error {
-			return validateCustomerReturnsSchema(func(table string) ([]string, error) {
+			return validateFormalReportSchema(*reportType, func(table string) ([]string, error) {
 				return db.GetTableColumns(dbx, table)
 			})
 		},
 	); err != nil {
 		log.Fatalf("[main] 数据库准备失败: %v", err)
 	}
-	if *reportReturns {
-		log.Printf("[main] Customer Returns 数据库结构只读校验通过")
+	if reportMode {
+		log.Printf("[main] Amazon report 数据库结构只读校验通过 type=%s", *reportType)
 	} else {
 		log.Printf("[main] 数据库迁移完成")
 	}
-	if *reportReturns {
+	if reportMode {
 		account := cfg.FindAccount(*reportAccount)
 		if account == nil {
 			log.Fatalf("[main] 报告导出账号不存在: %q", *reportAccount)
@@ -108,6 +114,7 @@ func main() {
 			Limiter: worker.NewLimiter(1, 1000),
 		}
 		request := reportexport.Request{
+			ReportType:     *reportType,
 			AccountID:      account.ID,
 			SellerID:       *reportSeller,
 			StoreID:        *reportStore,
@@ -118,12 +125,12 @@ func main() {
 		}
 		result, err := runner.Run(context.Background(), request)
 		if err != nil {
-			log.Fatalf("[main] FBA Customer Returns 正式报告导出失败: %v", err)
+			log.Fatalf("[main] Amazon 正式报告导出失败 type=%s: %v", *reportType, err)
 		}
-		if err := projectCustomerReturns(context.Background(), listingdaily.SQLSourceReader{DB: dbx}, listingdaily.SQLStore{DB: dbx}, request, result); err != nil {
-			log.Fatalf("[main] FBA Customer Returns 日维纠正失败: %v", err)
+		if err := projectFormalReport(context.Background(), listingdaily.SQLSourceReader{DB: dbx}, listingdaily.SQLStore{DB: dbx}, request, result, *reportType); err != nil {
+			log.Fatalf("[main] Amazon 正式报告日维纠正失败 type=%s: %v", *reportType, err)
 		}
-		log.Printf("[main] FBA Customer Returns 正式报告完成：audit=%d task=%s document=%s rows=%d sha256=%s", result.AuditID, result.ReportTaskID, result.ReportDocumentID, result.Rows, result.DownloadSHA256)
+		log.Printf("[main] Amazon 正式报告完成：type=%s audit=%d task=%s document=%s rows=%d sha256=%s", *reportType, result.AuditID, result.ReportTaskID, result.ReportDocumentID, result.Rows, result.DownloadSHA256)
 		return
 	}
 
@@ -267,7 +274,7 @@ func customerReturnsRun(cfg *config.Config, clients *api.ClientRegistry, store r
 		if err != nil {
 			return result, err
 		}
-		if err := projectCustomerReturns(ctx, dailyReader, dailyStore, request, result); err != nil {
+		if err := projectFormalReport(ctx, dailyReader, dailyStore, request, result, normalizedReportType(request)); err != nil {
 			return result, err
 		}
 		return result, nil
@@ -282,6 +289,10 @@ func prepareDatabase(reportReturns bool, runMigrations, validateReportSchema fun
 }
 
 func customerReturnsSchemaRequirements() map[string][]string {
+	return formalReportSchemaRequirements(reportexport.CustomerReturnsReportType)
+}
+
+func formalReportSchemaRequirements(reportType string) map[string][]string {
 	requirements := listingdaily.CustomerReturnsSchemaRequirements()
 	requirements["ls_report_export_tasks"] = []string{
 		"id", "account_id", "seller_id", "store_id", "report_type", "region", "marketplace_ids",
@@ -289,17 +300,35 @@ func customerReturnsSchemaRequirements() map[string][]string {
 		"compression_algorithm", "download_url", "download_sha256", "downloaded_at", "rows_imported",
 		"error_message", "active_scope_key", "updated_at",
 	}
-	requirements["ls_fba_fulfillment_customer_returns"] = []string{
-		"account_id", "seller_id", "store_id", "report_task_id", "row_number", "row_sha256",
-		"return-date", "order-id", "sku", "asin", "fnsku", "product-name", "quantity",
-		"fulfillment-center-id", "detailed-disposition", "reason", "status",
-		"license-plate-number", "customer-comments",
+	switch reportType {
+	case reportexport.CustomerReturnsReportType:
+		requirements["ls_fba_fulfillment_customer_returns"] = []string{
+			"account_id", "seller_id", "store_id", "report_task_id", "row_number", "row_sha256",
+			"return-date", "order-id", "sku", "asin", "fnsku", "product-name", "quantity",
+			"fulfillment-center-id", "detailed-disposition", "reason", "status",
+			"license-plate-number", "customer-comments",
+		}
+	case reportexport.CustomerShipmentSalesReportType:
+		requirements["ls_fba_fulfillment_customer_shipment_sales"] = []string{
+			"account_id", "seller_id", "store_id", "report_task_id", "row_number", "row_sha256",
+			"shipment-date", "sku", "fnsku", "asin", "fulfillment-center-id", "quantity", "amazon-order-id", "currency",
+			"item-price-per-unit", "shipping-price", "gift-wrap-price", "ship-city", "ship-state", "ship-postal-code",
+		}
+	default:
+		return nil
 	}
 	return requirements
 }
 
 func validateCustomerReturnsSchema(loadColumns func(string) ([]string, error)) error {
-	requirements := customerReturnsSchemaRequirements()
+	return validateFormalReportSchema(reportexport.CustomerReturnsReportType, loadColumns)
+}
+
+func validateFormalReportSchema(reportType string, loadColumns func(string) ([]string, error)) error {
+	requirements := formalReportSchemaRequirements(reportType)
+	if requirements == nil {
+		return fmt.Errorf("不支持的 Amazon 正式报告类型 %q", reportType)
+	}
 	tables := make([]string, 0, len(requirements))
 	for table := range requirements {
 		tables = append(tables, table)
@@ -308,7 +337,7 @@ func validateCustomerReturnsSchema(loadColumns func(string) ([]string, error)) e
 	for _, table := range tables {
 		columns, err := loadColumns(table)
 		if err != nil {
-			return fmt.Errorf("Customer Returns schema %s: %w", table, err)
+			return fmt.Errorf("Amazon report schema %s: %w", table, err)
 		}
 		available := make(map[string]struct{}, len(columns))
 		for _, column := range columns {
@@ -316,11 +345,18 @@ func validateCustomerReturnsSchema(loadColumns func(string) ([]string, error)) e
 		}
 		for _, column := range requirements[table] {
 			if _, ok := available[column]; !ok {
-				return fmt.Errorf("Customer Returns schema missing %s.%s", table, column)
+				return fmt.Errorf("Amazon report schema missing %s.%s", table, column)
 			}
 		}
 	}
 	return nil
+}
+
+func normalizedReportType(request reportexport.Request) string {
+	if strings.TrimSpace(request.ReportType) == "" {
+		return reportexport.CustomerReturnsReportType
+	}
+	return strings.TrimSpace(request.ReportType)
 }
 
 func projectDailyBatch(ctx context.Context, dailyReader listingdaily.SourceReader, dailyStore listingdaily.Store, accountID string, targets []worker.DailyProjectionTarget, today time.Time) error {
@@ -339,12 +375,20 @@ func projectDailyBatch(ctx context.Context, dailyReader listingdaily.SourceReade
 }
 
 func projectCustomerReturns(ctx context.Context, dailyReader listingdaily.SourceReader, dailyStore listingdaily.ReconciliationStore, request reportexport.Request, result reportexport.Result) error {
+	return projectFormalReport(ctx, dailyReader, dailyStore, request, result, reportexport.CustomerReturnsReportType)
+}
+
+func projectCustomerShipmentSales(ctx context.Context, dailyReader listingdaily.SourceReader, dailyStore listingdaily.ReconciliationStore, request reportexport.Request, result reportexport.Result) error {
+	return projectFormalReport(ctx, dailyReader, dailyStore, request, result, reportexport.CustomerShipmentSalesReportType)
+}
+
+func projectFormalReport(ctx context.Context, dailyReader listingdaily.SourceReader, dailyStore listingdaily.ReconciliationStore, request reportexport.Request, result reportexport.Result, reportType string) error {
 	if dailyReader == nil || dailyStore == nil {
-		return fmt.Errorf("Customer Returns 日维投影未配置")
+		return fmt.Errorf("正式报告日维投影未配置")
 	}
-	evidence := listingdaily.ReportEvidence{AuditID: result.AuditID, ReportTaskID: result.ReportTaskID}
+	evidence := listingdaily.ReportEvidence{AuditID: result.AuditID, ReportTaskID: result.ReportTaskID, ReportType: reportType}
 	if evidence.AuditID <= 0 || strings.TrimSpace(evidence.ReportTaskID) == "" {
-		return fmt.Errorf("Customer Returns 日维投影缺少本次 report audit/task")
+		return fmt.Errorf("正式报告日维投影缺少本次 report audit/task")
 	}
 	from, to, err := reportBusinessDates(request)
 	if err != nil {
@@ -362,9 +406,9 @@ func projectCustomerReturns(ctx context.Context, dailyReader listingdaily.Source
 		if buildErr != nil {
 			failed := listingdaily.ReconciliationAudit{Evidence: evidence, BusinessDate: date, Status: listingdaily.ReconciliationFailed, Reconciliation: reconciliation, ErrorMessage: buildErr.Error()}
 			if err := dailyStore.PersistFailedReconciliations(ctx, []listingdaily.ReconciliationAudit{failed}); err != nil {
-				return fmt.Errorf("Customer Returns 日维纠正 %s: %v; 保存失败对账: %w", date.Format("2006-01-02"), buildErr, err)
+				return fmt.Errorf("正式报告日维纠正 %s: %v; 保存失败对账: %w", date.Format("2006-01-02"), buildErr, err)
 			}
-			return fmt.Errorf("Customer Returns 日维纠正 %s: %w", date.Format("2006-01-02"), buildErr)
+			return fmt.Errorf("正式报告日维纠正 %s: %w", date.Format("2006-01-02"), buildErr)
 		}
 		status := listingdaily.ReconciliationMatched
 		if len(reconciliation.MissingInDB) != 0 || len(reconciliation.MissingInReport) != 0 || len(reconciliation.FieldDiffs) != 0 {
@@ -374,7 +418,7 @@ func projectCustomerReturns(ctx context.Context, dailyReader listingdaily.Source
 		audits = append(audits, listingdaily.ReconciliationAudit{Evidence: evidence, BusinessDate: date, Status: status, Reconciliation: reconciliation})
 	}
 	if err := dailyStore.PersistReportBatch(ctx, rows, audits); err != nil {
-		return fmt.Errorf("Customer Returns 日维纠正发布: %w", err)
+		return fmt.Errorf("正式报告日维纠正发布: %w", err)
 	}
 	return nil
 }

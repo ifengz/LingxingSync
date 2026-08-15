@@ -24,14 +24,15 @@ func (r *fixedDailyPreviewReader) Preview(_ context.Context, query dailyPreviewQ
 }
 
 type fixedReportStatusReader struct {
-	status    reportExportStatusOut
-	err       error
-	accountID string
-	storeID   string
+	status     reportExportStatusOut
+	err        error
+	accountID  string
+	storeID    string
+	reportType string
 }
 
-func (r *fixedReportStatusReader) Latest(_ context.Context, accountID, storeID string) (reportExportStatusOut, error) {
-	r.accountID, r.storeID = accountID, storeID
+func (r *fixedReportStatusReader) Latest(_ context.Context, accountID, storeID, reportType string) (reportExportStatusOut, error) {
+	r.accountID, r.storeID, r.reportType = accountID, storeID, reportType
 	return r.status, r.err
 }
 
@@ -84,7 +85,7 @@ func TestReportExportConfigGetReturnsDisabledDefault(t *testing.T) {
 
 	s.apiGetReportExportConfig(rec, httptest.NewRequest(http.MethodGet, "/api/report-exports/config", nil))
 
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"type":"fba_customer_returns"`) || !strings.Contains(rec.Body.String(), `"enabled":false`) {
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"type":"fba_customer_returns"`) || !strings.Contains(rec.Body.String(), `"fba_customer_shipment_sales"`) || !strings.Contains(rec.Body.String(), `"enabled":false`) {
 		t.Fatalf("default config status=%d body=%s", rec.Code, rec.Body.String())
 	}
 	if len(store.Current().ReportExports) != 0 {
@@ -132,8 +133,20 @@ func TestReportExportConfigPutPersistsOnlyCustomerReturns(t *testing.T) {
 
 	unknown := httptest.NewRecorder()
 	s.apiPutReportExportConfig(unknown, httptest.NewRequest(http.MethodPut, "/api/report-exports/config", strings.NewReader(`{"report_exports":[{"type":"sales","enabled":false}]}`)))
-	if unknown.Code != http.StatusBadRequest || !strings.Contains(unknown.Body.String(), "fba_customer_returns") {
+	if unknown.Code != http.StatusBadRequest || !strings.Contains(unknown.Body.String(), "不支持") {
 		t.Fatalf("unknown type status=%d body=%s", unknown.Code, unknown.Body.String())
+	}
+}
+
+func TestReportExportConfigPutAcceptsCustomerShipmentSales(t *testing.T) {
+	cfg := validReportTestConfig()
+	store := config.NewStore(t.TempDir()+"/config.yaml", cfg)
+	s := &Server{cfg: cfg, store: store}
+	body := `{"report_exports":[{"type":"fba_customer_shipment_sales","enabled":true,"account":"sc_us","seller_id":"SELLER-1","store_id":"STORE-1","region":"na","marketplace_ids":["ATVPDKIKX0DER"],"cron":"0 4 * * *","window_days":3}]}`
+	rec := httptest.NewRecorder()
+	s.apiPutReportExportConfig(rec, httptest.NewRequest(http.MethodPut, "/api/report-exports/config", strings.NewReader(body)))
+	if rec.Code != http.StatusOK || len(store.Current().ReportExports) != 1 || store.Current().ReportExports[0].Type != config.ReportExportCustomerShipmentSales {
+		t.Fatalf("shipment sales PUT status=%d reports=%+v body=%s", rec.Code, store.Current().ReportExports, rec.Body.String())
 	}
 }
 
@@ -151,8 +164,8 @@ func TestReportExportStatusReturnsLatestTaskAndDifferenceCounts(t *testing.T) {
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"configured":true`) || !strings.Contains(rec.Body.String(), `"database_missing":1`) || !strings.Contains(rec.Body.String(), `"value_mismatch":3`) {
 		t.Fatalf("report status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	if reader.accountID != "sc_us" || reader.storeID != "STORE-1" {
-		t.Fatalf("report reader scope=%q/%q", reader.accountID, reader.storeID)
+	if reader.accountID != "sc_us" || reader.storeID != "STORE-1" || reader.reportType != config.ReportExportCustomerReturns {
+		t.Fatalf("report reader scope=%q/%q/%q", reader.accountID, reader.storeID, reader.reportType)
 	}
 }
 

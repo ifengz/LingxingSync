@@ -104,6 +104,28 @@ func TestValidateCustomerReturnsSchemaAcceptsCompleteContract(t *testing.T) {
 	}
 }
 
+func TestValidateCustomerShipmentSalesSchemaDoesNotRequireReturnsTable(t *testing.T) {
+	requirements := formalReportSchemaRequirements(reportexport.CustomerShipmentSalesReportType)
+	if _, ok := requirements["ls_fba_fulfillment_customer_returns"]; ok {
+		t.Fatal("shipment sales schema must not require customer returns raw table")
+	}
+	if err := validateFormalReportSchema(reportexport.CustomerShipmentSalesReportType, func(table string) ([]string, error) {
+		return append([]string(nil), requirements[table]...), nil
+	}); err != nil {
+		t.Fatalf("complete shipment sales schema = %v", err)
+	}
+}
+
+func TestValidateFormalReportSchemaRejectsUnsupportedType(t *testing.T) {
+	err := validateFormalReportSchema("GET_UNSUPPORTED_REPORT", func(string) ([]string, error) {
+		t.Fatal("unsupported report type must fail before schema reads")
+		return nil, nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "不支持") {
+		t.Fatalf("unsupported report schema error = %v", err)
+	}
+}
+
 func TestReportBusinessDatesUsesInclusiveCalendarDays(t *testing.T) {
 	from, to, err := reportBusinessDates(reportexport.Request{DateFrom: "2026-08-09T00:00:00+08:00", DateTo: "2026-08-11T23:59:59+08:00"})
 	if err != nil {
@@ -147,6 +169,26 @@ func TestProjectCustomerReturnsProjectsEveryCoveredDay(t *testing.T) {
 	}
 }
 
+func TestProjectCustomerShipmentSalesUsesSalesEvidence(t *testing.T) {
+	reader := &reportProjectionReader{sales: true}
+	store := &reportProjectionStore{}
+	request := reportexport.Request{
+		ReportType: reportexport.CustomerShipmentSalesReportType,
+		AccountID:  "account-1", StoreID: "store-1",
+		DateFrom: "2026-08-11T00:00:00Z", DateTo: "2026-08-11T23:59:59Z",
+	}
+	result := reportexport.Result{AuditID: 44, ReportTaskID: "task-44"}
+	if err := projectCustomerShipmentSales(context.Background(), reader, store, request, result); err != nil {
+		t.Fatal(err)
+	}
+	if len(reader.evidence) != 1 || reader.evidence[0].ReportType != reportexport.CustomerShipmentSalesReportType {
+		t.Fatalf("shipment sales evidence=%#v", reader.evidence)
+	}
+	if len(store.rows) != 1 || store.rows[0].Values.SalesUnits == nil || *store.rows[0].Values.SalesUnits != 2 {
+		t.Fatalf("shipment sales rows=%#v", store.rows)
+	}
+}
+
 func TestProjectCustomerReturnsDoesNotPublishEarlierDatesWhenLateDateFails(t *testing.T) {
 	reader := &reportProjectionReader{failDate: "2026-08-11"}
 	store := &reportProjectionStore{}
@@ -182,6 +224,7 @@ type reportProjectionReader struct {
 	dates    []string
 	evidence []listingdaily.ReportEvidence
 	failDate string
+	sales    bool
 }
 
 func (r *reportProjectionReader) Read(_ context.Context, accountID, storeID, channel string, date time.Time) (listingdaily.SQLProjection, error) {
@@ -193,9 +236,13 @@ func (r *reportProjectionReader) Read(_ context.Context, accountID, storeID, cha
 		return listingdaily.SQLProjection{}, fmt.Errorf("source failed")
 	}
 	value := int64(1)
+	values := listingdaily.Values{ReturnsQty: &value}
+	if r.sales {
+		values = listingdaily.Values{SalesUnits: &value}
+	}
 	return listingdaily.SQLProjection{Records: []listingdaily.RawRecord{{
 		Source: listingdaily.SourceAPI,
-		Input:  listingdaily.Input{Key: listingdaily.Key{Store: storeID, Channel: channel, ASIN: "B01", SKU: "SKU-1", BusinessDate: date}, Scope: listingdaily.ScopeListing, Values: listingdaily.Values{ReturnsQty: &value}},
+		Input:  listingdaily.Input{Key: listingdaily.Key{Store: storeID, Channel: channel, ASIN: "B01", SKU: "SKU-1", BusinessDate: date}, Scope: listingdaily.ScopeListing, Values: values},
 	}}}, nil
 }
 
@@ -205,6 +252,15 @@ func (r *reportProjectionReader) ReadReportReturns(_ context.Context, _ string, 
 	return []listingdaily.RawRecord{{
 		Source: listingdaily.SourceReport,
 		Input:  listingdaily.Input{Key: listingdaily.Key{Store: storeID, Channel: channel, ASIN: "B01", SKU: "SKU-1", BusinessDate: date}, Scope: listingdaily.ScopeListing, Values: listingdaily.Values{ReturnsQty: &value}},
+	}}, nil
+}
+
+func (r *reportProjectionReader) ReadReportSales(_ context.Context, _ string, storeID, channel string, date time.Time, evidence listingdaily.ReportEvidence) ([]listingdaily.RawRecord, error) {
+	r.evidence = append(r.evidence, evidence)
+	value := int64(2)
+	return []listingdaily.RawRecord{{
+		Source: listingdaily.SourceReport,
+		Input:  listingdaily.Input{Key: listingdaily.Key{Store: storeID, Channel: channel, ASIN: "B01", SKU: "SKU-1", BusinessDate: date}, Scope: listingdaily.ScopeListing, Values: listingdaily.Values{SalesUnits: &value}},
 	}}, nil
 }
 

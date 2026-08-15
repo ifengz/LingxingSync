@@ -37,6 +37,20 @@ func TestCustomerReturnsWindowUsesOnlyCompleteDays(t *testing.T) {
 	}
 }
 
+func TestReportJobCarriesConfiguredReportType(t *testing.T) {
+	report := config.ReportExport{
+		Type: config.ReportExportCustomerShipmentSales, Account: "sc_us", SellerID: "SELLER-1", StoreID: "STORE-1",
+		Region: "na", MarketplaceIDs: []string{"ATVPDKIKX0DER"}, WindowDays: 1,
+	}
+	request, err := customerReturnsRequest(report, time.Date(2026, 8, 12, 14, 35, 0, 0, time.FixedZone("CST", 8*60*60)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if request.ReportType != reportexport.CustomerShipmentSalesReportType {
+		t.Fatalf("report type = %q, want %q", request.ReportType, reportexport.CustomerShipmentSalesReportType)
+	}
+}
+
 func TestDisabledCustomerReturnsScheduleDoesNotRequireRunner(t *testing.T) {
 	s := NewScheduler(&config.Config{ReportExports: []config.ReportExport{{
 		Type: config.ReportExportCustomerReturns, Enabled: false,

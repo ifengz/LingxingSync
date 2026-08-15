@@ -33,6 +33,17 @@ func TestParseCustomerReturnsGZIPTSVRequiresExactHeader(t *testing.T) {
 	}
 }
 
+func TestParseCustomerShipmentSalesTSVRequiresOfficialHeaderAndNumericFields(t *testing.T) {
+	data := []byte("shipment-date\tsku\tfnsku\tasin\tfulfillment-center-id\tquantity\tamazon-order-id\tcurrency\titem-price-per-unit\tshipping-price\tgift-wrap-price\tship-city\tship-state\tship-postal-code\n2026-08-11\tsku-1\tfnsku-1\tasin-1\tFC1\t3\torder-1\tUSD\t12.50\t1.25\t0.00\tSeattle\tWA\t98101\n")
+	rows, err := ParseCustomerShipmentSales(data, "", "")
+	if err != nil {
+		t.Fatalf("ParseCustomerShipmentSales returned error: %v", err)
+	}
+	if len(rows) != 1 || rows[0].Quantity != 3 || rows[0].ItemPricePerUnit != 12.5 {
+		t.Fatalf("rows = %#v", rows)
+	}
+}
+
 func TestParseCustomerReturnsDecodesDeclaredCP1252(t *testing.T) {
 	data := []byte("return-date\torder-id\tsku\tasin\tfnsku\tproduct-name\tquantity\tfulfillment-center-id\tdetailed-disposition\treason\tstatus\tlicense-plate-number\tcustomer-comments\n2026-08-08\torder-1\tsku-1\tasin-1\tfnsku-1\tWidget\t1\tFC1\tSELLABLE\tOTHER\tCOMPLETE\tlp-1\t\x93opened\x94\n")
 	rows, err := ParseCustomerReturns(data, "", "text/plain; charset=cp1252")
@@ -104,6 +115,44 @@ func (s *fakeStore) SaveCustomerReturns(_ context.Context, _ int64, rows []Custo
 func (s *fakeStore) MarkReportError(_ context.Context, _ int64, _ string, _ error) error {
 	s.errors++
 	return s.markErrorErr
+}
+
+type salesStore struct {
+	fakeStore
+	savedSales int
+}
+
+func (s *salesStore) SaveCustomerShipmentSales(_ context.Context, _ int64, rows []CustomerShipmentSale, _ string, _ string) error {
+	s.savedSales += len(rows)
+	return nil
+}
+
+func TestRunnerExportsCustomerShipmentSalesAndPersistsTypedRows(t *testing.T) {
+	data := []byte("shipment-date\tsku\tfnsku\tasin\tfulfillment-center-id\tquantity\tamazon-order-id\tcurrency\titem-price-per-unit\tshipping-price\tgift-wrap-price\tship-city\tship-state\tship-postal-code\n2026-08-11\tsku-1\tfnsku-1\tasin-1\tFC1\t3\torder-1\tUSD\t12.50\t1.25\t0.00\tSeattle\tWA\t98101\n")
+	download := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write(data) }))
+	defer download.Close()
+	client := signedClientFunc(func(_ context.Context, _ string, path string, body map[string]any) ([]byte, int, int, error) {
+		switch path {
+		case createPath:
+			if body["report_type"] != CustomerShipmentSalesReportType {
+				t.Fatalf("create report_type = %#v", body["report_type"])
+			}
+			return []byte(`{"code":0,"data":{"task_id":"sales-task"}}`), 200, 0, nil
+		case queryPath:
+			return []byte(fmt.Sprintf(`{"code":0,"data":{"progress_status":"DONE","report_document_id":"sales-doc","url":"%s/file"}}`, download.URL)), 200, 0, nil
+		default:
+			return nil, 0, 0, fmt.Errorf("unexpected signed path %s", path)
+		}
+	})
+	store := &salesStore{}
+	runner := Runner{Client: client, Store: store, PollInterval: time.Millisecond, PollTimeout: time.Second}
+	result, err := runner.Run(context.Background(), Request{ReportType: CustomerShipmentSalesReportType, AccountID: "acct", SellerID: "seller", StoreID: "store-1", Region: "na", MarketplaceIDs: []string{"ATVPDHSKDCJ6R"}, DateFrom: "2026-08-11T00:00:00Z", DateTo: "2026-08-11T23:59:59Z"})
+	if err != nil || result.Status != "SUCCESS" {
+		t.Fatalf("result=%#v, err=%v", result, err)
+	}
+	if result.Rows != 1 || store.savedSales != 1 {
+		t.Fatalf("result rows=%d saved sales=%d", result.Rows, store.savedSales)
+	}
 }
 
 func TestRunnerCompletesAndRenewsExpiredURLAndAllowsSameRangeRerun(t *testing.T) {
@@ -448,12 +497,13 @@ func TestDownloadPreservesReportContentType(t *testing.T) {
 func TestValidateRequestRejectsInvalidRegionAndBlankMarketplace(t *testing.T) {
 	base := Request{AccountID: "acct", SellerID: "seller", StoreID: "store-1", Region: "na", MarketplaceIDs: []string{"ATVPDHSKDCJ6R"}, DateFrom: "2026-08-01T00:00:00Z", DateTo: "2026-08-02T00:00:00Z"}
 	for name, request := range map[string]Request{
-		"invalid region":        func() Request { r := base; r.Region = "ap"; return r }(),
-		"blank marketplace":     func() Request { r := base; r.MarketplaceIDs = []string{" "}; return r }(),
-		"duplicate marketplace": func() Request { r := base; r.MarketplaceIDs = []string{"ATVPDHSKDCJ6R", "ATVPDHSKDCJ6R"}; return r }(),
-		"blank seller":          func() Request { r := base; r.SellerID = " seller "; return r }(),
-		"blank account":         func() Request { r := base; r.AccountID = " acct "; return r }(),
-		"blank store":           func() Request { r := base; r.StoreID = ""; return r }(),
+		"unsupported report type": func() Request { r := base; r.ReportType = "GET_UNSUPPORTED_REPORT"; return r }(),
+		"invalid region":          func() Request { r := base; r.Region = "ap"; return r }(),
+		"blank marketplace":       func() Request { r := base; r.MarketplaceIDs = []string{" "}; return r }(),
+		"duplicate marketplace":   func() Request { r := base; r.MarketplaceIDs = []string{"ATVPDHSKDCJ6R", "ATVPDHSKDCJ6R"}; return r }(),
+		"blank seller":            func() Request { r := base; r.SellerID = " seller "; return r }(),
+		"blank account":           func() Request { r := base; r.AccountID = " acct "; return r }(),
+		"blank store":             func() Request { r := base; r.StoreID = ""; return r }(),
 	} {
 		t.Run(name, func(t *testing.T) {
 			if err := validateRequest(request); err == nil {
