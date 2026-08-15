@@ -81,6 +81,9 @@ type fakeStore struct {
 	savedReserved       int
 	savedAFN            int
 	savedAFNByCountry   int
+	savedStorageFees    int
+	savedOverageFees    int
+	savedLongtermFees   int
 	savedReplacements   int
 	savedReimbursements int
 	errors              int
@@ -141,6 +144,18 @@ func (s *fakeStore) SaveAFNInventoryByCountry(_ context.Context, _ int64, rows [
 	s.savedAFNByCountry += len(rows)
 	return nil
 }
+func (s *fakeStore) SaveFBAStorageFeeCharges(_ context.Context, _ int64, rows []FBAStorageFeeCharges, _ string, _ string) error {
+	s.savedStorageFees += len(rows)
+	return nil
+}
+func (s *fakeStore) SaveFBAOverageFeeCharges(_ context.Context, _ int64, rows []FBAOverageFeeCharges, _ string, _ string) error {
+	s.savedOverageFees += len(rows)
+	return nil
+}
+func (s *fakeStore) SaveFBALongtermStorageFeeCharges(_ context.Context, _ int64, rows []FBALongtermStorageFeeCharges, _ string, _ string) error {
+	s.savedLongtermFees += len(rows)
+	return nil
+}
 func (s *fakeStore) SaveCustomerShipmentReplacements(_ context.Context, _ int64, rows []CustomerShipmentReplacement, _ string, _ string) error {
 	s.savedReplacements += len(rows)
 	return nil
@@ -199,6 +214,9 @@ func TestRunnerPersistsEachInventoryReportThroughItsTypedStore(t *testing.T) {
 		ReservedInventoryReportType:            []byte("sku\tfnsku\tasin\tproduct-name\treserved_qty\treserved_customerorders\treserved_fc-transfers\treserved_fc-processing\t\nSKU-1\tFNSKU-1\tASIN-1\tWidget\t8\t2\t3\t3\t\n"),
 		AFNInventoryReportType:                 []byte("seller-sku\tfulfillment-channel-sku\tasin\tcondition-type\tWarehouse-Condition-code\tQuantity Available\nSKU-1\tFC-SKU-1\tASIN-1\tNew\tSELLABLE\t17\n"),
 		AFNInventoryByCountryReportType:        []byte("seller-sku\tfulfillment-channel-sku\tasin\tcondition-type\tcountry\tquantity-for-local-fulfillment\nSKU-1\tFC-SKU-1\tASIN-1\tNew\tDE\t17\n"),
+		FBAStorageFeeChargesReportType:         []byte(strings.Join(fbaStorageFeeChargesHeader, "\t") + "\nx\t" + strings.Repeat("x\t", len(fbaStorageFeeChargesHeader)-2) + "x\n"),
+		FBAOverageFeeChargesReportType:         []byte(strings.Join(fbaOverageFeeChargesHeader, "\t") + "\nx\t" + strings.Repeat("x\t", len(fbaOverageFeeChargesHeader)-2) + "x\n"),
+		FBALongtermStorageFeeChargesReportType: []byte(strings.Join(fbaLongtermStorageFeeChargesHeader, "\t") + "\nx\t" + strings.Repeat("x\t", len(fbaLongtermStorageFeeChargesHeader)-2) + "x\n"),
 		CustomerShipmentReplacementsReportType: []byte("shipment-date\tsku\tasin\tfulfillment-center-id\toriginal-fulfillment-center-id\tquantity\treplacement-reason-code\treplacement-amazon-order-id\toriginal-amazon-order-id\n2026-08-11\tSKU-1\tASIN-1\tFC-1\tFC-2\t2\tDAMAGED\tORDER-2\tORDER-1\n"),
 		FBAReimbursementsReportType:            []byte("approval-date\treimbursement-id\tcase-id\tamazon-order-id\treason\tsku\tfnsku\tasin\tproduct-name\tcondition\tcurrency-unit\tamount-per-unit\tamount-total\tquantity-reimbursed-cash\tquantity-reimbursed-inventory\tquantity-reimbursed-total\toriginal-reimbursement-id\toriginal-reimbursement-type\n2026-08-11\tR-1\tC-1\tO-1\tDAMAGED\tSKU-1\tFNSKU-1\tASIN-1\tWidget\tNew\tUSD\t2.00\t4.00\t1\t1\t2\tR-0\tINVENTORY\n"),
 	}
@@ -230,6 +248,18 @@ func TestRunnerPersistsEachInventoryReportThroughItsTypedStore(t *testing.T) {
 			case AFNInventoryByCountryReportType:
 				if store.savedAFNByCountry != 1 {
 					t.Fatalf("AFN by country saves=%d", store.savedAFNByCountry)
+				}
+			case FBAStorageFeeChargesReportType:
+				if store.savedStorageFees != 1 {
+					t.Fatalf("storage fee saves=%d", store.savedStorageFees)
+				}
+			case FBAOverageFeeChargesReportType:
+				if store.savedOverageFees != 1 {
+					t.Fatalf("overage fee saves=%d", store.savedOverageFees)
+				}
+			case FBALongtermStorageFeeChargesReportType:
+				if store.savedLongtermFees != 1 {
+					t.Fatalf("longterm fee saves=%d", store.savedLongtermFees)
 				}
 			case CustomerShipmentReplacementsReportType:
 				if store.savedReplacements != 1 {

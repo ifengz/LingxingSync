@@ -1,0 +1,26 @@
+-- Formal Amazon FBA long-term storage fee charges report evidence.
+CREATE TABLE IF NOT EXISTS ls_fba_longterm_storage_fee_charges (
+    account_id                         VARCHAR(32)  NOT NULL,
+    seller_id                          VARCHAR(64)  NOT NULL,
+    store_id                           VARCHAR(64)  NOT NULL DEFAULT '',
+    report_task_id                     VARCHAR(128) NOT NULL,
+    `row_number`                       INT UNSIGNED NOT NULL,
+    row_sha256                         CHAR(64)     NOT NULL,
+    `snapshot-date`                    VARCHAR(40)  NULL,
+    sku                                VARCHAR(256) NULL,
+    fnsku                              VARCHAR(64)  NULL,
+    asin                               VARCHAR(32)  NULL,
+    `product-name`                     TEXT         NULL,
+    `condition`                        VARCHAR(64)  NULL,
+    `per-unit-volume`                  VARCHAR(64)  NULL,
+    currency                           VARCHAR(16)  NULL,
+    `volume-unit`                      VARCHAR(32)  NULL,
+    country                            VARCHAR(16)  NULL,
+    `qty-charged`                      VARCHAR(64)  NULL,
+    `amount-charged`                   VARCHAR(64)  NULL,
+    `surcharge-age-tier`               VARCHAR(64)  NULL,
+    `rate-surcharge`                   VARCHAR(64)  NULL,
+    PRIMARY KEY (report_task_id, `row_number`),
+    INDEX idx_fba_longterm_fee_scope (account_id, seller_id, store_id, `snapshot-date`),
+    INDEX idx_fba_longterm_fee_asin (account_id, seller_id, store_id, asin)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT 'Amazon FBA long-term storage fee charges formal report raw rows';

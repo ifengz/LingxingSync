@@ -117,6 +117,36 @@ func TestAFNInventoryByCountryMigrationContractIsIndependent(t *testing.T) {
 	}
 }
 
+func TestFeeReportMigrationsAreIndependent(t *testing.T) {
+	for _, test := range []struct {
+		file  string
+		table string
+		field string
+	}{
+		{"../../migrations/045_add_fba_storage_fee_charges_report.sql", "LS_FBA_STORAGE_FEE_CHARGES", "ESTIMATED_MONTHLY_STORAGE_FEE"},
+		{"../../migrations/046_add_fba_overage_fee_charges_report.sql", "LS_FBA_OVERAGE_FEE_CHARGES", "CHARGED_FEE_AMOUNT"},
+		{"../../migrations/047_add_fba_longterm_storage_fee_charges_report.sql", "LS_FBA_LONGTERM_STORAGE_FEE_CHARGES", "AMOUNT-CHARGED"},
+	} {
+		t.Run(test.table, func(t *testing.T) {
+			raw, err := os.ReadFile(test.file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			sql := strings.ToUpper(string(raw))
+			for _, want := range []string{test.table, test.field, "CREATE TABLE IF NOT EXISTS"} {
+				if !strings.Contains(sql, want) {
+					t.Fatalf("migration missing %q", want)
+				}
+			}
+			for _, forbidden := range []string{"DROP TABLE", "DELETE FROM", "TRUNCATE"} {
+				if strings.Contains(sql, forbidden) {
+					t.Fatalf("migration contains destructive %s", forbidden)
+				}
+			}
+		})
+	}
+}
+
 func TestCustomerReturnsReportMigrationIsRepeatableAgainstLocalMySQL(t *testing.T) {
 	dsn := os.Getenv("LINGXING_MIGRATION_TEST_DSN")
 	if dsn == "" {

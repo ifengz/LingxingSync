@@ -192,6 +192,12 @@ func reportExportType(value string) (string, error) {
 		return reportexport.AFNInventoryReportType, nil
 	case config.ReportExportAFNInventoryByCountry:
 		return reportexport.AFNInventoryByCountryReportType, nil
+	case config.ReportExportFBAStorageFeeCharges:
+		return reportexport.FBAStorageFeeChargesReportType, nil
+	case config.ReportExportFBAOverageFeeCharges:
+		return reportexport.FBAOverageFeeChargesReportType, nil
+	case config.ReportExportFBALongtermStorageFeeCharges:
+		return reportexport.FBALongtermStorageFeeChargesReportType, nil
 	case config.ReportExportCustomerShipmentReplacements:
 		return reportexport.CustomerShipmentReplacementsReportType, nil
 	case config.ReportExportFBAReimbursements:

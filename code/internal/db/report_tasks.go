@@ -495,6 +495,74 @@ func (d *DBReportStore) SaveAFNInventoryByCountry(ctx context.Context, id int64,
 	return nil
 }
 
+func (d *DBReportStore) SaveFBAStorageFeeCharges(ctx context.Context, id int64, rows []reportexport.FBAStorageFeeCharges, downloadSHA string, documentID string) error {
+	const insert = "INSERT INTO ls_fba_storage_fee_charges\n" +
+		"(account_id, seller_id, store_id, report_task_id, `row_number`, row_sha256, asin, fnsku, product_name, fulfillment_center, country_code, longest_side, median_side, shortest_side, measurement_units, weight, weight_units, item_volume, volume_units, product_size_tier, average_quantity_on_hand, average_quantity_pending_removal, estimated_total_item_volume, month_of_charge, storage_rate, currency, estimated_monthly_storage_fee, dangerous_goods_storage_type, eligible_for_inventory_discount, qualifies_for_inventory_discount, total_incentive_fee_amount, breakdown_incentive_fee_amount, average_quantity_customer_orders)\n" +
+		"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\n" +
+		"ON DUPLICATE KEY UPDATE row_sha256=VALUES(row_sha256), asin=VALUES(asin), fnsku=VALUES(fnsku), product_name=VALUES(product_name), fulfillment_center=VALUES(fulfillment_center), country_code=VALUES(country_code), longest_side=VALUES(longest_side), median_side=VALUES(median_side), shortest_side=VALUES(shortest_side), measurement_units=VALUES(measurement_units), weight=VALUES(weight), weight_units=VALUES(weight_units), item_volume=VALUES(item_volume), volume_units=VALUES(volume_units), product_size_tier=VALUES(product_size_tier), average_quantity_on_hand=VALUES(average_quantity_on_hand), average_quantity_pending_removal=VALUES(average_quantity_pending_removal), estimated_total_item_volume=VALUES(estimated_total_item_volume), month_of_charge=VALUES(month_of_charge), storage_rate=VALUES(storage_rate), currency=VALUES(currency), estimated_monthly_storage_fee=VALUES(estimated_monthly_storage_fee), dangerous_goods_storage_type=VALUES(dangerous_goods_storage_type), eligible_for_inventory_discount=VALUES(eligible_for_inventory_discount), qualifies_for_inventory_discount=VALUES(qualifies_for_inventory_discount), total_incentive_fee_amount=VALUES(total_incentive_fee_amount), breakdown_incentive_fee_amount=VALUES(breakdown_incentive_fee_amount), average_quantity_customer_orders=VALUES(average_quantity_customer_orders)"
+	values := make([][]string, len(rows))
+	for i, row := range rows {
+		values[i] = row.Values
+	}
+	return d.saveFixedReportRows(ctx, id, "FBA storage fee charges", insert, values, downloadSHA, documentID)
+}
+
+func (d *DBReportStore) SaveFBAOverageFeeCharges(ctx context.Context, id int64, rows []reportexport.FBAOverageFeeCharges, downloadSHA string, documentID string) error {
+	const insert = "INSERT INTO ls_fba_overage_fee_charges\n" +
+		"(account_id, seller_id, store_id, report_task_id, `row_number`, row_sha256, charged_date, country_code, storage_type, charge_rate, storage_usage_volume, storage_limit_volume, overage_volume, volume_unit, charged_fee_amount, currency_code)\n" +
+		"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\n" +
+		"ON DUPLICATE KEY UPDATE row_sha256=VALUES(row_sha256), charged_date=VALUES(charged_date), country_code=VALUES(country_code), storage_type=VALUES(storage_type), charge_rate=VALUES(charge_rate), storage_usage_volume=VALUES(storage_usage_volume), storage_limit_volume=VALUES(storage_limit_volume), overage_volume=VALUES(overage_volume), volume_unit=VALUES(volume_unit), charged_fee_amount=VALUES(charged_fee_amount), currency_code=VALUES(currency_code)"
+	values := make([][]string, len(rows))
+	for i, row := range rows {
+		values[i] = row.Values
+	}
+	return d.saveFixedReportRows(ctx, id, "FBA overage fee charges", insert, values, downloadSHA, documentID)
+}
+
+func (d *DBReportStore) SaveFBALongtermStorageFeeCharges(ctx context.Context, id int64, rows []reportexport.FBALongtermStorageFeeCharges, downloadSHA string, documentID string) error {
+	const insert = "INSERT INTO ls_fba_longterm_storage_fee_charges\n" +
+		"(account_id, seller_id, store_id, report_task_id, `row_number`, row_sha256, `snapshot-date`, sku, fnsku, asin, `product-name`, `condition`, `per-unit-volume`, currency, `volume-unit`, country, `qty-charged`, `amount-charged`, `surcharge-age-tier`, `rate-surcharge`)\n" +
+		"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\n" +
+		"ON DUPLICATE KEY UPDATE row_sha256=VALUES(row_sha256), `snapshot-date`=VALUES(`snapshot-date`), sku=VALUES(sku), fnsku=VALUES(fnsku), asin=VALUES(asin), `product-name`=VALUES(`product-name`), `condition`=VALUES(`condition`), `per-unit-volume`=VALUES(`per-unit-volume`), currency=VALUES(currency), `volume-unit`=VALUES(`volume-unit`), country=VALUES(country), `qty-charged`=VALUES(`qty-charged`), `amount-charged`=VALUES(`amount-charged`), `surcharge-age-tier`=VALUES(`surcharge-age-tier`), `rate-surcharge`=VALUES(`rate-surcharge`)"
+	values := make([][]string, len(rows))
+	for i, row := range rows {
+		values[i] = row.Values
+	}
+	return d.saveFixedReportRows(ctx, id, "FBA longterm storage fee charges", insert, values, downloadSHA, documentID)
+}
+
+func (d *DBReportStore) saveFixedReportRows(ctx context.Context, id int64, label, insert string, rows [][]string, downloadSHA, documentID string) error {
+	if err := d.ensure(); err != nil {
+		return err
+	}
+	tx, err := d.db.BeginTxx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("db report: begin %s transaction: %w", label, err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	meta, err := loadReportMeta(ctx, tx, id)
+	if err != nil {
+		return err
+	}
+	stmt, err := tx.PrepareContext(ctx, insert)
+	if err != nil {
+		return fmt.Errorf("db report: prepare %s insert: %w", label, err)
+	}
+	defer stmt.Close()
+	for i, values := range rows {
+		if err := execInventoryRow(ctx, stmt, meta, i+1, values); err != nil {
+			return fmt.Errorf("db report: insert %s row %d: %w", label, i+1, err)
+		}
+	}
+	if err := finalizeReportTx(ctx, tx, id, documentID, downloadSHA, len(rows)); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("db report: commit %s transaction: %w", label, err)
+	}
+	return nil
+}
+
 func (d *DBReportStore) SaveCustomerShipmentReplacements(ctx context.Context, id int64, rows []reportexport.CustomerShipmentReplacement, downloadSHA string, documentID string) error {
 	if err := d.ensure(); err != nil {
 		return err

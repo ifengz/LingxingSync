@@ -297,6 +297,19 @@ func customerReturnsSchemaRequirements() map[string][]string {
 }
 
 func formalReportSchemaRequirements(reportType string) map[string][]string {
+	fbaStorageFeeChargesSchemaColumns := []string{
+		"asin", "fnsku", "product_name", "fulfillment_center", "country_code", "longest_side", "median_side", "shortest_side",
+		"measurement_units", "weight", "weight_units", "item_volume", "volume_units", "product_size_tier", "average_quantity_on_hand",
+		"average_quantity_pending_removal", "estimated_total_item_volume", "month_of_charge", "storage_rate", "currency",
+		"estimated_monthly_storage_fee", "dangerous_goods_storage_type", "eligible_for_inventory_discount", "qualifies_for_inventory_discount",
+		"total_incentive_fee_amount", "breakdown_incentive_fee_amount", "average_quantity_customer_orders",
+	}
+	fbaOverageFeeChargesSchemaColumns := []string{
+		"charged_date", "country_code", "storage_type", "charge_rate", "storage_usage_volume", "storage_limit_volume", "overage_volume", "volume_unit", "charged_fee_amount", "currency_code",
+	}
+	fbaLongtermStorageFeeChargesSchemaColumns := []string{
+		"snapshot-date", "sku", "fnsku", "asin", "product-name", "condition", "per-unit-volume", "currency", "volume-unit", "country", "qty-charged", "amount-charged", "surcharge-age-tier", "rate-surcharge",
+	}
 	requirements := listingdaily.CustomerReturnsSchemaRequirements()
 	requirements["ls_report_export_tasks"] = []string{
 		"id", "account_id", "seller_id", "store_id", "report_type", "region", "marketplace_ids",
@@ -350,6 +363,18 @@ func formalReportSchemaRequirements(reportType string) map[string][]string {
 		requirements["ls_afn_inventory_by_country"] = append([]string{
 			"account_id", "seller_id", "store_id", "report_task_id", "row_number", "row_sha256",
 		}, []string{"seller-sku", "fulfillment-channel-sku", "asin", "condition-type", "country", "quantity-for-local-fulfillment"}...)
+	case reportexport.FBAStorageFeeChargesReportType:
+		requirements["ls_fba_storage_fee_charges"] = append([]string{
+			"account_id", "seller_id", "store_id", "report_task_id", "row_number", "row_sha256",
+		}, fbaStorageFeeChargesSchemaColumns...)
+	case reportexport.FBAOverageFeeChargesReportType:
+		requirements["ls_fba_overage_fee_charges"] = append([]string{
+			"account_id", "seller_id", "store_id", "report_task_id", "row_number", "row_sha256",
+		}, fbaOverageFeeChargesSchemaColumns...)
+	case reportexport.FBALongtermStorageFeeChargesReportType:
+		requirements["ls_fba_longterm_storage_fee_charges"] = append([]string{
+			"account_id", "seller_id", "store_id", "report_task_id", "row_number", "row_sha256",
+		}, fbaLongtermStorageFeeChargesSchemaColumns...)
 	case reportexport.CustomerShipmentReplacementsReportType:
 		requirements["ls_fba_fulfillment_customer_shipment_replacements"] = append([]string{
 			"account_id", "seller_id", "store_id", "report_task_id", "row_number", "row_sha256",

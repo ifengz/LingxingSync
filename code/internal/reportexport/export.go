@@ -119,6 +119,18 @@ type AFNInventoryByCountryStore interface {
 	SaveAFNInventoryByCountry(context.Context, int64, []AFNInventoryByCountry, string, string) error
 }
 
+type FBAStorageFeeChargesStore interface {
+	SaveFBAStorageFeeCharges(context.Context, int64, []FBAStorageFeeCharges, string, string) error
+}
+
+type FBAOverageFeeChargesStore interface {
+	SaveFBAOverageFeeCharges(context.Context, int64, []FBAOverageFeeCharges, string, string) error
+}
+
+type FBALongtermStorageFeeChargesStore interface {
+	SaveFBALongtermStorageFeeCharges(context.Context, int64, []FBALongtermStorageFeeCharges, string, string) error
+}
+
 type CustomerShipmentReplacementsStore interface {
 	SaveCustomerShipmentReplacements(context.Context, int64, []CustomerShipmentReplacement, string, string) error
 }
@@ -319,6 +331,45 @@ func (r *Runner) saveDownloadedReport(ctx context.Context, auditID int64, reques
 			return 0, err
 		}
 		if err := store.SaveAFNInventoryByCountry(ctx, auditID, rows, hash, documentID); err != nil {
+			return 0, err
+		}
+		return len(rows), nil
+	case FBAStorageFeeChargesReportType:
+		store, ok := r.Store.(FBAStorageFeeChargesStore)
+		if !ok {
+			return 0, fmt.Errorf("report export: store does not support %s", FBAStorageFeeChargesReportType)
+		}
+		rows, err := ParseFBAStorageFeeCharges(body, compressionAlgorithm, contentType)
+		if err != nil {
+			return 0, err
+		}
+		if err := store.SaveFBAStorageFeeCharges(ctx, auditID, rows, hash, documentID); err != nil {
+			return 0, err
+		}
+		return len(rows), nil
+	case FBAOverageFeeChargesReportType:
+		store, ok := r.Store.(FBAOverageFeeChargesStore)
+		if !ok {
+			return 0, fmt.Errorf("report export: store does not support %s", FBAOverageFeeChargesReportType)
+		}
+		rows, err := ParseFBAOverageFeeCharges(body, compressionAlgorithm, contentType)
+		if err != nil {
+			return 0, err
+		}
+		if err := store.SaveFBAOverageFeeCharges(ctx, auditID, rows, hash, documentID); err != nil {
+			return 0, err
+		}
+		return len(rows), nil
+	case FBALongtermStorageFeeChargesReportType:
+		store, ok := r.Store.(FBALongtermStorageFeeChargesStore)
+		if !ok {
+			return 0, fmt.Errorf("report export: store does not support %s", FBALongtermStorageFeeChargesReportType)
+		}
+		rows, err := ParseFBALongtermStorageFeeCharges(body, compressionAlgorithm, contentType)
+		if err != nil {
+			return 0, err
+		}
+		if err := store.SaveFBALongtermStorageFeeCharges(ctx, auditID, rows, hash, documentID); err != nil {
 			return 0, err
 		}
 		return len(rows), nil
@@ -567,7 +618,7 @@ func normalizedReportType(request Request) string {
 
 func validateRequest(request Request) error {
 	switch normalizedReportType(request) {
-	case CustomerReturnsReportType, CustomerShipmentSalesReportType, FBAInventoryReportType, FBAAllInventoryReportType, ReservedInventoryReportType, AFNInventoryReportType, AFNInventoryByCountryReportType, CustomerShipmentReplacementsReportType, FBAReimbursementsReportType:
+	case CustomerReturnsReportType, CustomerShipmentSalesReportType, FBAInventoryReportType, FBAAllInventoryReportType, ReservedInventoryReportType, AFNInventoryReportType, AFNInventoryByCountryReportType, FBAStorageFeeChargesReportType, FBAOverageFeeChargesReportType, FBALongtermStorageFeeChargesReportType, CustomerShipmentReplacementsReportType, FBAReimbursementsReportType:
 	default:
 		return fmt.Errorf("report export: unsupported report type %q", normalizedReportType(request))
 	}
