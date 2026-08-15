@@ -516,6 +516,15 @@ func TestRunnerReportsUnknownStatusDiagnosticsAfterTimeout(t *testing.T) {
 	}
 }
 
+func TestRunnerDefaultPollingBoundaryIsTwentyFourHours(t *testing.T) {
+	if defaultPollInterval != time.Minute {
+		t.Fatalf("default polling interval=%s, want one minute", defaultPollInterval)
+	}
+	if defaultPollTimeout != 24*time.Hour {
+		t.Fatalf("default polling boundary=%s, want official 24h task timeout", defaultPollTimeout)
+	}
+}
+
 type concurrentStore struct {
 	mu      sync.Mutex
 	audit   Audit

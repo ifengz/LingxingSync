@@ -27,6 +27,8 @@ const (
 	maxDateRange           = 31 * 24 * time.Hour
 	defaultDownloadTimeout = 60 * time.Second
 	defaultSharedTaskWait  = 10 * time.Second
+	defaultPollInterval    = time.Minute
+	defaultPollTimeout     = 24 * time.Hour
 )
 
 var reportRateLimitDelays = []time.Duration{5 * time.Second, 15 * time.Second, 30 * time.Second, 60 * time.Second, 120 * time.Second}
@@ -592,7 +594,7 @@ func (r *Runner) waitForDone(ctx context.Context, request Request, auditID int64
 	}
 	timeout := r.PollTimeout
 	if timeout <= 0 {
-		timeout = 30 * time.Minute
+		timeout = defaultPollTimeout
 	}
 	deadline := time.NewTimer(timeout)
 	defer deadline.Stop()
