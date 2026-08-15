@@ -32,9 +32,9 @@ func TestSaveFixedReportRowsRejectsPlaceholderMismatchBeforeDatabase(t *testing.
 	}
 }
 
-func TestSaveAllOrdersAcceptsCanonicalThirtyThreeColumnRow(t *testing.T) {
+func TestSaveAllOrdersAcceptsCanonicalThirtyFourColumnRow(t *testing.T) {
 	store := &DBReportStore{}
-	err := store.SaveAllOrders(context.Background(), 1, []reportexport.AllOrder{{Values: make([]string, 33)}}, "sha", "doc")
+	err := store.SaveAllOrders(context.Background(), 1, []reportexport.AllOrder{{Values: make([]string, 34)}}, "sha", "doc")
 	if err == nil || !strings.Contains(err.Error(), "nil database") {
 		t.Fatalf("error = %v, want placeholder validation to pass before nil database", err)
 	}

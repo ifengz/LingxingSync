@@ -173,6 +173,24 @@ func TestAllOrdersVariantMigrationIsGuardedAndNonDestructive(t *testing.T) {
 	}
 }
 
+func TestAllOrdersSignatureConfirmationMigrationIsGuardedAndNonDestructive(t *testing.T) {
+	raw, err := os.ReadFile("../../migrations/058_add_amazon_all_orders_signature_confirmation.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sql := strings.ToUpper(string(raw))
+	for _, want := range []string{"INFORMATION_SCHEMA.COLUMNS", "SIGNATURE-CONFIRMATION-RECOMMENDED", "ALTER TABLE LS_AMAZON_ALL_ORDERS_BY_ORDER_DATE ADD COLUMN"} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("migration missing %q", want)
+		}
+	}
+	for _, forbidden := range []string{"DROP TABLE", "DROP COLUMN", "DELETE FROM", "TRUNCATE", "UPDATE "} {
+		if strings.Contains(sql, forbidden) {
+			t.Fatalf("migration contains destructive %s", forbidden)
+		}
+	}
+}
+
 func TestCustomerReturnsReportMigrationIsRepeatableAgainstLocalMySQL(t *testing.T) {
 	dsn := os.Getenv("LINGXING_MIGRATION_TEST_DSN")
 	if dsn == "" {

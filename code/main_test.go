@@ -145,6 +145,14 @@ func TestAmazonFulfilledShipmentsHasIndependentRawOnlySchema(t *testing.T) {
 	}
 }
 
+func TestAmazonAllOrdersSchemaRequiresProductionThirtyFourColumns(t *testing.T) {
+	requirements := formalReportSchemaRequirements(reportexport.AllOrdersReportType)
+	columns := requirements["ls_amazon_all_orders_by_order_date"]
+	if len(columns) != 40 || !slices.Contains(columns, "signature-confirmation-recommended") {
+		t.Fatalf("all orders schema = %#v", columns)
+	}
+}
+
 func TestAdditionalFBAReportsHaveIndependentRawSchemas(t *testing.T) {
 	tests := map[string]string{
 		reportexport.FBAStrandedInventoryReportType:         "ls_fba_stranded_inventory",
