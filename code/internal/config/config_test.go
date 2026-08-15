@@ -132,6 +132,51 @@ report_exports:
 	}
 }
 
+func TestLoadRequiresEstimatedFeesDailyScheduleAndSeventyTwoHourWindow(t *testing.T) {
+	base := `database:
+  host: 127.0.0.1
+  user: test
+  db: lingsync
+accounts:
+  - id: sc_us
+    app_key: key
+    app_secret: secret
+report_exports:
+  - type: fba_estimated_fees
+    enabled: true
+    account: sc_us
+    seller_id: SELLER-1
+    store_id: STORE-1
+    region: na
+    marketplace_ids: [ATVPDKIKX0DER]
+    cron: "0 4 * * *"
+    window_days: 3
+`
+	tests := map[string]struct {
+		raw  string
+		want bool
+	}{
+		"daily 72 hours": {raw: base, want: true},
+		"short window":   {raw: strings.Replace(base, "window_days: 3", "window_days: 2", 1)},
+		"repeats daily":  {raw: strings.Replace(base, `cron: "0 4 * * *"`, `cron: "*/30 * * * *"`, 1)},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.yaml")
+			if err := os.WriteFile(path, []byte(test.raw), 0600); err != nil {
+				t.Fatal(err)
+			}
+			_, err := Load(path)
+			if test.want && err != nil {
+				t.Fatalf("valid estimated fees config rejected: %v", err)
+			}
+			if !test.want && err == nil {
+				t.Fatal("invalid estimated fees config accepted")
+			}
+		})
+	}
+}
+
 func TestLoadAllowsDisabledEmptyReportExport(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	raw := `database:

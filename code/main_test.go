@@ -145,6 +145,26 @@ func TestAdditionalFBAReportsHaveIndependentRawSchemas(t *testing.T) {
 		if reportRequiresDailyProjection(reportType) {
 			t.Fatalf("%s must remain raw-only without a matching daily metric", reportType)
 		}
+		if _, coupled := requirements["listing_daily_metrics"]; coupled {
+			t.Fatalf("%s raw-only schema unexpectedly requires listing_daily_metrics", reportType)
+		}
+	}
+}
+
+func TestRemovalReportsHaveIndependentRawSchemas(t *testing.T) {
+	tests := map[string]string{
+		reportexport.FBARecommendedRemovalReportType: "ls_fba_recommended_removals",
+		reportexport.FBARemovalOrderReportType:       "ls_fba_removal_order_details",
+		reportexport.FBARemovalShipmentReportType:    "ls_fba_removal_shipment_details",
+	}
+	for reportType, table := range tests {
+		requirements := formalReportSchemaRequirements(reportType)
+		if len(requirements[table]) <= 6 || reportRequiresDailyProjection(reportType) {
+			t.Fatalf("%s schema is not raw-only: %#v", reportType, requirements)
+		}
+		if _, coupled := requirements["listing_daily_metrics"]; coupled {
+			t.Fatalf("%s unexpectedly requires listing_daily_metrics", reportType)
+		}
 	}
 }
 

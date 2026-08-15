@@ -72,25 +72,28 @@ func TestParseCustomerReturnsRejectsUnknownCompression(t *testing.T) {
 }
 
 type fakeStore struct {
-	nextID              int64
-	audits              []Audit
-	progress            []string
-	saved               int
-	savedFBA            int
-	savedFBAAll         int
-	savedReserved       int
-	savedAFN            int
-	savedAFNByCountry   int
-	savedStorageFees    int
-	savedOverageFees    int
-	savedLongtermFees   int
-	savedReplacements   int
-	savedReimbursements int
-	savedStranded       int
-	savedEstimatedFees  int
-	savedNoncompliance  int
-	errors              int
-	markErrorErr        error
+	nextID                int64
+	audits                []Audit
+	progress              []string
+	saved                 int
+	savedFBA              int
+	savedFBAAll           int
+	savedReserved         int
+	savedAFN              int
+	savedAFNByCountry     int
+	savedStorageFees      int
+	savedOverageFees      int
+	savedLongtermFees     int
+	savedReplacements     int
+	savedReimbursements   int
+	savedStranded         int
+	savedEstimatedFees    int
+	savedNoncompliance    int
+	savedRecommended      int
+	savedRemovalOrders    int
+	savedRemovalShipments int
+	errors                int
+	markErrorErr          error
 }
 
 type countingLimiter struct{ waits int }
@@ -179,6 +182,18 @@ func (s *fakeStore) SaveFBAInboundNoncompliance(_ context.Context, _ int64, rows
 	s.savedNoncompliance += len(rows)
 	return nil
 }
+func (s *fakeStore) SaveFBARecommendedRemoval(_ context.Context, _ int64, rows []FBARecommendedRemoval, _ string, _ string) error {
+	s.savedRecommended += len(rows)
+	return nil
+}
+func (s *fakeStore) SaveFBARemovalOrder(_ context.Context, _ int64, rows []FBARemovalOrder, _ string, _ string) error {
+	s.savedRemovalOrders += len(rows)
+	return nil
+}
+func (s *fakeStore) SaveFBARemovalShipment(_ context.Context, _ int64, rows []FBARemovalShipment, _ string, _ string) error {
+	s.savedRemovalShipments += len(rows)
+	return nil
+}
 func (s *fakeStore) MarkReportError(_ context.Context, _ int64, _ string, _ error) error {
 	s.errors++
 	return s.markErrorErr
@@ -237,6 +252,9 @@ func TestRunnerPersistsEachInventoryReportThroughItsTypedStore(t *testing.T) {
 		FBAStrandedInventoryReportType:         []byte(strings.Join(fbaStrandedInventoryHeader, "\t") + "\n" + strings.Repeat("x\t", len(fbaStrandedInventoryHeader)-1) + "x\n"),
 		FBAEstimatedFeesReportType:             []byte(strings.Join(fbaEstimatedFeesHeader, "\t") + "\n" + strings.Repeat("x\t", len(fbaEstimatedFeesHeader)-1) + "x\n"),
 		FBAInboundNoncomplianceReportType:      []byte(strings.Join(fbaInboundNoncomplianceHeader, "\t") + "\n" + strings.Repeat("x\t", len(fbaInboundNoncomplianceHeader)-1) + "x\n"),
+		FBARecommendedRemovalReportType:        []byte(strings.Join(fbaRecommendedRemovalHeader, "\t") + "\n" + strings.Repeat("x\t", len(fbaRecommendedRemovalHeader)-1) + "x\n"),
+		FBARemovalOrderReportType:              []byte(strings.Join(fbaRemovalOrderHeader, "\t") + "\n" + strings.Repeat("x\t", len(fbaRemovalOrderHeader)-1) + "x\n"),
+		FBARemovalShipmentReportType:           []byte(strings.Join(fbaRemovalShipmentHeader, "\t") + "\n" + strings.Repeat("x\t", len(fbaRemovalShipmentHeader)-1) + "x\n"),
 	}
 	for reportType, body := range fixtures {
 		t.Run(reportType, func(t *testing.T) {
@@ -298,6 +316,18 @@ func TestRunnerPersistsEachInventoryReportThroughItsTypedStore(t *testing.T) {
 			case FBAInboundNoncomplianceReportType:
 				if store.savedNoncompliance != 1 {
 					t.Fatalf("noncompliance saves=%d", store.savedNoncompliance)
+				}
+			case FBARecommendedRemovalReportType:
+				if store.savedRecommended != 1 {
+					t.Fatalf("recommended saves=%d", store.savedRecommended)
+				}
+			case FBARemovalOrderReportType:
+				if store.savedRemovalOrders != 1 {
+					t.Fatalf("removal order saves=%d", store.savedRemovalOrders)
+				}
+			case FBARemovalShipmentReportType:
+				if store.savedRemovalShipments != 1 {
+					t.Fatalf("removal shipment saves=%d", store.savedRemovalShipments)
 				}
 			}
 		})

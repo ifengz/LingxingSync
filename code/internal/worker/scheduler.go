@@ -163,6 +163,15 @@ func customerReturnsRequest(report config.ReportExport, now time.Time) (reportex
 	if err != nil {
 		return reportexport.Request{}, err
 	}
+	if report.Type == config.ReportExportFBAEstimatedFees {
+		utcNow := now.UTC()
+		return reportexport.Request{
+			ReportType: reportType, AccountID: report.Account, SellerID: report.SellerID, StoreID: report.StoreID,
+			Region: report.Region, MarketplaceIDs: append([]string(nil), report.MarketplaceIDs...),
+			DateFrom: utcNow.Add(-time.Duration(report.WindowDays) * 24 * time.Hour).Format(time.RFC3339),
+			DateTo:   utcNow.Format(time.RFC3339),
+		}, nil
+	}
 	startOfToday := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 	return reportexport.Request{
 		ReportType:     reportType,
@@ -208,6 +217,12 @@ func reportExportType(value string) (string, error) {
 		return reportexport.FBAEstimatedFeesReportType, nil
 	case config.ReportExportFBAInboundNoncompliance:
 		return reportexport.FBAInboundNoncomplianceReportType, nil
+	case config.ReportExportFBARecommendedRemoval:
+		return reportexport.FBARecommendedRemovalReportType, nil
+	case config.ReportExportFBARemovalOrder:
+		return reportexport.FBARemovalOrderReportType, nil
+	case config.ReportExportFBARemovalShipment:
+		return reportexport.FBARemovalShipmentReportType, nil
 	default:
 		return "", fmt.Errorf("不支持的正式报告类型 %q", value)
 	}

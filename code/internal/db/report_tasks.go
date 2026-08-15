@@ -605,6 +605,36 @@ func (d *DBReportStore) SaveFBAInboundNoncompliance(ctx context.Context, id int6
 	return d.saveFixedReportRows(ctx, id, "FBA inbound noncompliance", insert, values, downloadSHA, documentID)
 }
 
+func (d *DBReportStore) SaveFBARecommendedRemoval(ctx context.Context, id int64, rows []reportexport.FBARecommendedRemoval, downloadSHA, documentID string) error {
+	const insert = "INSERT INTO ls_fba_recommended_removals\n" +
+		"(account_id, seller_id, store_id, report_task_id, `row_number`, row_sha256, `snapshot-date`, sku, fnsku, asin, `product-name`, `condition`, `sellable-quantity`, `sellable-271-365-days`, `sellable-365+-days`, `sellable-removal-quantity`, `unsellable-quantity`, `unsellable-0-7-days`, `unsellable-8-60-days`, `unsellable-61-90-days`, `sellable-121-180-days`, `sellable-181-270-days`)\n" +
+		"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\n" +
+		"ON DUPLICATE KEY UPDATE row_sha256=VALUES(row_sha256), `snapshot-date`=VALUES(`snapshot-date`), sku=VALUES(sku), fnsku=VALUES(fnsku), asin=VALUES(asin), `product-name`=VALUES(`product-name`), `condition`=VALUES(`condition`), `sellable-quantity`=VALUES(`sellable-quantity`), `sellable-271-365-days`=VALUES(`sellable-271-365-days`), `sellable-365+-days`=VALUES(`sellable-365+-days`), `sellable-removal-quantity`=VALUES(`sellable-removal-quantity`), `unsellable-quantity`=VALUES(`unsellable-quantity`), `unsellable-0-7-days`=VALUES(`unsellable-0-7-days`), `unsellable-8-60-days`=VALUES(`unsellable-8-60-days`), `unsellable-61-90-days`=VALUES(`unsellable-61-90-days`), `sellable-121-180-days`=VALUES(`sellable-121-180-days`), `sellable-181-270-days`=VALUES(`sellable-181-270-days`)"
+	values := make([][]string, len(rows))
+	for i, row := range rows { values[i] = row.Values }
+	return d.saveFixedReportRows(ctx, id, "FBA recommended removal", insert, values, downloadSHA, documentID)
+}
+
+func (d *DBReportStore) SaveFBARemovalOrder(ctx context.Context, id int64, rows []reportexport.FBARemovalOrder, downloadSHA, documentID string) error {
+	const insert = "INSERT INTO ls_fba_removal_order_details\n" +
+		"(account_id, seller_id, store_id, report_task_id, `row_number`, row_sha256, `request-date`, `order-id`, `order-type`, `service-speed`, `order-status`, `last-updated-date`, sku, fnsku, disposition, `requested-quantity`, `cancelled-quantity`, `disposed-quantity`, `shipped-quantity`, `in-process-quantity`, `removal-fee`, currency)\n" +
+		"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\n" +
+		"ON DUPLICATE KEY UPDATE row_sha256=VALUES(row_sha256), `request-date`=VALUES(`request-date`), `order-id`=VALUES(`order-id`), `order-type`=VALUES(`order-type`), `service-speed`=VALUES(`service-speed`), `order-status`=VALUES(`order-status`), `last-updated-date`=VALUES(`last-updated-date`), sku=VALUES(sku), fnsku=VALUES(fnsku), disposition=VALUES(disposition), `requested-quantity`=VALUES(`requested-quantity`), `cancelled-quantity`=VALUES(`cancelled-quantity`), `disposed-quantity`=VALUES(`disposed-quantity`), `shipped-quantity`=VALUES(`shipped-quantity`), `in-process-quantity`=VALUES(`in-process-quantity`), `removal-fee`=VALUES(`removal-fee`), currency=VALUES(currency)"
+	values := make([][]string, len(rows))
+	for i, row := range rows { values[i] = row.Values }
+	return d.saveFixedReportRows(ctx, id, "FBA removal order", insert, values, downloadSHA, documentID)
+}
+
+func (d *DBReportStore) SaveFBARemovalShipment(ctx context.Context, id int64, rows []reportexport.FBARemovalShipment, downloadSHA, documentID string) error {
+	const insert = "INSERT INTO ls_fba_removal_shipment_details\n" +
+		"(account_id, seller_id, store_id, report_task_id, `row_number`, row_sha256, `request-date`, `order-id`, `shipment-date`, sku, fnsku, disposition, `shipped-quantity`, carrier, `tracking-number`, `removal-order-type`)\n" +
+		"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\n" +
+		"ON DUPLICATE KEY UPDATE row_sha256=VALUES(row_sha256), `request-date`=VALUES(`request-date`), `order-id`=VALUES(`order-id`), `shipment-date`=VALUES(`shipment-date`), sku=VALUES(sku), fnsku=VALUES(fnsku), disposition=VALUES(disposition), `shipped-quantity`=VALUES(`shipped-quantity`), carrier=VALUES(carrier), `tracking-number`=VALUES(`tracking-number`), `removal-order-type`=VALUES(`removal-order-type`)"
+	values := make([][]string, len(rows))
+	for i, row := range rows { values[i] = row.Values }
+	return d.saveFixedReportRows(ctx, id, "FBA removal shipment", insert, values, downloadSHA, documentID)
+}
+
 func (d *DBReportStore) SaveCustomerShipmentReplacements(ctx context.Context, id int64, rows []reportexport.CustomerShipmentReplacement, downloadSHA string, documentID string) error {
 	if err := d.ensure(); err != nil {
 		return err

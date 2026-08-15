@@ -1,0 +1,21 @@
+CREATE TABLE IF NOT EXISTS ls_fba_removal_shipment_details (
+    account_id VARCHAR(32) NOT NULL,
+    seller_id VARCHAR(64) NOT NULL,
+    store_id VARCHAR(64) NOT NULL DEFAULT '',
+    report_task_id VARCHAR(128) NOT NULL,
+    `row_number` INT UNSIGNED NOT NULL,
+    row_sha256 CHAR(64) NOT NULL,
+    `request-date` VARCHAR(40) NULL,
+    `order-id` VARCHAR(128) NULL,
+    `shipment-date` VARCHAR(40) NULL,
+    sku VARCHAR(128) NULL,
+    fnsku VARCHAR(64) NULL,
+    disposition VARCHAR(64) NULL,
+    `shipped-quantity` VARCHAR(64) NULL,
+    carrier VARCHAR(128) NULL,
+    `tracking-number` VARCHAR(256) NULL,
+    `removal-order-type` VARCHAR(64) NULL,
+    PRIMARY KEY (report_task_id, `row_number`),
+    INDEX idx_fba_removal_shipment_scope (account_id, seller_id, store_id, `request-date`),
+    INDEX idx_fba_removal_shipment_order (account_id, seller_id, store_id, `order-id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT 'Amazon FBA removal shipment detail formal report raw rows';

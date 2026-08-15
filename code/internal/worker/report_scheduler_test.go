@@ -37,6 +37,20 @@ func TestCustomerReturnsWindowUsesOnlyCompleteDays(t *testing.T) {
 	}
 }
 
+func TestEstimatedFeesWindowEndsNowAndCoversAtLeastSeventyTwoHours(t *testing.T) {
+	now := time.Date(2026, 8, 12, 14, 35, 0, 0, time.FixedZone("CST", 8*60*60))
+	request, err := customerReturnsRequest(config.ReportExport{
+		Type: config.ReportExportFBAEstimatedFees, Account: "sc_us", SellerID: "SELLER-1", StoreID: "STORE-1",
+		Region: "na", MarketplaceIDs: []string{"ATVPDKIKX0DER"}, WindowDays: 3,
+	}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if request.DateFrom != "2026-08-09T06:35:00Z" || request.DateTo != "2026-08-12T06:35:00Z" {
+		t.Fatalf("estimated fees window = %s..%s", request.DateFrom, request.DateTo)
+	}
+}
+
 func TestReportJobCarriesConfiguredReportType(t *testing.T) {
 	report := config.ReportExport{
 		Type: config.ReportExportCustomerShipmentSales, Account: "sc_us", SellerID: "SELLER-1", StoreID: "STORE-1",

@@ -319,7 +319,21 @@ func formalReportSchemaRequirements(reportType string) map[string][]string {
 	fbaInboundNoncomplianceSchemaColumns := []string{
 		"issue-reported-date", "shipment-creation-date", "fba-shipment-id", "fba-carton-id", "fulfillment-center-id", "sku", "fnsku", "asin", "product-name", "problem-type", "problem-quantity", "expected-quantity", "received-quantity", "performance-measurement-unit", "coaching-level", "fee-type", "currency", "fee-total", "problem-level", "alert-status",
 	}
-	requirements := listingdaily.CustomerReturnsSchemaRequirements()
+	fbaRecommendedRemovalSchemaColumns := []string{
+		"snapshot-date", "sku", "fnsku", "asin", "product-name", "condition", "sellable-quantity", "sellable-271-365-days", "sellable-365+-days", "sellable-removal-quantity", "unsellable-quantity", "unsellable-0-7-days", "unsellable-8-60-days", "unsellable-61-90-days", "sellable-121-180-days", "sellable-181-270-days",
+	}
+	fbaRemovalOrderSchemaColumns := []string{
+		"request-date", "order-id", "order-type", "service-speed", "order-status", "last-updated-date", "sku", "fnsku", "disposition", "requested-quantity", "cancelled-quantity", "disposed-quantity", "shipped-quantity", "in-process-quantity", "removal-fee", "currency",
+	}
+	fbaRemovalShipmentSchemaColumns := []string{
+		"request-date", "order-id", "shipment-date", "sku", "fnsku", "disposition", "shipped-quantity", "carrier", "tracking-number", "removal-order-type",
+	}
+	requirements := make(map[string][]string)
+	if reportRequiresDailyProjection(reportType) {
+		for table, columns := range listingdaily.CustomerReturnsSchemaRequirements() {
+			requirements[table] = columns
+		}
+	}
 	requirements["ls_report_export_tasks"] = []string{
 		"id", "account_id", "seller_id", "store_id", "report_type", "region", "marketplace_ids",
 		"date_from", "date_to", "report_task_id", "report_document_id", "status",
@@ -404,6 +418,12 @@ func formalReportSchemaRequirements(reportType string) map[string][]string {
 		requirements["ls_fba_inbound_noncompliance"] = append([]string{
 			"account_id", "seller_id", "store_id", "report_task_id", "row_number", "row_sha256",
 		}, fbaInboundNoncomplianceSchemaColumns...)
+	case reportexport.FBARecommendedRemovalReportType:
+		requirements["ls_fba_recommended_removals"] = append([]string{"account_id", "seller_id", "store_id", "report_task_id", "row_number", "row_sha256"}, fbaRecommendedRemovalSchemaColumns...)
+	case reportexport.FBARemovalOrderReportType:
+		requirements["ls_fba_removal_order_details"] = append([]string{"account_id", "seller_id", "store_id", "report_task_id", "row_number", "row_sha256"}, fbaRemovalOrderSchemaColumns...)
+	case reportexport.FBARemovalShipmentReportType:
+		requirements["ls_fba_removal_shipment_details"] = append([]string{"account_id", "seller_id", "store_id", "report_task_id", "row_number", "row_sha256"}, fbaRemovalShipmentSchemaColumns...)
 	default:
 		return nil
 	}
@@ -450,7 +470,7 @@ func normalizedReportType(request reportexport.Request) string {
 }
 
 func reportRequiresDailyProjection(reportType string) bool {
-	return reportType != reportexport.CustomerShipmentReplacementsReportType && reportType != reportexport.FBAReimbursementsReportType && reportType != reportexport.AFNInventoryByCountryReportType && reportType != reportexport.FBAStrandedInventoryReportType && reportType != reportexport.FBAEstimatedFeesReportType && reportType != reportexport.FBAInboundNoncomplianceReportType
+	return reportType != reportexport.CustomerShipmentReplacementsReportType && reportType != reportexport.FBAReimbursementsReportType && reportType != reportexport.AFNInventoryByCountryReportType && reportType != reportexport.FBAStrandedInventoryReportType && reportType != reportexport.FBAEstimatedFeesReportType && reportType != reportexport.FBAInboundNoncomplianceReportType && reportType != reportexport.FBARecommendedRemovalReportType && reportType != reportexport.FBARemovalOrderReportType && reportType != reportexport.FBARemovalShipmentReportType
 }
 
 func projectDailyBatch(ctx context.Context, dailyReader listingdaily.SourceReader, dailyStore listingdaily.Store, accountID string, targets []worker.DailyProjectionTarget, today time.Time) error {

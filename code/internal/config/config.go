@@ -25,6 +25,7 @@ import (
 // 现有 ID 用它、且这是机器标识符不是公开 handle）：只允许字母/数字/下划线/连字符，
 // 首尾必须是字母或数字，总长 1–32（对齐 account_id VARCHAR(32) 列宽）。
 var accountIDPattern = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9_-]{0,30}[A-Za-z0-9])?$`)
+var dailyReportCronPattern = regexp.MustCompile(`^(?:[0-5]?\d) (?:[01]?\d|2[0-3]) \* \* \*$`)
 
 // NormID 是账号 ID 的归一化口径：去空白 + 转小写。全项目判定「两个账号 ID 是否同一个」
 // 都以它为准（大小写不敏感唯一，照搬 GitHub：Sc_us 与 sc_us 视为撞名）。DB account_id 列
@@ -67,6 +68,9 @@ const (
 	ReportExportFBAStrandedInventory         = "fba_stranded_inventory"
 	ReportExportFBAEstimatedFees             = "fba_estimated_fees"
 	ReportExportFBAInboundNoncompliance      = "fba_inbound_noncompliance"
+	ReportExportFBARecommendedRemoval        = "fba_recommended_removal"
+	ReportExportFBARemovalOrder              = "fba_removal_order"
+	ReportExportFBARemovalShipment           = "fba_removal_shipment"
 )
 
 // ReportExport is a fixed formal-report schedule. Disabled entries are kept
@@ -441,7 +445,7 @@ func (c *Config) validate() error {
 	}
 	reportScopes := make(map[string]struct{}, len(c.ReportExports))
 	for i, report := range c.ReportExports {
-		if report.Type != ReportExportCustomerReturns && report.Type != ReportExportCustomerShipmentSales && report.Type != ReportExportFBAInventory && report.Type != ReportExportFBAAllInventory && report.Type != ReportExportReservedInventory && report.Type != ReportExportAFNInventory && report.Type != ReportExportAFNInventoryByCountry && report.Type != ReportExportFBAStorageFeeCharges && report.Type != ReportExportFBAOverageFeeCharges && report.Type != ReportExportFBALongtermStorageFeeCharges && report.Type != ReportExportCustomerShipmentReplacements && report.Type != ReportExportFBAReimbursements && report.Type != ReportExportFBAStrandedInventory && report.Type != ReportExportFBAEstimatedFees && report.Type != ReportExportFBAInboundNoncompliance {
+		if report.Type != ReportExportCustomerReturns && report.Type != ReportExportCustomerShipmentSales && report.Type != ReportExportFBAInventory && report.Type != ReportExportFBAAllInventory && report.Type != ReportExportReservedInventory && report.Type != ReportExportAFNInventory && report.Type != ReportExportAFNInventoryByCountry && report.Type != ReportExportFBAStorageFeeCharges && report.Type != ReportExportFBAOverageFeeCharges && report.Type != ReportExportFBALongtermStorageFeeCharges && report.Type != ReportExportCustomerShipmentReplacements && report.Type != ReportExportFBAReimbursements && report.Type != ReportExportFBAStrandedInventory && report.Type != ReportExportFBAEstimatedFees && report.Type != ReportExportFBAInboundNoncompliance && report.Type != ReportExportFBARecommendedRemoval && report.Type != ReportExportFBARemovalOrder && report.Type != ReportExportFBARemovalShipment {
 			return fmt.Errorf("report_exports[%d].type=%q 非法", i, report.Type)
 		}
 		scope := report.Type + "\x00" + NormID(report.Account) + "\x00" + report.StoreID
@@ -476,6 +480,14 @@ func (c *Config) validate() error {
 		}
 		if report.WindowDays < 1 || report.WindowDays > 31 {
 			return fmt.Errorf("report_exports[%d].window_days 必须为 1..31", i)
+		}
+		if report.Type == ReportExportFBAEstimatedFees {
+			if report.WindowDays < 3 {
+				return fmt.Errorf("report_exports[%d] 费用预览 window_days 必须至少为 3", i)
+			}
+			if !dailyReportCronPattern.MatchString(report.Cron) {
+				return fmt.Errorf("report_exports[%d] 费用预览 cron 必须为每日固定一次", i)
+			}
 		}
 		if _, err := cron.ParseStandard(report.Cron); err != nil {
 			return fmt.Errorf("report_exports[%d].cron=%q 非法: %w", i, report.Cron, err)

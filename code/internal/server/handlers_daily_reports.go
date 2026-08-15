@@ -215,12 +215,12 @@ func defaultReportExportDTO() reportExportConfigDTO {
 }
 
 func availableReportExportTypes() []string {
-	return []string{config.ReportExportCustomerReturns, config.ReportExportCustomerShipmentSales, config.ReportExportFBAInventory, config.ReportExportFBAAllInventory, config.ReportExportReservedInventory, config.ReportExportAFNInventory, config.ReportExportAFNInventoryByCountry, config.ReportExportFBAStorageFeeCharges, config.ReportExportFBAOverageFeeCharges, config.ReportExportFBALongtermStorageFeeCharges, config.ReportExportCustomerShipmentReplacements, config.ReportExportFBAReimbursements, config.ReportExportFBAStrandedInventory, config.ReportExportFBAEstimatedFees, config.ReportExportFBAInboundNoncompliance}
+	return []string{config.ReportExportCustomerReturns, config.ReportExportCustomerShipmentSales, config.ReportExportFBAInventory, config.ReportExportFBAAllInventory, config.ReportExportReservedInventory, config.ReportExportAFNInventory, config.ReportExportAFNInventoryByCountry, config.ReportExportFBAStorageFeeCharges, config.ReportExportFBAOverageFeeCharges, config.ReportExportFBALongtermStorageFeeCharges, config.ReportExportCustomerShipmentReplacements, config.ReportExportFBAReimbursements, config.ReportExportFBAStrandedInventory, config.ReportExportFBAEstimatedFees, config.ReportExportFBAInboundNoncompliance, config.ReportExportFBARecommendedRemoval, config.ReportExportFBARemovalOrder, config.ReportExportFBARemovalShipment}
 }
 
 func supportedReportExportType(value string) bool {
 	switch value {
-	case config.ReportExportCustomerReturns, config.ReportExportCustomerShipmentSales, config.ReportExportFBAInventory, config.ReportExportFBAAllInventory, config.ReportExportReservedInventory, config.ReportExportAFNInventory, config.ReportExportAFNInventoryByCountry, config.ReportExportFBAStorageFeeCharges, config.ReportExportFBAOverageFeeCharges, config.ReportExportFBALongtermStorageFeeCharges, config.ReportExportCustomerShipmentReplacements, config.ReportExportFBAReimbursements, config.ReportExportFBAStrandedInventory, config.ReportExportFBAEstimatedFees, config.ReportExportFBAInboundNoncompliance:
+	case config.ReportExportCustomerReturns, config.ReportExportCustomerShipmentSales, config.ReportExportFBAInventory, config.ReportExportFBAAllInventory, config.ReportExportReservedInventory, config.ReportExportAFNInventory, config.ReportExportAFNInventoryByCountry, config.ReportExportFBAStorageFeeCharges, config.ReportExportFBAOverageFeeCharges, config.ReportExportFBALongtermStorageFeeCharges, config.ReportExportCustomerShipmentReplacements, config.ReportExportFBAReimbursements, config.ReportExportFBAStrandedInventory, config.ReportExportFBAEstimatedFees, config.ReportExportFBAInboundNoncompliance, config.ReportExportFBARecommendedRemoval, config.ReportExportFBARemovalOrder, config.ReportExportFBARemovalShipment:
 		return true
 	default:
 		return false
@@ -259,6 +259,12 @@ func reportExportAPIType(value string) string {
 		return reportexport.FBAEstimatedFeesReportType
 	case config.ReportExportFBAInboundNoncompliance:
 		return reportexport.FBAInboundNoncomplianceReportType
+	case config.ReportExportFBARecommendedRemoval:
+		return reportexport.FBARecommendedRemovalReportType
+	case config.ReportExportFBARemovalOrder:
+		return reportexport.FBARemovalOrderReportType
+	case config.ReportExportFBARemovalShipment:
+		return reportexport.FBARemovalShipmentReportType
 	default:
 		return ""
 	}
