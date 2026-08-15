@@ -55,6 +55,7 @@ const (
 	ReportExportCustomerReturns       = "fba_customer_returns"
 	ReportExportCustomerShipmentSales = "fba_customer_shipment_sales"
 	ReportExportFBAInventory          = "fba_myi_unsuppressed_inventory"
+	ReportExportFBAAllInventory       = "fba_myi_all_inventory"
 	ReportExportReservedInventory     = "fba_reserved_inventory"
 	ReportExportAFNInventory          = "afn_inventory"
 )
@@ -431,7 +432,7 @@ func (c *Config) validate() error {
 	}
 	reportScopes := make(map[string]struct{}, len(c.ReportExports))
 	for i, report := range c.ReportExports {
-		if report.Type != ReportExportCustomerReturns && report.Type != ReportExportCustomerShipmentSales && report.Type != ReportExportFBAInventory && report.Type != ReportExportReservedInventory && report.Type != ReportExportAFNInventory {
+		if report.Type != ReportExportCustomerReturns && report.Type != ReportExportCustomerShipmentSales && report.Type != ReportExportFBAInventory && report.Type != ReportExportFBAAllInventory && report.Type != ReportExportReservedInventory && report.Type != ReportExportAFNInventory {
 			return fmt.Errorf("report_exports[%d].type=%q 非法", i, report.Type)
 		}
 		scope := report.Type + "\x00" + NormID(report.Account) + "\x00" + report.StoreID

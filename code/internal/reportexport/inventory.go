@@ -10,6 +10,7 @@ import (
 
 const (
 	FBAInventoryReportType      = "GET_FBA_MYI_UNSUPPRESSED_INVENTORY_DATA"
+	FBAAllInventoryReportType   = "GET_FBA_MYI_ALL_INVENTORY_DATA"
 	ReservedInventoryReportType = "GET_RESERVED_INVENTORY_DATA"
 	AFNInventoryReportType      = "GET_AFN_INVENTORY_DATA"
 )
@@ -64,6 +65,11 @@ type FBAInventory struct {
 	AFNFutureSupplyBuyable      string
 }
 
+// FBAAllInventory has the same official 21-column contract as the active MYI
+// report, but is kept as a distinct type because archived inventory is a
+// separate report evidence/table.
+type FBAAllInventory FBAInventory
+
 type ReservedInventory struct {
 	SKU                       string
 	FNSKU                     string
@@ -110,6 +116,18 @@ func ParseFBAInventory(downloaded []byte, compressionAlgorithm, contentType stri
 		})
 	}
 	return rows, nil
+}
+
+func ParseFBAAllInventory(downloaded []byte, compressionAlgorithm, contentType string) ([]FBAAllInventory, error) {
+	rows, err := ParseFBAInventory(downloaded, compressionAlgorithm, contentType)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]FBAAllInventory, len(rows))
+	for i, row := range rows {
+		result[i] = FBAAllInventory(row)
+	}
+	return result, nil
 }
 
 func ParseReservedInventory(downloaded []byte, compressionAlgorithm, contentType string) ([]ReservedInventory, error) {

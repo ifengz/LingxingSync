@@ -60,6 +60,15 @@ report_exports:
     marketplace_ids: []
     cron: ""
     window_days: 0
+  - type: "fba_myi_all_inventory"
+    enabled: false
+    account: ""
+    seller_id: ""
+    store_id: ""
+    region: ""
+    marketplace_ids: []
+    cron: ""
+    window_days: 0
   - type: "fba_reserved_inventory"
     enabled: false
     account: ""

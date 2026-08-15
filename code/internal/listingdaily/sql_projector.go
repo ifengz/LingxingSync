@@ -89,6 +89,20 @@ const reportFBAInventorySQL = "SELECT raw.asin, raw.sku, " +
 	"  AND task.status = 'SUCCESS'\n" +
 	"GROUP BY raw.asin, raw.sku"
 
+const reportFBAAllInventorySQL = "SELECT raw.asin, raw.sku, " +
+	"CAST(SUM(CAST(raw.`afn-fulfillable-quantity` AS SIGNED)) AS CHAR) AS sellable, " +
+	"CAST(SUM(CAST(raw.`afn-unsellable-quantity` AS SIGNED)) AS CHAR) AS unfulfillable, " +
+	"CAST(SUM(CAST(raw.`afn-reserved-quantity` AS SIGNED)) AS CHAR) AS reserved, " +
+	"CAST(SUM(CAST(raw.`afn-inbound-working-quantity` AS SIGNED)) AS CHAR) AS inbound_working, " +
+	"CAST(SUM(CAST(raw.`afn-inbound-shipped-quantity` AS SIGNED)) AS CHAR) AS inbound_shipped, " +
+	"CAST(SUM(CAST(raw.`afn-inbound-receiving-quantity` AS SIGNED)) AS CHAR) AS inbound_receiving\n" +
+	"FROM ls_fba_myi_all_inventory raw\n" +
+	"JOIN ls_report_export_tasks task ON task.report_task_id = raw.report_task_id\n" +
+	"WHERE task.id = ? AND task.report_task_id = ? AND task.report_type = ? AND raw.account_id = ? AND raw.store_id = ?\n" +
+	"  AND task.account_id = raw.account_id AND task.store_id = raw.store_id\n" +
+	"  AND task.status = 'SUCCESS'\n" +
+	"GROUP BY raw.asin, raw.sku"
+
 const reportReservedInventorySQL = "SELECT raw.asin, raw.sku, " +
 	"CAST(SUM(CAST(raw.reserved_qty AS SIGNED)) AS CHAR) AS reserved, " +
 	"CAST(SUM(CAST(raw.reserved_customerorders AS SIGNED)) AS CHAR) AS reserved_customer_orders, " +
@@ -307,7 +321,7 @@ func setMetricField(values *Values, field string, value any) {
 
 func isInventoryReportType(reportType string) bool {
 	switch reportType {
-	case "GET_FBA_MYI_UNSUPPRESSED_INVENTORY_DATA", "GET_RESERVED_INVENTORY_DATA", "GET_AFN_INVENTORY_DATA":
+	case "GET_FBA_MYI_UNSUPPRESSED_INVENTORY_DATA", "GET_FBA_MYI_ALL_INVENTORY_DATA", "GET_RESERVED_INVENTORY_DATA", "GET_AFN_INVENTORY_DATA":
 		return true
 	default:
 		return false
@@ -316,7 +330,7 @@ func isInventoryReportType(reportType string) bool {
 
 func inventoryReportFields(reportType string) []string {
 	switch reportType {
-	case "GET_FBA_MYI_UNSUPPRESSED_INVENTORY_DATA":
+	case "GET_FBA_MYI_UNSUPPRESSED_INVENTORY_DATA", "GET_FBA_MYI_ALL_INVENTORY_DATA":
 		return []string{"inventory_sellable", "inventory_unfulfillable", "inventory_reserved", "inventory_inbound_working", "inventory_inbound_shipped", "inventory_inbound_receiving"}
 	case "GET_RESERVED_INVENTORY_DATA":
 		return []string{"inventory_reserved", "inventory_reserved_customer_orders", "inventory_reserved_fc_processing"}
@@ -333,7 +347,7 @@ func reportMetricLabel(reportType string) string {
 		return "sales"
 	case "GET_FBA_FULFILLMENT_CUSTOMER_RETURNS_DATA":
 		return "returns"
-	case "GET_FBA_MYI_UNSUPPRESSED_INVENTORY_DATA", "GET_RESERVED_INVENTORY_DATA", "GET_AFN_INVENTORY_DATA":
+	case "GET_FBA_MYI_UNSUPPRESSED_INVENTORY_DATA", "GET_FBA_MYI_ALL_INVENTORY_DATA", "GET_RESERVED_INVENTORY_DATA", "GET_AFN_INVENTORY_DATA":
 		return "inventory"
 	default:
 		return "report"
@@ -871,6 +885,11 @@ func (r SQLSourceReader) ReadReportInventory(ctx context.Context, accountID, sto
 		if err := r.DB.SelectContext(ctx, &rows, query, args...); err != nil {
 			return nil, fmt.Errorf("listing daily: read formal FBA inventory: %w", err)
 		}
+	case "GET_FBA_MYI_ALL_INVENTORY_DATA":
+		query = reportFBAAllInventorySQL
+		if err := r.DB.SelectContext(ctx, &rows, query, args...); err != nil {
+			return nil, fmt.Errorf("listing daily: read formal archived FBA inventory: %w", err)
+		}
 	case "GET_RESERVED_INVENTORY_DATA":
 		query = reportReservedInventorySQL
 		if err := r.DB.SelectContext(ctx, &rows, query, args...); err != nil {
@@ -920,7 +939,7 @@ func inventoryReportValues(reportType string, row struct {
 	values := Values{}
 	var err error
 	switch reportType {
-	case "GET_FBA_MYI_UNSUPPRESSED_INVENTORY_DATA":
+	case "GET_FBA_MYI_UNSUPPRESSED_INVENTORY_DATA", "GET_FBA_MYI_ALL_INVENTORY_DATA":
 		if values.InventorySellable, err = integerValue(row.Sellable); err != nil {
 			return Values{}, fmt.Errorf("sellable: %w", err)
 		}

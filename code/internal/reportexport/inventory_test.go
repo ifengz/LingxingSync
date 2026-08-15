@@ -69,3 +69,17 @@ func TestInventoryReportTypesAreDistinct(t *testing.T) {
 		t.Fatal("inventory report types must remain distinct")
 	}
 }
+
+func TestParseFBAAllInventoryUsesArchivedReportTypeContract(t *testing.T) {
+	data := strings.Join([]string{
+		"sku\tfnsku\tasin\tproduct-name\tcondition\tyour-price\tmfn-listing-exists\tmfn-fulfillable-quantity\tafn-listing-exists\tafn-warehouse-quantity\tafn-fulfillable-quantity\tafn-unsellable-quantity\tafn-reserved-quantity\tafn-total-quantity\tper-unit-volume\tafn-inbound-working-quantity\tafn-inbound-shipped-quantity\tafn-inbound-receiving-quantity\tafn-researching-quantity\tafn-reserved-future-supply\tafn-future-supply-buyable",
+		"SKU-ARCHIVED\tFNSKU-ARCHIVED\tASIN-ARCHIVED\tArchived Widget\tNew\t9.99\tyes\t1\tyes\t2\t3\t4\t5\t14\t0.25\t6\t7\t8\t0\t1\tyes",
+	}, "\n") + "\n"
+	rows, err := ParseFBAAllInventory([]byte(data), "", "")
+	if err != nil {
+		t.Fatalf("ParseFBAAllInventory returned error: %v", err)
+	}
+	if len(rows) != 1 || rows[0].SKU != "SKU-ARCHIVED" || rows[0].AFNTotalQuantity != 14 {
+		t.Fatalf("rows = %#v", rows)
+	}
+}

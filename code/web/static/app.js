@@ -321,6 +321,7 @@ window.syncManage = function () {
         fba_customer_returns: 'FBA 退货',
         fba_customer_shipment_sales: 'FBA 发货销售',
         fba_myi_unsuppressed_inventory: 'FBA Manage Inventory',
+        fba_myi_all_inventory: 'FBA Manage Inventory (Archived)',
         fba_reserved_inventory: 'FBA Reserved Inventory',
         afn_inventory: 'FBA Amazon Fulfilled Inventory'
       }[type] || type || '未知正式报表';

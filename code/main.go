@@ -323,6 +323,15 @@ func formalReportSchemaRequirements(reportType string) map[string][]string {
 			"afn-total-quantity", "per-unit-volume", "afn-inbound-working-quantity", "afn-inbound-shipped-quantity",
 			"afn-inbound-receiving-quantity", "afn-researching-quantity", "afn-reserved-future-supply", "afn-future-supply-buyable",
 		}...)
+	case reportexport.FBAAllInventoryReportType:
+		requirements["ls_fba_myi_all_inventory"] = append([]string{
+			"account_id", "seller_id", "store_id", "report_task_id", "row_number", "row_sha256",
+		}, []string{
+			"sku", "fnsku", "asin", "product-name", "condition", "your-price", "mfn-listing-exists", "mfn-fulfillable-quantity",
+			"afn-listing-exists", "afn-warehouse-quantity", "afn-fulfillable-quantity", "afn-unsellable-quantity", "afn-reserved-quantity",
+			"afn-total-quantity", "per-unit-volume", "afn-inbound-working-quantity", "afn-inbound-shipped-quantity",
+			"afn-inbound-receiving-quantity", "afn-researching-quantity", "afn-reserved-future-supply", "afn-future-supply-buyable",
+		}...)
 	case reportexport.ReservedInventoryReportType:
 		requirements["ls_fba_reserved_inventory"] = append([]string{
 			"account_id", "seller_id", "store_id", "report_task_id", "row_number", "row_sha256",
@@ -458,7 +467,7 @@ func reportBusinessDates(request reportexport.Request) (time.Time, time.Time, er
 }
 
 func formalReportBusinessDates(reportType string, request reportexport.Request, now time.Time) (time.Time, time.Time, error) {
-	if reportType == reportexport.FBAInventoryReportType || reportType == reportexport.ReservedInventoryReportType || reportType == reportexport.AFNInventoryReportType {
+	if reportType == reportexport.FBAInventoryReportType || reportType == reportexport.FBAAllInventoryReportType || reportType == reportexport.ReservedInventoryReportType || reportType == reportexport.AFNInventoryReportType {
 		date := time.Date(now.UTC().Year(), now.UTC().Month(), now.UTC().Day(), 0, 0, 0, 0, time.UTC)
 		return date, date, nil
 	}

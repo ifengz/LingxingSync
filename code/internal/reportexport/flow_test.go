@@ -77,6 +77,7 @@ type fakeStore struct {
 	progress      []string
 	saved         int
 	savedFBA      int
+	savedFBAAll   int
 	savedReserved int
 	savedAFN      int
 	errors        int
@@ -119,6 +120,10 @@ func (s *fakeStore) SaveCustomerReturns(_ context.Context, _ int64, rows []Custo
 }
 func (s *fakeStore) SaveFBAInventory(_ context.Context, _ int64, rows []FBAInventory, _ string, _ string) error {
 	s.savedFBA += len(rows)
+	return nil
+}
+func (s *fakeStore) SaveFBAAllInventory(_ context.Context, _ int64, rows []FBAAllInventory, _ string, _ string) error {
+	s.savedFBAAll += len(rows)
 	return nil
 }
 func (s *fakeStore) SaveReservedInventory(_ context.Context, _ int64, rows []ReservedInventory, _ string, _ string) error {
@@ -175,6 +180,7 @@ func TestRunnerExportsCustomerShipmentSalesAndPersistsTypedRows(t *testing.T) {
 func TestRunnerPersistsEachInventoryReportThroughItsTypedStore(t *testing.T) {
 	fixtures := map[string][]byte{
 		FBAInventoryReportType:      []byte("sku\tfnsku\tasin\tproduct-name\tcondition\tyour-price\tmfn-listing-exists\tmfn-fulfillable-quantity\tafn-listing-exists\tafn-warehouse-quantity\tafn-fulfillable-quantity\tafn-unsellable-quantity\tafn-reserved-quantity\tafn-total-quantity\tper-unit-volume\tafn-inbound-working-quantity\tafn-inbound-shipped-quantity\tafn-inbound-receiving-quantity\tafn-researching-quantity\tafn-reserved-future-supply\tafn-future-supply-buyable\nSKU-1\tFNSKU-1\tASIN-1\tWidget\tNew\t12.50\tyes\t1\tyes\t2\t3\t4\t5\t14\t0.25\t6\t7\t8\t0\t1\tyes\n"),
+		FBAAllInventoryReportType:   []byte("sku\tfnsku\tasin\tproduct-name\tcondition\tyour-price\tmfn-listing-exists\tmfn-fulfillable-quantity\tafn-listing-exists\tafn-warehouse-quantity\tafn-fulfillable-quantity\tafn-unsellable-quantity\tafn-reserved-quantity\tafn-total-quantity\tper-unit-volume\tafn-inbound-working-quantity\tafn-inbound-shipped-quantity\tafn-inbound-receiving-quantity\tafn-researching-quantity\tafn-reserved-future-supply\tafn-future-supply-buyable\nSKU-1\tFNSKU-1\tASIN-1\tArchived Widget\tNew\t12.50\tyes\t1\tyes\t2\t3\t4\t5\t14\t0.25\t6\t7\t8\t0\t1\tyes\n"),
 		ReservedInventoryReportType: []byte("sku\tfnsku\tasin\tproduct-name\treserved_qty\treserved_customerorders\treserved_fc-processing\nSKU-1\tFNSKU-1\tASIN-1\tWidget\t8\t2\t6\n"),
 		AFNInventoryReportType:      []byte("seller-sku\tfulfillment-channel-sku\tasin\tcondition-type\tWarehouse-Condition-code\tQuantity Available\nSKU-1\tFC-SKU-1\tASIN-1\tNew\tSELLABLE\t17\n"),
 	}
@@ -188,8 +194,12 @@ func TestRunnerPersistsEachInventoryReportThroughItsTypedStore(t *testing.T) {
 			}
 			switch reportType {
 			case FBAInventoryReportType:
-				if store.savedFBA != 1 || store.savedReserved != 0 || store.savedAFN != 0 {
-					t.Fatalf("typed saves=%d/%d/%d", store.savedFBA, store.savedReserved, store.savedAFN)
+				if store.savedFBA != 1 || store.savedFBAAll != 0 || store.savedReserved != 0 || store.savedAFN != 0 {
+					t.Fatalf("typed saves=%d/%d/%d/%d", store.savedFBA, store.savedFBAAll, store.savedReserved, store.savedAFN)
+				}
+			case FBAAllInventoryReportType:
+				if store.savedFBAAll != 1 || store.savedFBA != 0 || store.savedReserved != 0 || store.savedAFN != 0 {
+					t.Fatalf("typed saves=%d/%d/%d/%d", store.savedFBA, store.savedFBAAll, store.savedReserved, store.savedAFN)
 				}
 			case ReservedInventoryReportType:
 				if store.savedReserved != 1 || store.savedFBA != 0 || store.savedAFN != 0 {
