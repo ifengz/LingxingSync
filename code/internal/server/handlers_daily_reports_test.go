@@ -153,7 +153,7 @@ func TestReportExportConfigPutAcceptsCustomerShipmentSales(t *testing.T) {
 func TestReportExportStatusReturnsLatestTaskAndDifferenceCounts(t *testing.T) {
 	finished := time.Date(2026, 8, 13, 4, 0, 0, 0, time.UTC)
 	reader := &fixedReportStatusReader{status: reportExportStatusOut{
-		LatestTask:  &reportExportTaskOut{ID: 9, Status: "success", Rows: 18, FinishedAt: &finished},
+		LatestTask:  &reportExportTaskOut{ID: 9, ReportTaskID: "task-9", ReportDocumentID: "document-9", DownloadSHA256: "abc123", Status: "success", Rows: 18, FinishedAt: &finished},
 		Differences: reportExportDifferenceOut{DatabaseMissing: 1, ReportMissing: 2, ValueMismatch: 3},
 	}}
 	s := &Server{cfg: &config.Config{ReportExports: []config.ReportExport{{Type: config.ReportExportCustomerReturns, Enabled: true, Account: "sc_us", StoreID: "STORE-1"}}}, reportStatus: reader}
@@ -161,7 +161,7 @@ func TestReportExportStatusReturnsLatestTaskAndDifferenceCounts(t *testing.T) {
 
 	s.apiReportExportStatus(rec, httptest.NewRequest(http.MethodGet, "/api/report-exports/status?account=sc_us&store_id=STORE-1", nil))
 
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"configured":true`) || !strings.Contains(rec.Body.String(), `"database_missing":1`) || !strings.Contains(rec.Body.String(), `"value_mismatch":3`) {
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"configured":true`) || !strings.Contains(rec.Body.String(), `"report_task_id":"task-9"`) || !strings.Contains(rec.Body.String(), `"report_document_id":"document-9"`) || !strings.Contains(rec.Body.String(), `"download_sha256":"abc123"`) || !strings.Contains(rec.Body.String(), `"database_missing":1`) || !strings.Contains(rec.Body.String(), `"value_mismatch":3`) {
 		t.Fatalf("report status=%d body=%s", rec.Code, rec.Body.String())
 	}
 	if reader.accountID != "sc_us" || reader.storeID != "STORE-1" || reader.reportType != config.ReportExportCustomerReturns {

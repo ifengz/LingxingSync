@@ -290,13 +290,16 @@ func (s *Server) apiPutReportExportConfig(w http.ResponseWriter, r *http.Request
 }
 
 type reportExportTaskOut struct {
-	ID           int64      `json:"id"`
-	Status       string     `json:"status"`
-	SourceStatus string     `json:"source_status"`
-	Rows         int        `json:"rows"`
-	Error        *string    `json:"error"`
-	CreatedAt    time.Time  `json:"created_at"`
-	FinishedAt   *time.Time `json:"finished_at"`
+	ID               int64      `json:"id"`
+	ReportTaskID     string     `json:"report_task_id"`
+	ReportDocumentID string     `json:"report_document_id"`
+	DownloadSHA256   string     `json:"download_sha256"`
+	Status           string     `json:"status"`
+	SourceStatus     string     `json:"source_status"`
+	Rows             int        `json:"rows"`
+	Error            *string    `json:"error"`
+	CreatedAt        time.Time  `json:"created_at"`
+	FinishedAt       *time.Time `json:"finished_at"`
 }
 
 type reportExportDifferenceOut struct {
@@ -319,7 +322,7 @@ type reportStatusReader interface {
 
 type sqlReportStatusReader struct{ db *sqlx.DB }
 
-const latestReportTaskSQL = `SELECT id, status, rows_imported, error_message, created_at, downloaded_at, updated_at
+const latestReportTaskSQL = `SELECT id, report_task_id, report_document_id, download_sha256, status, rows_imported, error_message, created_at, downloaded_at, updated_at
 FROM ls_report_export_tasks WHERE report_type = ? AND account_id = ? AND store_id = ? ORDER BY id DESC LIMIT 1`
 
 const reportDifferencesSQL = `SELECT
@@ -335,13 +338,16 @@ func (r sqlReportStatusReader) Latest(ctx context.Context, accountID, storeID, r
 		return reportExportStatusOut{}, fmt.Errorf("正式报表状态数据库未配置")
 	}
 	var row struct {
-		ID           int64          `db:"id"`
-		Status       string         `db:"status"`
-		Rows         int            `db:"rows_imported"`
-		Error        sql.NullString `db:"error_message"`
-		CreatedAt    time.Time      `db:"created_at"`
-		DownloadedAt sql.NullTime   `db:"downloaded_at"`
-		UpdatedAt    time.Time      `db:"updated_at"`
+		ID               int64          `db:"id"`
+		ReportTaskID     sql.NullString `db:"report_task_id"`
+		ReportDocumentID sql.NullString `db:"report_document_id"`
+		DownloadSHA256   sql.NullString `db:"download_sha256"`
+		Status           string         `db:"status"`
+		Rows             int            `db:"rows_imported"`
+		Error            sql.NullString `db:"error_message"`
+		CreatedAt        time.Time      `db:"created_at"`
+		DownloadedAt     sql.NullTime   `db:"downloaded_at"`
+		UpdatedAt        time.Time      `db:"updated_at"`
 	}
 	noTask := false
 	apiReportType := reportExportAPIType(reportType)
@@ -356,7 +362,7 @@ func (r sqlReportStatusReader) Latest(ctx context.Context, accountID, storeID, r
 	}
 	var task *reportExportTaskOut
 	if !noTask {
-		task = &reportExportTaskOut{ID: row.ID, Status: reportTaskUIStatus(row.Status), SourceStatus: row.Status, Rows: row.Rows, CreatedAt: row.CreatedAt}
+		task = &reportExportTaskOut{ID: row.ID, ReportTaskID: row.ReportTaskID.String, ReportDocumentID: row.ReportDocumentID.String, DownloadSHA256: row.DownloadSHA256.String, Status: reportTaskUIStatus(row.Status), SourceStatus: row.Status, Rows: row.Rows, CreatedAt: row.CreatedAt}
 		if row.Error.Valid {
 			task.Error = &row.Error.String
 		}
