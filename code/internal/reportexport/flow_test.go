@@ -96,6 +96,31 @@ type fakeStore struct {
 	markErrorErr          error
 }
 
+type doneAuditStore struct{ fakeStore }
+
+func (s *doneAuditStore) EnsureReport(context.Context, Request) (Audit, error) {
+	return Audit{ID: 1, ReportTaskID: "done-task", Status: "DONE", CreateClaimed: false}, nil
+}
+
+func TestRunnerMarksSharedDoneParseFailureAsTerminalError(t *testing.T) {
+	download := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("wrong\theader\n"))
+	}))
+	defer download.Close()
+	client := signedClientFunc(func(_ context.Context, _ string, path string, _ map[string]any) ([]byte, int, int, error) {
+		if path != queryPath {
+			return nil, 0, 0, fmt.Errorf("unexpected signed path %s", path)
+		}
+		return []byte(fmt.Sprintf(`{"code":0,"data":{"progress_status":"DONE","report_document_id":"doc-1","url":"%s/file"}}`, download.URL)), 200, 0, nil
+	})
+	store := &doneAuditStore{}
+	runner := Runner{Client: client, Store: store, PollTimeout: time.Second}
+	_, err := runner.Run(context.Background(), Request{ReportType: AllOrdersReportType, AccountID: "acct", SellerID: "seller", StoreID: "store-1", Region: "na", MarketplaceIDs: []string{"market"}, DateFrom: "2026-08-11T00:00:00Z", DateTo: "2026-08-11T23:59:59Z"})
+	if err == nil || store.errors != 1 {
+		t.Fatalf("err=%v mark_errors=%d, want parse failure and one terminal mark", err, store.errors)
+	}
+}
+
 type countingLimiter struct{ waits int }
 
 func (l *countingLimiter) Wait(context.Context) error { l.waits++; return nil }

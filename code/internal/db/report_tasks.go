@@ -192,7 +192,7 @@ func (d *DBReportStore) MarkReportError(ctx context.Context, id int64, status st
 	if status != "ERROR" {
 		return fmt.Errorf("db report: invalid terminal error status %q", status)
 	}
-	const q = `UPDATE ls_report_export_tasks SET status = ?, active_scope_key = NULL, error_message = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`
+	const q = `UPDATE ls_report_export_tasks SET status = ?, active_scope_key = NULL, error_message = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status <> 'SUCCESS'`
 	if _, err := d.db.ExecContext(ctx, q, status, message, id); err != nil {
 		return fmt.Errorf("db report: mark error id=%d: %w", id, err)
 	}

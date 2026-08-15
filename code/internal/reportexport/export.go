@@ -207,7 +207,10 @@ func (r *Runner) Run(ctx context.Context, request Request) (result Result, err e
 	}
 	ownsAudit := audit.CreateClaimed
 	fail := func(cause error) (Result, error) {
-		if ownsAudit {
+		// A DONE row can be shared by a retry after the upstream task completed.
+		// Allow that retry to close a parse/download failure; the DB update is
+		// conditional on SUCCESS so a concurrent successful saver wins.
+		if ownsAudit || (!ownsAudit && strings.EqualFold(audit.Status, "DONE")) {
 			if auditErr := r.Store.MarkReportError(ctx, audit.ID, "ERROR", cause); auditErr != nil {
 				cause = fmt.Errorf("%w; mark audit error: %v", cause, auditErr)
 			}
