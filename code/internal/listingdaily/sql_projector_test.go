@@ -51,6 +51,26 @@ func TestSCInventoryKeepsComponentsWithoutInventingTotals(t *testing.T) {
 	}
 }
 
+func TestReservedInventoryReportIncludesFCTransfers(t *testing.T) {
+	if !strings.Contains(reportReservedInventorySQL, "`reserved_fc-transfers`") || !strings.Contains(reportReservedInventorySQL, "reserved_fc_transfers") {
+		t.Fatalf("reserved inventory SQL missing FC transfers: %s", reportReservedInventorySQL)
+	}
+	fields := inventoryReportFields("GET_RESERVED_INVENTORY_DATA")
+	found := false
+	for _, field := range fields {
+		found = found || field == "inventory_reserved_fc_transfers"
+	}
+	if !found {
+		t.Fatalf("reserved inventory fields = %#v", fields)
+	}
+	value := int64(3)
+	values := Values{}
+	setMetricField(&values, "inventory_reserved_fc_transfers", &value)
+	if values.InventoryReservedFCTransfers == nil || *values.InventoryReservedFCTransfers != 3 {
+		t.Fatalf("reserved FC transfers mapping = %#v", values.InventoryReservedFCTransfers)
+	}
+}
+
 func TestVCInventoryIdentityDoesNotUseInventoryMSKU(t *testing.T) {
 	if strings.Contains(vcInventorySQL, "SELECT asin, msku") {
 		t.Fatalf("VC inventory must share ls_vc_listing identity, query=%s", vcInventorySQL)

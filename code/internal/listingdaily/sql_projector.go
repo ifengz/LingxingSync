@@ -106,6 +106,7 @@ const reportFBAAllInventorySQL = "SELECT raw.asin, raw.sku, " +
 const reportReservedInventorySQL = "SELECT raw.asin, raw.sku, " +
 	"CAST(SUM(CAST(raw.reserved_qty AS SIGNED)) AS CHAR) AS reserved, " +
 	"CAST(SUM(CAST(raw.reserved_customerorders AS SIGNED)) AS CHAR) AS reserved_customer_orders, " +
+	"CAST(SUM(CAST(raw.`reserved_fc-transfers` AS SIGNED)) AS CHAR) AS reserved_fc_transfers, " +
 	"CAST(SUM(CAST(raw.`reserved_fc-processing` AS SIGNED)) AS CHAR) AS reserved_fc_processing\n" +
 	"FROM ls_fba_reserved_inventory raw\n" +
 	"JOIN ls_report_export_tasks task ON task.report_task_id = raw.report_task_id\n" +
@@ -316,6 +317,8 @@ func setMetricField(values *Values, field string, value any) {
 		values.InventoryReservedCustomerOrders, _ = value.(*int64)
 	case "inventory_reserved_fc_processing":
 		values.InventoryReservedFCProcessing, _ = value.(*int64)
+	case "inventory_reserved_fc_transfers":
+		values.InventoryReservedFCTransfers, _ = value.(*int64)
 	}
 }
 
@@ -333,7 +336,7 @@ func inventoryReportFields(reportType string) []string {
 	case "GET_FBA_MYI_UNSUPPRESSED_INVENTORY_DATA", "GET_FBA_MYI_ALL_INVENTORY_DATA":
 		return []string{"inventory_sellable", "inventory_unfulfillable", "inventory_reserved", "inventory_inbound_working", "inventory_inbound_shipped", "inventory_inbound_receiving"}
 	case "GET_RESERVED_INVENTORY_DATA":
-		return []string{"inventory_reserved", "inventory_reserved_customer_orders", "inventory_reserved_fc_processing"}
+		return []string{"inventory_reserved", "inventory_reserved_customer_orders", "inventory_reserved_fc_transfers", "inventory_reserved_fc_processing"}
 	case "GET_AFN_INVENTORY_DATA":
 		return []string{"inventory_sellable"}
 	default:
@@ -877,6 +880,7 @@ func (r SQLSourceReader) ReadReportInventory(ctx context.Context, accountID, sto
 		InboundShipped        sql.NullString `db:"inbound_shipped"`
 		InboundReceiving      sql.NullString `db:"inbound_receiving"`
 		ReservedCustomerOrder sql.NullString `db:"reserved_customer_orders"`
+		ReservedFCTransfers   sql.NullString `db:"reserved_fc_transfers"`
 		ReservedFCProcessing  sql.NullString `db:"reserved_fc_processing"`
 	}
 	query := reportFBAInventorySQL
@@ -927,6 +931,7 @@ func inventoryReportValues(reportType string, row struct {
 	InboundShipped        sql.NullString `db:"inbound_shipped"`
 	InboundReceiving      sql.NullString `db:"inbound_receiving"`
 	ReservedCustomerOrder sql.NullString `db:"reserved_customer_orders"`
+	ReservedFCTransfers   sql.NullString `db:"reserved_fc_transfers"`
 	ReservedFCProcessing  sql.NullString `db:"reserved_fc_processing"`
 }) (Values, error) {
 	integerValue := func(value sql.NullString) (*int64, error) {
@@ -964,6 +969,9 @@ func inventoryReportValues(reportType string, row struct {
 		}
 		if values.InventoryReservedCustomerOrders, err = integerValue(row.ReservedCustomerOrder); err != nil {
 			return Values{}, fmt.Errorf("reserved customer orders: %w", err)
+		}
+		if values.InventoryReservedFCTransfers, err = integerValue(row.ReservedFCTransfers); err != nil {
+			return Values{}, fmt.Errorf("reserved FC transfers: %w", err)
 		}
 		if values.InventoryReservedFCProcessing, err = integerValue(row.ReservedFCProcessing); err != nil {
 			return Values{}, fmt.Errorf("reserved FC processing: %w", err)

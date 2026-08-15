@@ -337,7 +337,7 @@ func formalReportSchemaRequirements(reportType string) map[string][]string {
 	case reportexport.ReservedInventoryReportType:
 		requirements["ls_fba_reserved_inventory"] = append([]string{
 			"account_id", "seller_id", "store_id", "report_task_id", "row_number", "row_sha256",
-		}, []string{"sku", "fnsku", "asin", "product-name", "reserved_qty", "reserved_customerorders", "reserved_fc-processing"}...)
+		}, []string{"sku", "fnsku", "asin", "product-name", "reserved_qty", "reserved_customerorders", "reserved_fc-transfers", "reserved_fc-processing"}...)
 	case reportexport.AFNInventoryReportType:
 		requirements["ls_afn_inventory"] = append([]string{
 			"account_id", "seller_id", "store_id", "report_task_id", "row_number", "row_sha256",

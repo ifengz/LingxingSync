@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -113,6 +114,14 @@ func TestValidateCustomerShipmentSalesSchemaDoesNotRequireReturnsTable(t *testin
 		return append([]string(nil), requirements[table]...), nil
 	}); err != nil {
 		t.Fatalf("complete shipment sales schema = %v", err)
+	}
+}
+
+func TestReservedInventorySchemaRequiresFCTransfers(t *testing.T) {
+	requirements := formalReportSchemaRequirements(reportexport.ReservedInventoryReportType)
+	columns := requirements["ls_fba_reserved_inventory"]
+	if !slices.Contains(columns, "reserved_fc-transfers") {
+		t.Fatalf("Reserved Inventory schema columns = %#v", columns)
 	}
 }
 

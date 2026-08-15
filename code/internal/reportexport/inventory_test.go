@@ -34,12 +34,12 @@ func TestParseFBAInventoryAcceptsOfficialEUQuantityVariant(t *testing.T) {
 }
 
 func TestParseReservedInventoryRequiresExactOfficialHeader(t *testing.T) {
-	data := "sku\tfnsku\tasin\tproduct-name\treserved_qty\treserved_customerorders\treserved_fc-processing\nSKU-1\tFNSKU-1\tASIN-1\tWidget\t8\t2\t6\n"
+	data := "sku\tfnsku\tasin\tproduct-name\treserved_qty\treserved_customerorders\treserved_fc-transfers\treserved_fc-processing\t\nSKU-1\tFNSKU-1\tASIN-1\tWidget\t8\t2\t3\t3\t\n"
 	rows, err := ParseReservedInventory([]byte(data), "", "")
 	if err != nil {
 		t.Fatalf("ParseReservedInventory returned error: %v", err)
 	}
-	if len(rows) != 1 || rows[0].ReservedQty != 8 || rows[0].ReservedFCProcessing != 6 {
+	if len(rows) != 1 || rows[0].ReservedQty != 8 || rows[0].ReservedFCTransfers != 3 || rows[0].ReservedFCProcessing != 3 {
 		t.Fatalf("rows = %#v", rows)
 	}
 }

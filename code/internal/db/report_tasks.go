@@ -398,16 +398,16 @@ func (d *DBReportStore) SaveReservedInventory(ctx context.Context, id int64, row
 		return err
 	}
 	const insert = "INSERT INTO ls_fba_reserved_inventory\n" +
-		"(account_id, seller_id, store_id, report_task_id, `row_number`, row_sha256, sku, fnsku, asin, `product-name`, reserved_qty, reserved_customerorders, `reserved_fc-processing`)\n" +
-		"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\n" +
-		"ON DUPLICATE KEY UPDATE row_sha256 = VALUES(row_sha256), sku = VALUES(sku), fnsku = VALUES(fnsku), asin = VALUES(asin), `product-name` = VALUES(`product-name`), reserved_qty = VALUES(reserved_qty), reserved_customerorders = VALUES(reserved_customerorders), `reserved_fc-processing` = VALUES(`reserved_fc-processing`)"
+		"(account_id, seller_id, store_id, report_task_id, `row_number`, row_sha256, sku, fnsku, asin, `product-name`, reserved_qty, reserved_customerorders, `reserved_fc-transfers`, `reserved_fc-processing`)\n" +
+		"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\n" +
+		"ON DUPLICATE KEY UPDATE row_sha256 = VALUES(row_sha256), sku = VALUES(sku), fnsku = VALUES(fnsku), asin = VALUES(asin), `product-name` = VALUES(`product-name`), reserved_qty = VALUES(reserved_qty), reserved_customerorders = VALUES(reserved_customerorders), `reserved_fc-transfers` = VALUES(`reserved_fc-transfers`), `reserved_fc-processing` = VALUES(`reserved_fc-processing`)"
 	stmt, err := tx.PrepareContext(ctx, insert)
 	if err != nil {
 		return fmt.Errorf("db report: prepare reserved inventory insert: %w", err)
 	}
 	defer stmt.Close()
 	for i, row := range rows {
-		values := []string{row.SKU, row.FNSKU, row.ASIN, row.ProductName, row.ReservedQtyRaw, row.ReservedCustomerOrdersRaw, row.ReservedFCProcessingRaw}
+		values := []string{row.SKU, row.FNSKU, row.ASIN, row.ProductName, row.ReservedQtyRaw, row.ReservedCustomerOrdersRaw, row.ReservedFCTransfersRaw, row.ReservedFCProcessingRaw}
 		if err := execInventoryRow(ctx, stmt, meta, i+1, values); err != nil {
 			return fmt.Errorf("db report: insert reserved inventory row %d: %w", i+1, err)
 		}

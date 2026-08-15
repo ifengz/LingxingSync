@@ -45,6 +45,24 @@ func TestCustomerReturnsReportMigrationContractIsIndependentAndIdempotent(t *tes
 	}
 }
 
+func TestReservedInventoryFCTransfersMigrationIsIdempotentAndNonDestructive(t *testing.T) {
+	raw, err := os.ReadFile("../../migrations/041_add_reserved_inventory_fc_transfers.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sql := strings.ToUpper(string(raw))
+	for _, want := range []string{"INFORMATION_SCHEMA.COLUMNS", "LS_FBA_RESERVED_INVENTORY", "RESERVED_FC-TRANSFERS", "ALTER TABLE"} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("Reserved Inventory migration missing %q", want)
+		}
+	}
+	for _, forbidden := range []string{"DROP TABLE", "DELETE FROM", "TRUNCATE"} {
+		if strings.Contains(sql, forbidden) {
+			t.Fatalf("Reserved Inventory migration contains destructive %s", forbidden)
+		}
+	}
+}
+
 func TestCustomerReturnsReportMigrationIsRepeatableAgainstLocalMySQL(t *testing.T) {
 	dsn := os.Getenv("LINGXING_MIGRATION_TEST_DSN")
 	if dsn == "" {

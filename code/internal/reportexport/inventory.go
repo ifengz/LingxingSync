@@ -25,7 +25,7 @@ var fbaInventoryHeader = []string{
 var fbaInventoryEUHeader = append(append([]string(nil), fbaInventoryHeader...), "afn-fulfillable-quantity-local", "afn-fulfillable-quantity-remote")
 
 var reservedInventoryHeader = []string{
-	"sku", "fnsku", "asin", "product-name", "reserved_qty", "reserved_customerorders", "reserved_fc-processing",
+	"sku", "fnsku", "asin", "product-name", "reserved_qty", "reserved_customerorders", "reserved_fc-transfers", "reserved_fc-processing",
 }
 
 var afnInventoryHeader = []string{
@@ -83,6 +83,8 @@ type ReservedInventory struct {
 	ReservedQtyRaw            string
 	ReservedCustomerOrders    int64
 	ReservedCustomerOrdersRaw string
+	ReservedFCTransfers       int64
+	ReservedFCTransfersRaw    string
 	ReservedFCProcessing      int64
 	ReservedFCProcessingRaw   string
 }
@@ -142,14 +144,15 @@ func ParseReservedInventory(downloaded []byte, compressionAlgorithm, contentType
 	}
 	rows := make([]ReservedInventory, 0, len(records))
 	for i, record := range records {
-		quantities, err := parseIntegerColumns("reserved inventory", i+2, record, 4, 5, 6)
+		quantities, err := parseIntegerColumns("reserved inventory", i+2, record, 4, 5, 6, 7)
 		if err != nil {
 			return nil, err
 		}
 		rows = append(rows, ReservedInventory{
 			SKU: record[0], FNSKU: record[1], ASIN: record[2], ProductName: record[3], ReservedQty: quantities[4], ReservedQtyRaw: record[4],
 			ReservedCustomerOrders: quantities[5], ReservedCustomerOrdersRaw: record[5],
-			ReservedFCProcessing: quantities[6], ReservedFCProcessingRaw: record[6],
+			ReservedFCTransfers: quantities[6], ReservedFCTransfersRaw: record[6],
+			ReservedFCProcessing: quantities[7], ReservedFCProcessingRaw: record[7],
 		})
 	}
 	return rows, nil
