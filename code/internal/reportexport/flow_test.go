@@ -72,17 +72,18 @@ func TestParseCustomerReturnsRejectsUnknownCompression(t *testing.T) {
 }
 
 type fakeStore struct {
-	nextID            int64
-	audits            []Audit
-	progress          []string
-	saved             int
-	savedFBA          int
-	savedFBAAll       int
-	savedReserved     int
-	savedAFN          int
-	savedReplacements int
-	errors            int
-	markErrorErr      error
+	nextID              int64
+	audits              []Audit
+	progress            []string
+	saved               int
+	savedFBA            int
+	savedFBAAll         int
+	savedReserved       int
+	savedAFN            int
+	savedReplacements   int
+	savedReimbursements int
+	errors              int
+	markErrorErr        error
 }
 
 type countingLimiter struct{ waits int }
@@ -139,6 +140,10 @@ func (s *fakeStore) SaveCustomerShipmentReplacements(_ context.Context, _ int64,
 	s.savedReplacements += len(rows)
 	return nil
 }
+func (s *fakeStore) SaveFBAReimbursements(_ context.Context, _ int64, rows []FBAReimbursement, _ string, _ string) error {
+	s.savedReimbursements += len(rows)
+	return nil
+}
 func (s *fakeStore) MarkReportError(_ context.Context, _ int64, _ string, _ error) error {
 	s.errors++
 	return s.markErrorErr
@@ -189,6 +194,7 @@ func TestRunnerPersistsEachInventoryReportThroughItsTypedStore(t *testing.T) {
 		ReservedInventoryReportType:            []byte("sku\tfnsku\tasin\tproduct-name\treserved_qty\treserved_customerorders\treserved_fc-transfers\treserved_fc-processing\t\nSKU-1\tFNSKU-1\tASIN-1\tWidget\t8\t2\t3\t3\t\n"),
 		AFNInventoryReportType:                 []byte("seller-sku\tfulfillment-channel-sku\tasin\tcondition-type\tWarehouse-Condition-code\tQuantity Available\nSKU-1\tFC-SKU-1\tASIN-1\tNew\tSELLABLE\t17\n"),
 		CustomerShipmentReplacementsReportType: []byte("shipment-date\tsku\tasin\tfulfillment-center-id\toriginal-fulfillment-center-id\tquantity\treplacement-reason-code\treplacement-amazon-order-id\toriginal-amazon-order-id\n2026-08-11\tSKU-1\tASIN-1\tFC-1\tFC-2\t2\tDAMAGED\tORDER-2\tORDER-1\n"),
+		FBAReimbursementsReportType:            []byte("approval-date\treimbursement-id\tcase-id\tamazon-order-id\treason\tsku\tfnsku\tasin\tproduct-name\tcondition\tcurrency-unit\tamount-per-unit\tamount-total\tquantity-reimbursed-cash\tquantity-reimbursed-inventory\tquantity-reimbursed-total\toriginal-reimbursement-id\toriginal-reimbursement-type\n2026-08-11\tR-1\tC-1\tO-1\tDAMAGED\tSKU-1\tFNSKU-1\tASIN-1\tWidget\tNew\tUSD\t2.00\t4.00\t1\t1\t2\tR-0\tINVENTORY\n"),
 	}
 	for reportType, body := range fixtures {
 		t.Run(reportType, func(t *testing.T) {
@@ -218,6 +224,10 @@ func TestRunnerPersistsEachInventoryReportThroughItsTypedStore(t *testing.T) {
 			case CustomerShipmentReplacementsReportType:
 				if store.savedReplacements != 1 {
 					t.Fatalf("replacement saves=%d", store.savedReplacements)
+				}
+			case FBAReimbursementsReportType:
+				if store.savedReimbursements != 1 {
+					t.Fatalf("reimbursement saves=%d", store.savedReimbursements)
 				}
 			}
 		})

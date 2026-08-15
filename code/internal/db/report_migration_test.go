@@ -81,6 +81,24 @@ func TestCustomerShipmentReplacementsMigrationContractIsIndependent(t *testing.T
 	}
 }
 
+func TestFBAReimbursementsMigrationContractIsIndependent(t *testing.T) {
+	raw, err := os.ReadFile("../../migrations/043_add_fba_reimbursements_report.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sql := strings.ToUpper(string(raw))
+	for _, want := range []string{"LS_FBA_REIMBURSEMENTS", "QUANTITY-REIMBURSED-TOTAL", "ORIGINAL-REIMBURSEMENT-TYPE", "CREATE TABLE IF NOT EXISTS"} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("reimbursements migration missing %q", want)
+		}
+	}
+	for _, forbidden := range []string{"DROP TABLE", "DELETE FROM", "TRUNCATE"} {
+		if strings.Contains(sql, forbidden) {
+			t.Fatalf("reimbursements migration contains destructive %s", forbidden)
+		}
+	}
+}
+
 func TestCustomerReturnsReportMigrationIsRepeatableAgainstLocalMySQL(t *testing.T) {
 	dsn := os.Getenv("LINGXING_MIGRATION_TEST_DSN")
 	if dsn == "" {

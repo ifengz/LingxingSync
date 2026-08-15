@@ -59,6 +59,7 @@ const (
 	ReportExportReservedInventory            = "fba_reserved_inventory"
 	ReportExportAFNInventory                 = "afn_inventory"
 	ReportExportCustomerShipmentReplacements = "fba_customer_shipment_replacements"
+	ReportExportFBAReimbursements            = "fba_reimbursements"
 )
 
 // ReportExport is a fixed formal-report schedule. Disabled entries are kept
@@ -433,7 +434,7 @@ func (c *Config) validate() error {
 	}
 	reportScopes := make(map[string]struct{}, len(c.ReportExports))
 	for i, report := range c.ReportExports {
-		if report.Type != ReportExportCustomerReturns && report.Type != ReportExportCustomerShipmentSales && report.Type != ReportExportFBAInventory && report.Type != ReportExportFBAAllInventory && report.Type != ReportExportReservedInventory && report.Type != ReportExportAFNInventory && report.Type != ReportExportCustomerShipmentReplacements {
+		if report.Type != ReportExportCustomerReturns && report.Type != ReportExportCustomerShipmentSales && report.Type != ReportExportFBAInventory && report.Type != ReportExportFBAAllInventory && report.Type != ReportExportReservedInventory && report.Type != ReportExportAFNInventory && report.Type != ReportExportCustomerShipmentReplacements && report.Type != ReportExportFBAReimbursements {
 			return fmt.Errorf("report_exports[%d].type=%q 非法", i, report.Type)
 		}
 		scope := report.Type + "\x00" + NormID(report.Account) + "\x00" + report.StoreID

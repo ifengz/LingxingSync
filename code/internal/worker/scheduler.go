@@ -192,6 +192,8 @@ func reportExportType(value string) (string, error) {
 		return reportexport.AFNInventoryReportType, nil
 	case config.ReportExportCustomerShipmentReplacements:
 		return reportexport.CustomerShipmentReplacementsReportType, nil
+	case config.ReportExportFBAReimbursements:
+		return reportexport.FBAReimbursementsReportType, nil
 	default:
 		return "", fmt.Errorf("不支持的正式报告类型 %q", value)
 	}

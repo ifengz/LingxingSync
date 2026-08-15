@@ -499,6 +499,43 @@ func (d *DBReportStore) SaveCustomerShipmentReplacements(ctx context.Context, id
 	return nil
 }
 
+func (d *DBReportStore) SaveFBAReimbursements(ctx context.Context, id int64, rows []reportexport.FBAReimbursement, downloadSHA string, documentID string) error {
+	if err := d.ensure(); err != nil {
+		return err
+	}
+	tx, err := d.db.BeginTxx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("db report: begin reimbursements transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	meta, err := loadReportMeta(ctx, tx, id)
+	if err != nil {
+		return err
+	}
+	const insert = "INSERT INTO ls_fba_reimbursements\n" +
+		"(account_id, seller_id, store_id, report_task_id, `row_number`, row_sha256, `approval-date`, `reimbursement-id`, `case-id`, `amazon-order-id`, reason, sku, fnsku, asin, `product-name`, `condition`, `currency-unit`, `amount-per-unit`, `amount-total`, `quantity-reimbursed-cash`, `quantity-reimbursed-inventory`, `quantity-reimbursed-total`, `original-reimbursement-id`, `original-reimbursement-type`)\n" +
+		"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\n" +
+		"ON DUPLICATE KEY UPDATE row_sha256 = VALUES(row_sha256), `approval-date` = VALUES(`approval-date`), `reimbursement-id` = VALUES(`reimbursement-id`), `case-id` = VALUES(`case-id`), `amazon-order-id` = VALUES(`amazon-order-id`), reason = VALUES(reason), sku = VALUES(sku), fnsku = VALUES(fnsku), asin = VALUES(asin), `product-name` = VALUES(`product-name`), `condition` = VALUES(`condition`), `currency-unit` = VALUES(`currency-unit`), `amount-per-unit` = VALUES(`amount-per-unit`), `amount-total` = VALUES(`amount-total`), `quantity-reimbursed-cash` = VALUES(`quantity-reimbursed-cash`), `quantity-reimbursed-inventory` = VALUES(`quantity-reimbursed-inventory`), `quantity-reimbursed-total` = VALUES(`quantity-reimbursed-total`), `original-reimbursement-id` = VALUES(`original-reimbursement-id`), `original-reimbursement-type` = VALUES(`original-reimbursement-type`)"
+	stmt, err := tx.PrepareContext(ctx, insert)
+	if err != nil {
+		return fmt.Errorf("db report: prepare reimbursements insert: %w", err)
+	}
+	defer stmt.Close()
+	for i, row := range rows {
+		values := []string{row.ApprovalDate, row.ReimbursementID, row.CaseID, row.AmazonOrderID, row.Reason, row.SKU, row.FNSKU, row.ASIN, row.ProductName, row.Condition, row.CurrencyUnit, row.AmountPerUnit, row.AmountTotal, row.QuantityReimbursedCash, row.QuantityReimbursedInventory, row.QuantityReimbursedTotal, row.OriginalReimbursementID, row.OriginalReimbursementType}
+		if err := execInventoryRow(ctx, stmt, meta, i+1, values); err != nil {
+			return fmt.Errorf("db report: insert reimbursement row %d: %w", i+1, err)
+		}
+	}
+	if err := finalizeReportTx(ctx, tx, id, documentID, downloadSHA, len(rows)); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("db report: commit reimbursements transaction: %w", err)
+	}
+	return nil
+}
+
 type reportMeta struct {
 	AccountID    string `db:"account_id"`
 	SellerID     string `db:"seller_id"`
