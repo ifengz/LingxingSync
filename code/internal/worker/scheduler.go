@@ -172,7 +172,8 @@ func customerReturnsRequest(report config.ReportExport, now time.Time) (reportex
 			DateTo:   utcNow.Format(time.RFC3339),
 		}, nil
 	}
-	startOfToday := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	utcNow := now.UTC()
+	startOfToday := time.Date(utcNow.Year(), utcNow.Month(), utcNow.Day(), 0, 0, 0, 0, time.UTC)
 	return reportexport.Request{
 		ReportType:     reportType,
 		AccountID:      report.Account,

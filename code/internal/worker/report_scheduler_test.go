@@ -29,10 +29,10 @@ func TestCustomerReturnsWindowUsesOnlyCompleteDays(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if request.DateFrom != "2026-08-09T00:00:00+08:00" {
+	if request.DateFrom != "2026-08-09T00:00:00Z" {
 		t.Fatalf("date_from = %q, want first complete day", request.DateFrom)
 	}
-	if request.DateTo != "2026-08-11T23:59:59+08:00" {
+	if request.DateTo != "2026-08-11T23:59:59Z" {
 		t.Fatalf("date_to = %q, want end of yesterday", request.DateTo)
 	}
 }
@@ -186,7 +186,7 @@ func TestCustomerReturnsJobPassesCompleteDayRequestToRunner(t *testing.T) {
 	}
 	select {
 	case request := <-called:
-		if request.AccountID != report.Account || request.StoreID != report.StoreID || request.DateFrom != "2026-08-09T00:00:00+08:00" || request.DateTo != "2026-08-11T23:59:59+08:00" {
+		if request.AccountID != report.Account || request.StoreID != report.StoreID || request.DateFrom != "2026-08-09T00:00:00Z" || request.DateTo != "2026-08-11T23:59:59Z" {
 			t.Fatalf("runner request = %#v", request)
 		}
 	case <-time.After(time.Second):
