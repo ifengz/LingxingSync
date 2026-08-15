@@ -737,7 +737,7 @@ func normalizedReportType(request Request) string {
 
 func validateRequest(request Request) error {
 	switch normalizedReportType(request) {
-	case CustomerReturnsReportType, CustomerShipmentSalesReportType, FBAInventoryReportType, FBAAllInventoryReportType, ReservedInventoryReportType, AFNInventoryReportType, AFNInventoryByCountryReportType, FBAStorageFeeChargesReportType, FBAOverageFeeChargesReportType, FBALongtermStorageFeeChargesReportType, CustomerShipmentReplacementsReportType, FBAReimbursementsReportType, FBAStrandedInventoryReportType, FBAEstimatedFeesReportType, FBAInboundNoncomplianceReportType, FBARecommendedRemovalReportType, FBARemovalOrderReportType, FBARemovalShipmentReportType:
+	case CustomerReturnsReportType, CustomerShipmentSalesReportType, FBAInventoryReportType, FBAAllInventoryReportType, ReservedInventoryReportType, AFNInventoryReportType, AFNInventoryByCountryReportType, FBAStorageFeeChargesReportType, FBAOverageFeeChargesReportType, FBALongtermStorageFeeChargesReportType, CustomerShipmentReplacementsReportType, FBAReimbursementsReportType, FBAStrandedInventoryReportType, FBAEstimatedFeesReportType, FBAInboundNoncomplianceReportType, FBARecommendedRemovalReportType, FBARemovalOrderReportType, FBARemovalShipmentReportType, AllOrdersReportType:
 	default:
 		return fmt.Errorf("report export: unsupported report type %q", normalizedReportType(request))
 	}

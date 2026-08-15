@@ -711,6 +711,22 @@ func TestValidateRequestRejectsInvalidRegionAndBlankMarketplace(t *testing.T) {
 	}
 }
 
+func TestValidateRequestAllowsAllOrdersReportType(t *testing.T) {
+	request := Request{
+		ReportType:     AllOrdersReportType,
+		AccountID:      "acct",
+		SellerID:       "seller",
+		StoreID:        "store-1",
+		Region:         "na",
+		MarketplaceIDs: []string{"ATVPDKIKX0DER"},
+		DateFrom:       "2026-08-01T00:00:00Z",
+		DateTo:         "2026-08-02T23:59:59Z",
+	}
+	if err := validateRequest(request); err != nil {
+		t.Fatalf("all orders request rejected before task creation: %v", err)
+	}
+}
+
 func TestActiveScopeKeyCanonicalizesMarketplaceOrderAndRFC3339Offset(t *testing.T) {
 	left := Request{AccountID: "acct", SellerID: "seller", StoreID: "store-1", Region: "na", MarketplaceIDs: []string{"B", "A"}, DateFrom: "2026-08-01T00:00:00Z", DateTo: "2026-08-02T00:00:00Z"}
 	right := left
