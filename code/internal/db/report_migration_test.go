@@ -99,6 +99,24 @@ func TestFBAReimbursementsMigrationContractIsIndependent(t *testing.T) {
 	}
 }
 
+func TestAFNInventoryByCountryMigrationContractIsIndependent(t *testing.T) {
+	raw, err := os.ReadFile("../../migrations/044_add_afn_inventory_by_country_report.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sql := strings.ToUpper(string(raw))
+	for _, want := range []string{"LS_AFN_INVENTORY_BY_COUNTRY", "QUANTITY-FOR-LOCAL-FULFILLMENT", "CREATE TABLE IF NOT EXISTS"} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("AFN by country migration missing %q", want)
+		}
+	}
+	for _, forbidden := range []string{"DROP TABLE", "DELETE FROM", "TRUNCATE"} {
+		if strings.Contains(sql, forbidden) {
+			t.Fatalf("AFN by country migration contains destructive %s", forbidden)
+		}
+	}
+}
+
 func TestCustomerReturnsReportMigrationIsRepeatableAgainstLocalMySQL(t *testing.T) {
 	dsn := os.Getenv("LINGXING_MIGRATION_TEST_DSN")
 	if dsn == "" {

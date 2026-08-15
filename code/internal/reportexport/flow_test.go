@@ -80,6 +80,7 @@ type fakeStore struct {
 	savedFBAAll         int
 	savedReserved       int
 	savedAFN            int
+	savedAFNByCountry   int
 	savedReplacements   int
 	savedReimbursements int
 	errors              int
@@ -134,6 +135,10 @@ func (s *fakeStore) SaveReservedInventory(_ context.Context, _ int64, rows []Res
 }
 func (s *fakeStore) SaveAFNInventory(_ context.Context, _ int64, rows []AFNInventory, _ string, _ string) error {
 	s.savedAFN += len(rows)
+	return nil
+}
+func (s *fakeStore) SaveAFNInventoryByCountry(_ context.Context, _ int64, rows []AFNInventoryByCountry, _ string, _ string) error {
+	s.savedAFNByCountry += len(rows)
 	return nil
 }
 func (s *fakeStore) SaveCustomerShipmentReplacements(_ context.Context, _ int64, rows []CustomerShipmentReplacement, _ string, _ string) error {
@@ -193,6 +198,7 @@ func TestRunnerPersistsEachInventoryReportThroughItsTypedStore(t *testing.T) {
 		FBAAllInventoryReportType:              []byte("sku\tfnsku\tasin\tproduct-name\tcondition\tyour-price\tmfn-listing-exists\tmfn-fulfillable-quantity\tafn-listing-exists\tafn-warehouse-quantity\tafn-fulfillable-quantity\tafn-unsellable-quantity\tafn-reserved-quantity\tafn-total-quantity\tper-unit-volume\tafn-inbound-working-quantity\tafn-inbound-shipped-quantity\tafn-inbound-receiving-quantity\tafn-researching-quantity\tafn-reserved-future-supply\tafn-future-supply-buyable\nSKU-1\tFNSKU-1\tASIN-1\tArchived Widget\tNew\t12.50\tyes\t1\tyes\t2\t3\t4\t5\t14\t0.25\t6\t7\t8\t0\t1\tyes\n"),
 		ReservedInventoryReportType:            []byte("sku\tfnsku\tasin\tproduct-name\treserved_qty\treserved_customerorders\treserved_fc-transfers\treserved_fc-processing\t\nSKU-1\tFNSKU-1\tASIN-1\tWidget\t8\t2\t3\t3\t\n"),
 		AFNInventoryReportType:                 []byte("seller-sku\tfulfillment-channel-sku\tasin\tcondition-type\tWarehouse-Condition-code\tQuantity Available\nSKU-1\tFC-SKU-1\tASIN-1\tNew\tSELLABLE\t17\n"),
+		AFNInventoryByCountryReportType:        []byte("seller-sku\tfulfillment-channel-sku\tasin\tcondition-type\tcountry\tquantity-for-local-fulfillment\nSKU-1\tFC-SKU-1\tASIN-1\tNew\tDE\t17\n"),
 		CustomerShipmentReplacementsReportType: []byte("shipment-date\tsku\tasin\tfulfillment-center-id\toriginal-fulfillment-center-id\tquantity\treplacement-reason-code\treplacement-amazon-order-id\toriginal-amazon-order-id\n2026-08-11\tSKU-1\tASIN-1\tFC-1\tFC-2\t2\tDAMAGED\tORDER-2\tORDER-1\n"),
 		FBAReimbursementsReportType:            []byte("approval-date\treimbursement-id\tcase-id\tamazon-order-id\treason\tsku\tfnsku\tasin\tproduct-name\tcondition\tcurrency-unit\tamount-per-unit\tamount-total\tquantity-reimbursed-cash\tquantity-reimbursed-inventory\tquantity-reimbursed-total\toriginal-reimbursement-id\toriginal-reimbursement-type\n2026-08-11\tR-1\tC-1\tO-1\tDAMAGED\tSKU-1\tFNSKU-1\tASIN-1\tWidget\tNew\tUSD\t2.00\t4.00\t1\t1\t2\tR-0\tINVENTORY\n"),
 	}
@@ -220,6 +226,10 @@ func TestRunnerPersistsEachInventoryReportThroughItsTypedStore(t *testing.T) {
 			case AFNInventoryReportType:
 				if store.savedAFN != 1 || store.savedFBA != 0 || store.savedReserved != 0 {
 					t.Fatalf("typed saves=%d/%d/%d", store.savedFBA, store.savedReserved, store.savedAFN)
+				}
+			case AFNInventoryByCountryReportType:
+				if store.savedAFNByCountry != 1 {
+					t.Fatalf("AFN by country saves=%d", store.savedAFNByCountry)
 				}
 			case CustomerShipmentReplacementsReportType:
 				if store.savedReplacements != 1 {

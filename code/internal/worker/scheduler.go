@@ -190,6 +190,8 @@ func reportExportType(value string) (string, error) {
 		return reportexport.ReservedInventoryReportType, nil
 	case config.ReportExportAFNInventory:
 		return reportexport.AFNInventoryReportType, nil
+	case config.ReportExportAFNInventoryByCountry:
+		return reportexport.AFNInventoryByCountryReportType, nil
 	case config.ReportExportCustomerShipmentReplacements:
 		return reportexport.CustomerShipmentReplacementsReportType, nil
 	case config.ReportExportFBAReimbursements:

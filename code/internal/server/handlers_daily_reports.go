@@ -215,12 +215,12 @@ func defaultReportExportDTO() reportExportConfigDTO {
 }
 
 func availableReportExportTypes() []string {
-	return []string{config.ReportExportCustomerReturns, config.ReportExportCustomerShipmentSales, config.ReportExportFBAInventory, config.ReportExportFBAAllInventory, config.ReportExportReservedInventory, config.ReportExportAFNInventory, config.ReportExportCustomerShipmentReplacements, config.ReportExportFBAReimbursements}
+	return []string{config.ReportExportCustomerReturns, config.ReportExportCustomerShipmentSales, config.ReportExportFBAInventory, config.ReportExportFBAAllInventory, config.ReportExportReservedInventory, config.ReportExportAFNInventory, config.ReportExportAFNInventoryByCountry, config.ReportExportCustomerShipmentReplacements, config.ReportExportFBAReimbursements}
 }
 
 func supportedReportExportType(value string) bool {
 	switch value {
-	case config.ReportExportCustomerReturns, config.ReportExportCustomerShipmentSales, config.ReportExportFBAInventory, config.ReportExportFBAAllInventory, config.ReportExportReservedInventory, config.ReportExportAFNInventory, config.ReportExportCustomerShipmentReplacements, config.ReportExportFBAReimbursements:
+	case config.ReportExportCustomerReturns, config.ReportExportCustomerShipmentSales, config.ReportExportFBAInventory, config.ReportExportFBAAllInventory, config.ReportExportReservedInventory, config.ReportExportAFNInventory, config.ReportExportAFNInventoryByCountry, config.ReportExportCustomerShipmentReplacements, config.ReportExportFBAReimbursements:
 		return true
 	default:
 		return false
@@ -241,6 +241,8 @@ func reportExportAPIType(value string) string {
 		return reportexport.ReservedInventoryReportType
 	case config.ReportExportAFNInventory:
 		return reportexport.AFNInventoryReportType
+	case config.ReportExportAFNInventoryByCountry:
+		return reportexport.AFNInventoryByCountryReportType
 	case config.ReportExportCustomerShipmentReplacements:
 		return reportexport.CustomerShipmentReplacementsReportType
 	case config.ReportExportFBAReimbursements:

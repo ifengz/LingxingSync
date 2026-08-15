@@ -458,6 +458,43 @@ func (d *DBReportStore) SaveAFNInventory(ctx context.Context, id int64, rows []r
 	return nil
 }
 
+func (d *DBReportStore) SaveAFNInventoryByCountry(ctx context.Context, id int64, rows []reportexport.AFNInventoryByCountry, downloadSHA string, documentID string) error {
+	if err := d.ensure(); err != nil {
+		return err
+	}
+	tx, err := d.db.BeginTxx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("db report: begin AFN inventory by country transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	meta, err := loadReportMeta(ctx, tx, id)
+	if err != nil {
+		return err
+	}
+	const insert = "INSERT INTO ls_afn_inventory_by_country\n" +
+		"(account_id, seller_id, store_id, report_task_id, `row_number`, row_sha256, `seller-sku`, `fulfillment-channel-sku`, asin, `condition-type`, country, `quantity-for-local-fulfillment`)\n" +
+		"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\n" +
+		"ON DUPLICATE KEY UPDATE row_sha256 = VALUES(row_sha256), `seller-sku` = VALUES(`seller-sku`), `fulfillment-channel-sku` = VALUES(`fulfillment-channel-sku`), asin = VALUES(asin), `condition-type` = VALUES(`condition-type`), country = VALUES(country), `quantity-for-local-fulfillment` = VALUES(`quantity-for-local-fulfillment`)"
+	stmt, err := tx.PrepareContext(ctx, insert)
+	if err != nil {
+		return fmt.Errorf("db report: prepare AFN inventory by country insert: %w", err)
+	}
+	defer stmt.Close()
+	for i, row := range rows {
+		values := []string{row.SellerSKU, row.FulfillmentChannelSKU, row.ASIN, row.ConditionType, row.Country, row.QuantityForLocalFulfillmentRaw}
+		if err := execInventoryRow(ctx, stmt, meta, i+1, values); err != nil {
+			return fmt.Errorf("db report: insert AFN inventory by country row %d: %w", i+1, err)
+		}
+	}
+	if err := finalizeReportTx(ctx, tx, id, documentID, downloadSHA, len(rows)); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("db report: commit AFN inventory by country transaction: %w", err)
+	}
+	return nil
+}
+
 func (d *DBReportStore) SaveCustomerShipmentReplacements(ctx context.Context, id int64, rows []reportexport.CustomerShipmentReplacement, downloadSHA string, documentID string) error {
 	if err := d.ensure(); err != nil {
 		return err

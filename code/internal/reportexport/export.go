@@ -115,6 +115,10 @@ type AFNInventoryStore interface {
 	SaveAFNInventory(context.Context, int64, []AFNInventory, string, string) error
 }
 
+type AFNInventoryByCountryStore interface {
+	SaveAFNInventoryByCountry(context.Context, int64, []AFNInventoryByCountry, string, string) error
+}
+
 type CustomerShipmentReplacementsStore interface {
 	SaveCustomerShipmentReplacements(context.Context, int64, []CustomerShipmentReplacement, string, string) error
 }
@@ -302,6 +306,19 @@ func (r *Runner) saveDownloadedReport(ctx context.Context, auditID int64, reques
 			return 0, err
 		}
 		if err := store.SaveAFNInventory(ctx, auditID, rows, hash, documentID); err != nil {
+			return 0, err
+		}
+		return len(rows), nil
+	case AFNInventoryByCountryReportType:
+		store, ok := r.Store.(AFNInventoryByCountryStore)
+		if !ok {
+			return 0, fmt.Errorf("report export: store does not support %s", AFNInventoryByCountryReportType)
+		}
+		rows, err := ParseAFNInventoryByCountry(body, compressionAlgorithm, contentType)
+		if err != nil {
+			return 0, err
+		}
+		if err := store.SaveAFNInventoryByCountry(ctx, auditID, rows, hash, documentID); err != nil {
 			return 0, err
 		}
 		return len(rows), nil
@@ -550,7 +567,7 @@ func normalizedReportType(request Request) string {
 
 func validateRequest(request Request) error {
 	switch normalizedReportType(request) {
-	case CustomerReturnsReportType, CustomerShipmentSalesReportType, FBAInventoryReportType, FBAAllInventoryReportType, ReservedInventoryReportType, AFNInventoryReportType, CustomerShipmentReplacementsReportType, FBAReimbursementsReportType:
+	case CustomerReturnsReportType, CustomerShipmentSalesReportType, FBAInventoryReportType, FBAAllInventoryReportType, ReservedInventoryReportType, AFNInventoryReportType, AFNInventoryByCountryReportType, CustomerShipmentReplacementsReportType, FBAReimbursementsReportType:
 	default:
 		return fmt.Errorf("report export: unsupported report type %q", normalizedReportType(request))
 	}

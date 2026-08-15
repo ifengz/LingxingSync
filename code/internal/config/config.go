@@ -58,6 +58,7 @@ const (
 	ReportExportFBAAllInventory              = "fba_myi_all_inventory"
 	ReportExportReservedInventory            = "fba_reserved_inventory"
 	ReportExportAFNInventory                 = "afn_inventory"
+	ReportExportAFNInventoryByCountry        = "afn_inventory_by_country"
 	ReportExportCustomerShipmentReplacements = "fba_customer_shipment_replacements"
 	ReportExportFBAReimbursements            = "fba_reimbursements"
 )
@@ -434,7 +435,7 @@ func (c *Config) validate() error {
 	}
 	reportScopes := make(map[string]struct{}, len(c.ReportExports))
 	for i, report := range c.ReportExports {
-		if report.Type != ReportExportCustomerReturns && report.Type != ReportExportCustomerShipmentSales && report.Type != ReportExportFBAInventory && report.Type != ReportExportFBAAllInventory && report.Type != ReportExportReservedInventory && report.Type != ReportExportAFNInventory && report.Type != ReportExportCustomerShipmentReplacements && report.Type != ReportExportFBAReimbursements {
+		if report.Type != ReportExportCustomerReturns && report.Type != ReportExportCustomerShipmentSales && report.Type != ReportExportFBAInventory && report.Type != ReportExportFBAAllInventory && report.Type != ReportExportReservedInventory && report.Type != ReportExportAFNInventory && report.Type != ReportExportAFNInventoryByCountry && report.Type != ReportExportCustomerShipmentReplacements && report.Type != ReportExportFBAReimbursements {
 			return fmt.Errorf("report_exports[%d].type=%q 非法", i, report.Type)
 		}
 		scope := report.Type + "\x00" + NormID(report.Account) + "\x00" + report.StoreID

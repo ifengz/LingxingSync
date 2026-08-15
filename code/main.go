@@ -346,6 +346,10 @@ func formalReportSchemaRequirements(reportType string) map[string][]string {
 		requirements["ls_afn_inventory"] = append([]string{
 			"account_id", "seller_id", "store_id", "report_task_id", "row_number", "row_sha256",
 		}, []string{"seller-sku", "fulfillment-channel-sku", "asin", "condition-type", "Warehouse-Condition-code", "Quantity Available"}...)
+	case reportexport.AFNInventoryByCountryReportType:
+		requirements["ls_afn_inventory_by_country"] = append([]string{
+			"account_id", "seller_id", "store_id", "report_task_id", "row_number", "row_sha256",
+		}, []string{"seller-sku", "fulfillment-channel-sku", "asin", "condition-type", "country", "quantity-for-local-fulfillment"}...)
 	case reportexport.CustomerShipmentReplacementsReportType:
 		requirements["ls_fba_fulfillment_customer_shipment_replacements"] = append([]string{
 			"account_id", "seller_id", "store_id", "report_task_id", "row_number", "row_sha256",
@@ -400,7 +404,7 @@ func normalizedReportType(request reportexport.Request) string {
 }
 
 func reportRequiresDailyProjection(reportType string) bool {
-	return reportType != reportexport.CustomerShipmentReplacementsReportType && reportType != reportexport.FBAReimbursementsReportType
+	return reportType != reportexport.CustomerShipmentReplacementsReportType && reportType != reportexport.FBAReimbursementsReportType && reportType != reportexport.AFNInventoryByCountryReportType
 }
 
 func projectDailyBatch(ctx context.Context, dailyReader listingdaily.SourceReader, dailyStore listingdaily.Store, accountID string, targets []worker.DailyProjectionTarget, today time.Time) error {
