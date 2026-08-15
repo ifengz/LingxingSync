@@ -346,19 +346,19 @@ HTTP 状态码：`200` = ok；`400` = 参数错误；`500` = 内部错误。
 
 ## 版本化只读数据集 API（已实现）
 
-当前唯一数据集标识是 `listing-daily-v1`，只开放以下两个固定 `POST` 端点：
+数据表由服务端静态注册。每张已注册数据表只开放以下固定 `POST` 端点：
 
 ```text
-POST /api/v1/datasets/listing-daily-v1/snapshot
-POST /api/v1/datasets/listing-daily-v1/changes
+POST /api/v1/datasets/{dataset_id}/snapshot
+POST /api/v1/datasets/{dataset_id}/changes
 ```
 
-不得实现 `/:table`、自定义 path、SQL、排序表达式或任意字段表达式入口。新增数据集必须先修改宪法 allowlist，不能仅靠数据库中出现一张表自动暴露。
+`{dataset_id}` 必须命中代码注册表；不得实现任意表、SQL、排序表达式或任意字段表达式入口。新增数据表必须先具备来源、粒度、静态迁移、固定 Reader 与宪法登记，不能仅靠数据库中出现一张表自动暴露。
 
 ### 认证与 scope
 
 - 使用 `Authorization: Bearer <project-token>`；服务端只保存明文 token 的小写 SHA-256，不得复用领星 OpenAPI token、ERP `auth-token` 或 UI 的 `X-Sync-Secret`。
-- 每个 token 固定绑定一个 `project_id`，每个项目当前只登记一个自动生成的 `token_id`；token 必须同时具备 `listing-daily-v1` dataset scope 和请求店铺的 store scope。业务字段由数据表统一定义，不按项目裁剪。
+- 每个 token 固定绑定一个 `project_id`，每个项目当前只登记一个自动生成的 `token_id`；token 必须同时具备请求 `dataset_id` 的 dataset scope 和请求店铺的 store scope。业务字段由数据表统一定义，不按项目裁剪。
 - 请求超出 dataset、store 或字段 scope 返回 `403`/`400`，不能静默裁剪为部分结果。token 已撤销或过期返回 `401`。
 - 消费者只经 HTTPS 调用；不得直连 MySQL、提交远程 SQL 或从 7799 明文公网访问。
 
