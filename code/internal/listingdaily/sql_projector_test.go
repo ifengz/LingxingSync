@@ -204,6 +204,46 @@ func TestBuildFromSQLReconcilesShipmentSalesUnitsFromFormalReport(t *testing.T) 
 	}
 }
 
+func TestBuildFromSQLReconcilesFBAInventoryFieldsFromFormalReport(t *testing.T) {
+	date := time.Date(2026, 8, 12, 0, 0, 0, 0, time.UTC)
+	apiSellable, reportSellable, reportReserved := int64(8), int64(10), int64(3)
+	reader := &reconciledSourceReader{
+		api: SQLProjection{Records: []RawRecord{{Source: SourceAPI, Input: Input{
+			Key: Key{Store: "store-1", Channel: "sc_fba", ASIN: "B01", SKU: "SKU-1", BusinessDate: date}, Scope: ScopeListing, Values: Values{InventorySellable: &apiSellable},
+		}}}},
+		inventoryReport: []RawRecord{{Source: SourceReport, Input: Input{
+			Key: Key{Store: "store-1", Channel: "sc_fba", ASIN: "B01", SKU: "SKU-1", BusinessDate: date}, Scope: ScopeListing,
+			Values: Values{InventorySellable: &reportSellable, InventoryReserved: &reportReserved},
+		}}},
+	}
+	evidence := ReportEvidence{AuditID: 44, ReportTaskID: "inventory-task-44", ReportType: "GET_FBA_MYI_UNSUPPRESSED_INVENTORY_DATA"}
+	projection, rows, err := BuildFromSQL(context.Background(), reader, "account-1", "store-1", "sc_fba", date, date.AddDate(0, 0, 1), ReportReconciled, evidence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if projection.Reconciliation == nil || len(projection.Reconciliation.FieldDiffs) != 2 {
+		t.Fatalf("inventory reconciliation = %#v", projection.Reconciliation)
+	}
+	if len(rows) != 1 || rows[0].Values.InventorySellable == nil || *rows[0].Values.InventorySellable != 10 || rows[0].Values.InventoryReserved == nil || *rows[0].Values.InventoryReserved != 3 {
+		t.Fatalf("inventory correction = %#v", rows)
+	}
+	if rows[0].Sources["inventory_sellable"] != SourceReport || rows[0].Sources["inventory_reserved"] != SourceReport {
+		t.Fatalf("inventory sources = %#v", rows[0].Sources)
+	}
+}
+
+func TestBuildFromSQLRejectsUnknownReportTypeBeforeReadingRaw(t *testing.T) {
+	date := time.Date(2026, 8, 12, 0, 0, 0, 0, time.UTC)
+	reader := &reconciledSourceReader{}
+	_, _, err := BuildFromSQL(context.Background(), reader, "account-1", "store-1", "sc_fba", date, date, ReportReconciled, ReportEvidence{AuditID: 45, ReportTaskID: "unknown-task", ReportType: "GET_UNKNOWN"})
+	if err == nil || !strings.Contains(err.Error(), "unsupported reconciled report type") {
+		t.Fatalf("unknown report error = %v", err)
+	}
+	if reader.evidence.AuditID != 0 {
+		t.Fatalf("unknown report reader was called: %#v", reader.evidence)
+	}
+}
+
 type sourceReaderFunc func(context.Context, string, string, string, time.Time) (SQLProjection, error)
 
 func (f sourceReaderFunc) Read(ctx context.Context, accountID, storeID, channel string, businessDate time.Time) (SQLProjection, error) {
@@ -211,10 +251,11 @@ func (f sourceReaderFunc) Read(ctx context.Context, accountID, storeID, channel 
 }
 
 type reconciledSourceReader struct {
-	api         SQLProjection
-	report      []RawRecord
-	salesReport []RawRecord
-	evidence    ReportEvidence
+	api             SQLProjection
+	report          []RawRecord
+	salesReport     []RawRecord
+	inventoryReport []RawRecord
+	evidence        ReportEvidence
 }
 
 func (r reconciledSourceReader) Read(context.Context, string, string, string, time.Time) (SQLProjection, error) {
@@ -229,4 +270,9 @@ func (r *reconciledSourceReader) ReadReportReturns(_ context.Context, _ string, 
 func (r *reconciledSourceReader) ReadReportSales(_ context.Context, _ string, _ string, _ string, _ time.Time, evidence ReportEvidence) ([]RawRecord, error) {
 	r.evidence = evidence
 	return r.salesReport, nil
+}
+
+func (r *reconciledSourceReader) ReadReportInventory(_ context.Context, _ string, _ string, _ string, _ time.Time, evidence ReportEvidence) ([]RawRecord, error) {
+	r.evidence = evidence
+	return r.inventoryReport, nil
 }

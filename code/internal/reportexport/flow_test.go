@@ -72,12 +72,15 @@ func TestParseCustomerReturnsRejectsUnknownCompression(t *testing.T) {
 }
 
 type fakeStore struct {
-	nextID       int64
-	audits       []Audit
-	progress     []string
-	saved        int
-	errors       int
-	markErrorErr error
+	nextID        int64
+	audits        []Audit
+	progress      []string
+	saved         int
+	savedFBA      int
+	savedReserved int
+	savedAFN      int
+	errors        int
+	markErrorErr  error
 }
 
 type countingLimiter struct{ waits int }
@@ -112,6 +115,18 @@ func (s *fakeStore) MarkReportProgress(_ context.Context, _ int64, status, _, _,
 }
 func (s *fakeStore) SaveCustomerReturns(_ context.Context, _ int64, rows []CustomerReturn, _ string, _ string) error {
 	s.saved += len(rows)
+	return nil
+}
+func (s *fakeStore) SaveFBAInventory(_ context.Context, _ int64, rows []FBAInventory, _ string, _ string) error {
+	s.savedFBA += len(rows)
+	return nil
+}
+func (s *fakeStore) SaveReservedInventory(_ context.Context, _ int64, rows []ReservedInventory, _ string, _ string) error {
+	s.savedReserved += len(rows)
+	return nil
+}
+func (s *fakeStore) SaveAFNInventory(_ context.Context, _ int64, rows []AFNInventory, _ string, _ string) error {
+	s.savedAFN += len(rows)
 	return nil
 }
 func (s *fakeStore) MarkReportError(_ context.Context, _ int64, _ string, _ error) error {
@@ -154,6 +169,38 @@ func TestRunnerExportsCustomerShipmentSalesAndPersistsTypedRows(t *testing.T) {
 	}
 	if result.Rows != 1 || store.savedSales != 1 {
 		t.Fatalf("result rows=%d saved sales=%d", result.Rows, store.savedSales)
+	}
+}
+
+func TestRunnerPersistsEachInventoryReportThroughItsTypedStore(t *testing.T) {
+	fixtures := map[string][]byte{
+		FBAInventoryReportType:      []byte("sku\tfnsku\tasin\tproduct-name\tcondition\tyour-price\tmfn-listing-exists\tmfn-fulfillable-quantity\tafn-listing-exists\tafn-warehouse-quantity\tafn-fulfillable-quantity\tafn-unsellable-quantity\tafn-reserved-quantity\tafn-total-quantity\tper-unit-volume\tafn-inbound-working-quantity\tafn-inbound-shipped-quantity\tafn-inbound-receiving-quantity\tafn-researching-quantity\tafn-reserved-future-supply\tafn-future-supply-buyable\nSKU-1\tFNSKU-1\tASIN-1\tWidget\tNew\t12.50\tyes\t1\tyes\t2\t3\t4\t5\t14\t0.25\t6\t7\t8\t0\t1\tyes\n"),
+		ReservedInventoryReportType: []byte("sku\tfnsku\tasin\tproduct-name\treserved_qty\treserved_customerorders\treserved_fc-processing\nSKU-1\tFNSKU-1\tASIN-1\tWidget\t8\t2\t6\n"),
+		AFNInventoryReportType:      []byte("seller-sku\tfulfillment-channel-sku\tasin\tcondition-type\tWarehouse-Condition-code\tQuantity Available\nSKU-1\tFC-SKU-1\tASIN-1\tNew\tSELLABLE\t17\n"),
+	}
+	for reportType, body := range fixtures {
+		t.Run(reportType, func(t *testing.T) {
+			store := &fakeStore{}
+			runner := Runner{Store: store}
+			rows, err := runner.saveDownloadedReport(context.Background(), 1, Request{ReportType: reportType}, body, "", "application/octet-stream", "sha", "doc")
+			if err != nil || rows != 1 {
+				t.Fatalf("save rows=%d err=%v", rows, err)
+			}
+			switch reportType {
+			case FBAInventoryReportType:
+				if store.savedFBA != 1 || store.savedReserved != 0 || store.savedAFN != 0 {
+					t.Fatalf("typed saves=%d/%d/%d", store.savedFBA, store.savedReserved, store.savedAFN)
+				}
+			case ReservedInventoryReportType:
+				if store.savedReserved != 1 || store.savedFBA != 0 || store.savedAFN != 0 {
+					t.Fatalf("typed saves=%d/%d/%d", store.savedFBA, store.savedReserved, store.savedAFN)
+				}
+			case AFNInventoryReportType:
+				if store.savedAFN != 1 || store.savedFBA != 0 || store.savedReserved != 0 {
+					t.Fatalf("typed saves=%d/%d/%d", store.savedFBA, store.savedReserved, store.savedAFN)
+				}
+			}
+		})
 	}
 }
 

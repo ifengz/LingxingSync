@@ -75,6 +75,40 @@ const reportShipmentSalesSQL = "SELECT raw.asin, raw.sku, CAST(SUM(CAST(raw.quan
 	"  AND LEFT(raw.`shipment-date`, 10) = ?\n" +
 	"GROUP BY raw.asin, raw.sku"
 
+const reportFBAInventorySQL = "SELECT raw.asin, raw.sku, " +
+	"CAST(SUM(CAST(raw.`afn-fulfillable-quantity` AS SIGNED)) AS CHAR) AS sellable, " +
+	"CAST(SUM(CAST(raw.`afn-unsellable-quantity` AS SIGNED)) AS CHAR) AS unfulfillable, " +
+	"CAST(SUM(CAST(raw.`afn-reserved-quantity` AS SIGNED)) AS CHAR) AS reserved, " +
+	"CAST(SUM(CAST(raw.`afn-inbound-working-quantity` AS SIGNED)) AS CHAR) AS inbound_working, " +
+	"CAST(SUM(CAST(raw.`afn-inbound-shipped-quantity` AS SIGNED)) AS CHAR) AS inbound_shipped, " +
+	"CAST(SUM(CAST(raw.`afn-inbound-receiving-quantity` AS SIGNED)) AS CHAR) AS inbound_receiving\n" +
+	"FROM ls_fba_myi_unsuppressed_inventory raw\n" +
+	"JOIN ls_report_export_tasks task ON task.report_task_id = raw.report_task_id\n" +
+	"WHERE task.id = ? AND task.report_task_id = ? AND task.report_type = ? AND raw.account_id = ? AND raw.store_id = ?\n" +
+	"  AND task.account_id = raw.account_id AND task.store_id = raw.store_id\n" +
+	"  AND task.status = 'SUCCESS'\n" +
+	"GROUP BY raw.asin, raw.sku"
+
+const reportReservedInventorySQL = "SELECT raw.asin, raw.sku, " +
+	"CAST(SUM(CAST(raw.reserved_qty AS SIGNED)) AS CHAR) AS reserved, " +
+	"CAST(SUM(CAST(raw.reserved_customerorders AS SIGNED)) AS CHAR) AS reserved_customer_orders, " +
+	"CAST(SUM(CAST(raw.`reserved_fc-processing` AS SIGNED)) AS CHAR) AS reserved_fc_processing\n" +
+	"FROM ls_fba_reserved_inventory raw\n" +
+	"JOIN ls_report_export_tasks task ON task.report_task_id = raw.report_task_id\n" +
+	"WHERE task.id = ? AND task.report_task_id = ? AND task.report_type = ? AND raw.account_id = ? AND raw.store_id = ?\n" +
+	"  AND task.account_id = raw.account_id AND task.store_id = raw.store_id\n" +
+	"  AND task.status = 'SUCCESS'\n" +
+	"GROUP BY raw.asin, raw.sku"
+
+const reportAFNInventorySQL = "SELECT raw.asin, raw.`seller-sku` AS sku, " +
+	"CAST(SUM(CAST(raw.`Quantity Available` AS SIGNED)) AS CHAR) AS sellable\n" +
+	"FROM ls_afn_inventory raw\n" +
+	"JOIN ls_report_export_tasks task ON task.report_task_id = raw.report_task_id\n" +
+	"WHERE task.id = ? AND task.report_task_id = ? AND task.report_type = ? AND raw.account_id = ? AND raw.store_id = ?\n" +
+	"  AND task.account_id = raw.account_id AND task.store_id = raw.store_id\n" +
+	"  AND task.status = 'SUCCESS'\n" +
+	"GROUP BY raw.asin, raw.`seller-sku`"
+
 const vcSalesSQL = "SELECT asin, shippedUnits, shippedRevenueAmount, customerReturns FROM ls_vc_sales_report WHERE account_id = ? AND sid = ? AND `date` = ?"
 
 // SQLSourceReader reads only the already-retained raw evidence tables. The
@@ -92,6 +126,10 @@ type ReportSourceReader interface {
 
 type ReportSalesSourceReader interface {
 	ReadReportSales(context.Context, string, string, string, time.Time, ReportEvidence) ([]RawRecord, error)
+}
+
+type ReportInventorySourceReader interface {
+	ReadReportInventory(context.Context, string, string, string, time.Time, ReportEvidence) ([]RawRecord, error)
 }
 
 func (r SQLSourceReader) Read(ctx context.Context, accountID, storeID, channel string, businessDate time.Time) (SQLProjection, error) {
@@ -170,36 +208,45 @@ func BuildFromSQL(ctx context.Context, reader SourceReader, accountID, storeID, 
 			return projection, nil, fmt.Errorf("listing daily: reconciled report requires exact audit and task evidence")
 		}
 		reportType := evidence[0].ReportType
-		field := "returns_qty"
+		if strings.TrimSpace(reportType) == "" {
+			reportType = "GET_FBA_FULFILLMENT_CUSTOMER_RETURNS_DATA"
+		}
+		fields := []string{"returns_qty"}
 		if reportType == "GET_FBA_FULFILLMENT_CUSTOMER_SHIPMENT_SALES_DATA" {
-			field = "sales_units"
+			fields = []string{"sales_units"}
 			reportReader, ok := reader.(ReportSalesSourceReader)
 			if !ok {
 				return projection, nil, fmt.Errorf("listing daily: shipment sales report requires report raw reader")
 			}
 			reportRaw, err = reportReader.ReadReportSales(ctx, accountID, storeID, channel, businessDate, evidence[0])
-		} else {
+		} else if isInventoryReportType(reportType) {
+			fields = inventoryReportFields(reportType)
+			reportReader, ok := reader.(ReportInventorySourceReader)
+			if !ok {
+				return projection, nil, fmt.Errorf("listing daily: inventory report requires report raw reader")
+			}
+			reportRaw, err = reportReader.ReadReportInventory(ctx, accountID, storeID, channel, businessDate, evidence[0])
+		} else if reportType == "GET_FBA_FULFILLMENT_CUSTOMER_RETURNS_DATA" {
 			reportReader, ok := reader.(ReportSourceReader)
 			if !ok {
 				return projection, nil, fmt.Errorf("listing daily: reconciled report requires report raw reader")
 			}
 			reportRaw, err = reportReader.ReadReportReturns(ctx, accountID, storeID, channel, businessDate, evidence[0])
+		} else {
+			return projection, nil, fmt.Errorf("listing daily: unsupported reconciled report type %q", reportType)
 		}
 		if err != nil {
 			return projection, nil, err
 		}
-		apiMetrics := metricsWithField(metricsFromRaw(projection.Records), field)
-		reportMetrics := metricsWithField(metricsFromRaw(reportRaw), field)
-		reconciliation, reconcileErr := ReconcileFields(apiMetrics, reportMetrics, []string{field})
+		apiMetrics := metricsWithFields(metricsFromRaw(projection.Records), fields)
+		reportMetrics := metricsWithFields(metricsFromRaw(reportRaw), fields)
+		reconciliation, reconcileErr := ReconcileFields(apiMetrics, reportMetrics, fields)
 		if reconcileErr != nil {
 			return projection, nil, reconcileErr
 		}
 		projection.Reconciliation = &reconciliation
 		if len(apiMetrics) > 0 && len(reportMetrics) == 0 {
-			label := "returns"
-			if field == "sales_units" {
-				label = "sales"
-			}
+			label := reportMetricLabel(reportType)
 			return projection, nil, fmt.Errorf("listing daily: report reconciliation failed: report has no %s rows while API has %d", label, len(apiMetrics))
 		}
 	}
@@ -218,19 +265,14 @@ func metricsFromRaw(records []RawRecord) []Metric {
 	return rows
 }
 
-func metricsWithField(rows []Metric, field string) []Metric {
+func metricsWithFields(rows []Metric, fields []string) []Metric {
 	result := make([]Metric, 0, len(rows))
 	for _, row := range rows {
-		if !hasMetricField(row.Values, field) {
-			continue
-		}
 		values := Values{}
-		switch field {
-		case "sales_units":
-			values.SalesUnits = row.Values.SalesUnits
-		case "returns_qty":
-			values.ReturnsQty = row.Values.ReturnsQty
-		default:
+		for _, field := range fields {
+			setMetricField(&values, field, metricField(row.Values, field))
+		}
+		if len(knownFields(values)) == 0 {
 			continue
 		}
 		result = append(result, Metric{Key: row.Key, Scope: row.Scope, Values: values})
@@ -238,14 +280,63 @@ func metricsWithField(rows []Metric, field string) []Metric {
 	return result
 }
 
-func hasMetricField(values Values, field string) bool {
+func setMetricField(values *Values, field string, value any) {
 	switch field {
 	case "sales_units":
-		return values.SalesUnits != nil
+		values.SalesUnits, _ = value.(*int64)
 	case "returns_qty":
-		return values.ReturnsQty != nil
+		values.ReturnsQty, _ = value.(*int64)
+	case "inventory_sellable":
+		values.InventorySellable, _ = value.(*int64)
+	case "inventory_unfulfillable":
+		values.InventoryUnfulfillable, _ = value.(*int64)
+	case "inventory_reserved":
+		values.InventoryReserved, _ = value.(*int64)
+	case "inventory_inbound_working":
+		values.InventoryInboundWorking, _ = value.(*int64)
+	case "inventory_inbound_shipped":
+		values.InventoryInboundShipped, _ = value.(*int64)
+	case "inventory_inbound_receiving":
+		values.InventoryInboundReceiving, _ = value.(*int64)
+	case "inventory_reserved_customer_orders":
+		values.InventoryReservedCustomerOrders, _ = value.(*int64)
+	case "inventory_reserved_fc_processing":
+		values.InventoryReservedFCProcessing, _ = value.(*int64)
+	}
+}
+
+func isInventoryReportType(reportType string) bool {
+	switch reportType {
+	case "GET_FBA_MYI_UNSUPPRESSED_INVENTORY_DATA", "GET_RESERVED_INVENTORY_DATA", "GET_AFN_INVENTORY_DATA":
+		return true
 	default:
 		return false
+	}
+}
+
+func inventoryReportFields(reportType string) []string {
+	switch reportType {
+	case "GET_FBA_MYI_UNSUPPRESSED_INVENTORY_DATA":
+		return []string{"inventory_sellable", "inventory_unfulfillable", "inventory_reserved", "inventory_inbound_working", "inventory_inbound_shipped", "inventory_inbound_receiving"}
+	case "GET_RESERVED_INVENTORY_DATA":
+		return []string{"inventory_reserved", "inventory_reserved_customer_orders", "inventory_reserved_fc_processing"}
+	case "GET_AFN_INVENTORY_DATA":
+		return []string{"inventory_sellable"}
+	default:
+		return nil
+	}
+}
+
+func reportMetricLabel(reportType string) string {
+	switch reportType {
+	case "GET_FBA_FULFILLMENT_CUSTOMER_SHIPMENT_SALES_DATA":
+		return "sales"
+	case "GET_FBA_FULFILLMENT_CUSTOMER_RETURNS_DATA":
+		return "returns"
+	case "GET_FBA_MYI_UNSUPPRESSED_INVENTORY_DATA", "GET_RESERVED_INVENTORY_DATA", "GET_AFN_INVENTORY_DATA":
+		return "inventory"
+	default:
+		return "report"
 	}
 }
 
@@ -442,7 +533,7 @@ const scInventorySQL = "SELECT asin, sku, afn_fulfillable_quantity, afn_inbound_
 const vcInventorySQL = "SELECT asin, sellableOnHandInventoryUnits, unsellableOnHandInventoryUnits, netReceivedInventoryUnits, unhealthyInventoryUnits, aged90PlusDaysSellableInventoryUnits, sellThroughRate, receiveFillRate, vendorConfirmationRate, averageVendorLeadTimeDays, sellableOnHandInventoryCostAmount, unsellableOnHandInventoryCostAmount, aged90PlusDaysSellableInventoryCostAmount, unhealthyInventoryCostAmount, netReceivedInventoryCostAmount, sellableOnHandInventoryCostCurrencyCode, unsellableOnHandInventoryCostCurrencyCode, aged90PlusDaysSellableInventoryCostCurrencyCode, unhealthyInventoryCostCurrencyCode, netReceivedInventoryCostCurrencyCode FROM ls_vc_inventory WHERE account_id = ? AND sid = ? AND `date` = ?"
 
 func (r SQLSourceReader) readInventory(ctx context.Context, out *SQLProjection, accountID, storeID, channel string, date time.Time, skus map[string]string) error {
-	if !sameCalendarDate(date, time.Now()) {
+	if !sameCalendarDate(date, time.Now().UTC()) {
 		out.Unknown = append(out.Unknown, CoverageUnknown{"ls_fba_inventory", storeID, "", date, "inventory raw table is current-state; only today's sync snapshot is eligible"})
 		return nil
 	}
@@ -745,6 +836,127 @@ func (r SQLSourceReader) ReadReportSales(ctx context.Context, accountID, storeID
 		records = append(records, RawRecord{Source: SourceReport, Input: Input{Key: Key{Store: storeID, Channel: channel, ASIN: row.ASIN, SKU: row.SKU, BusinessDate: date}, Scope: ScopeListing, Values: Values{SalesUnits: &quantity}}})
 	}
 	return records, nil
+}
+
+func (r SQLSourceReader) ReadReportInventory(ctx context.Context, accountID, storeID, channel string, date time.Time, evidence ReportEvidence) ([]RawRecord, error) {
+	if r.DB == nil {
+		return nil, fmt.Errorf("listing daily: nil source database")
+	}
+	if evidence.AuditID <= 0 || strings.TrimSpace(evidence.ReportTaskID) == "" {
+		return nil, fmt.Errorf("listing daily: formal inventory report requires exact audit and task evidence")
+	}
+	if strings.TrimSpace(channel) != "sc_fba" {
+		return nil, fmt.Errorf("listing daily: formal inventory report requires sc_fba channel")
+	}
+	dateText := date.Format("2006-01-02")
+	// Inventory reports are current snapshots and do not carry a business date.
+	// The projection date is the UTC download day; the exact task scope is already
+	// pinned by audit_id/report_task_id and must not be reused as a historical date.
+	args := []any{evidence.AuditID, evidence.ReportTaskID, evidence.ReportType, accountID, storeID}
+	var rows []struct {
+		ASIN                  string         `db:"asin"`
+		SKU                   string         `db:"sku"`
+		Sellable              sql.NullString `db:"sellable"`
+		Unfulfillable         sql.NullString `db:"unfulfillable"`
+		Reserved              sql.NullString `db:"reserved"`
+		InboundWorking        sql.NullString `db:"inbound_working"`
+		InboundShipped        sql.NullString `db:"inbound_shipped"`
+		InboundReceiving      sql.NullString `db:"inbound_receiving"`
+		ReservedCustomerOrder sql.NullString `db:"reserved_customer_orders"`
+		ReservedFCProcessing  sql.NullString `db:"reserved_fc_processing"`
+	}
+	query := reportFBAInventorySQL
+	switch evidence.ReportType {
+	case "GET_FBA_MYI_UNSUPPRESSED_INVENTORY_DATA":
+		if err := r.DB.SelectContext(ctx, &rows, query, args...); err != nil {
+			return nil, fmt.Errorf("listing daily: read formal FBA inventory: %w", err)
+		}
+	case "GET_RESERVED_INVENTORY_DATA":
+		query = reportReservedInventorySQL
+		if err := r.DB.SelectContext(ctx, &rows, query, args...); err != nil {
+			return nil, fmt.Errorf("listing daily: read formal reserved inventory: %w", err)
+		}
+	case "GET_AFN_INVENTORY_DATA":
+		query = reportAFNInventorySQL
+		if err := r.DB.SelectContext(ctx, &rows, query, args...); err != nil {
+			return nil, fmt.Errorf("listing daily: read formal AFN inventory: %w", err)
+		}
+	default:
+		return nil, fmt.Errorf("listing daily: unsupported inventory report type %q", evidence.ReportType)
+	}
+	records := make([]RawRecord, 0, len(rows))
+	for _, row := range rows {
+		if strings.TrimSpace(row.ASIN) == "" || strings.TrimSpace(row.SKU) == "" {
+			return nil, fmt.Errorf("listing daily: formal inventory report missing ASIN/SKU for date %s", dateText)
+		}
+		values, err := inventoryReportValues(evidence.ReportType, row)
+		if err != nil {
+			return nil, fmt.Errorf("listing daily: parse formal inventory report asin=%s: %w", row.ASIN, err)
+		}
+		records = append(records, RawRecord{Source: SourceReport, Input: Input{Key: Key{Store: storeID, Channel: channel, ASIN: row.ASIN, SKU: row.SKU, BusinessDate: date}, Scope: ScopeListing, Values: values}})
+	}
+	return records, nil
+}
+
+func inventoryReportValues(reportType string, row struct {
+	ASIN                  string         `db:"asin"`
+	SKU                   string         `db:"sku"`
+	Sellable              sql.NullString `db:"sellable"`
+	Unfulfillable         sql.NullString `db:"unfulfillable"`
+	Reserved              sql.NullString `db:"reserved"`
+	InboundWorking        sql.NullString `db:"inbound_working"`
+	InboundShipped        sql.NullString `db:"inbound_shipped"`
+	InboundReceiving      sql.NullString `db:"inbound_receiving"`
+	ReservedCustomerOrder sql.NullString `db:"reserved_customer_orders"`
+	ReservedFCProcessing  sql.NullString `db:"reserved_fc_processing"`
+}) (Values, error) {
+	integerValue := func(value sql.NullString) (*int64, error) {
+		parsed, err := integer(value)
+		if err != nil {
+			return nil, err
+		}
+		return &parsed, nil
+	}
+	values := Values{}
+	var err error
+	switch reportType {
+	case "GET_FBA_MYI_UNSUPPRESSED_INVENTORY_DATA":
+		if values.InventorySellable, err = integerValue(row.Sellable); err != nil {
+			return Values{}, fmt.Errorf("sellable: %w", err)
+		}
+		if values.InventoryUnfulfillable, err = integerValue(row.Unfulfillable); err != nil {
+			return Values{}, fmt.Errorf("unfulfillable: %w", err)
+		}
+		if values.InventoryReserved, err = integerValue(row.Reserved); err != nil {
+			return Values{}, fmt.Errorf("reserved: %w", err)
+		}
+		if values.InventoryInboundWorking, err = integerValue(row.InboundWorking); err != nil {
+			return Values{}, fmt.Errorf("inbound working: %w", err)
+		}
+		if values.InventoryInboundShipped, err = integerValue(row.InboundShipped); err != nil {
+			return Values{}, fmt.Errorf("inbound shipped: %w", err)
+		}
+		if values.InventoryInboundReceiving, err = integerValue(row.InboundReceiving); err != nil {
+			return Values{}, fmt.Errorf("inbound receiving: %w", err)
+		}
+	case "GET_RESERVED_INVENTORY_DATA":
+		if values.InventoryReserved, err = integerValue(row.Reserved); err != nil {
+			return Values{}, fmt.Errorf("reserved: %w", err)
+		}
+		if values.InventoryReservedCustomerOrders, err = integerValue(row.ReservedCustomerOrder); err != nil {
+			return Values{}, fmt.Errorf("reserved customer orders: %w", err)
+		}
+		if values.InventoryReservedFCProcessing, err = integerValue(row.ReservedFCProcessing); err != nil {
+			return Values{}, fmt.Errorf("reserved FC processing: %w", err)
+		}
+	case "GET_AFN_INVENTORY_DATA":
+		if values.InventorySellable, err = integerValue(row.Sellable); err != nil {
+			return Values{}, fmt.Errorf("sellable: %w", err)
+		}
+	default:
+		return Values{}, fmt.Errorf("unsupported report type %q", reportType)
+	}
+	return values, nil
 }
 
 func decimal(value sql.NullString) (float64, error) {

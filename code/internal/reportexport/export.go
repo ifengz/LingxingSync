@@ -99,6 +99,18 @@ type CustomerShipmentSalesStore interface {
 	SaveCustomerShipmentSales(context.Context, int64, []CustomerShipmentSale, string, string) error
 }
 
+type FBAInventoryStore interface {
+	SaveFBAInventory(context.Context, int64, []FBAInventory, string, string) error
+}
+
+type ReservedInventoryStore interface {
+	SaveReservedInventory(context.Context, int64, []ReservedInventory, string, string) error
+}
+
+type AFNInventoryStore interface {
+	SaveAFNInventory(context.Context, int64, []AFNInventory, string, string) error
+}
+
 type Result struct {
 	AuditID          int64
 	ReportTaskID     string
@@ -226,6 +238,45 @@ func (r *Runner) saveDownloadedReport(ctx context.Context, auditID int64, reques
 			return 0, err
 		}
 		if err := store.SaveCustomerShipmentSales(ctx, auditID, rows, hash, documentID); err != nil {
+			return 0, err
+		}
+		return len(rows), nil
+	case FBAInventoryReportType:
+		store, ok := r.Store.(FBAInventoryStore)
+		if !ok {
+			return 0, fmt.Errorf("report export: store does not support %s", FBAInventoryReportType)
+		}
+		rows, err := ParseFBAInventory(body, compressionAlgorithm, contentType)
+		if err != nil {
+			return 0, err
+		}
+		if err := store.SaveFBAInventory(ctx, auditID, rows, hash, documentID); err != nil {
+			return 0, err
+		}
+		return len(rows), nil
+	case ReservedInventoryReportType:
+		store, ok := r.Store.(ReservedInventoryStore)
+		if !ok {
+			return 0, fmt.Errorf("report export: store does not support %s", ReservedInventoryReportType)
+		}
+		rows, err := ParseReservedInventory(body, compressionAlgorithm, contentType)
+		if err != nil {
+			return 0, err
+		}
+		if err := store.SaveReservedInventory(ctx, auditID, rows, hash, documentID); err != nil {
+			return 0, err
+		}
+		return len(rows), nil
+	case AFNInventoryReportType:
+		store, ok := r.Store.(AFNInventoryStore)
+		if !ok {
+			return 0, fmt.Errorf("report export: store does not support %s", AFNInventoryReportType)
+		}
+		rows, err := ParseAFNInventory(body, compressionAlgorithm, contentType)
+		if err != nil {
+			return 0, err
+		}
+		if err := store.SaveAFNInventory(ctx, auditID, rows, hash, documentID); err != nil {
 			return 0, err
 		}
 		return len(rows), nil
@@ -443,7 +494,7 @@ func normalizedReportType(request Request) string {
 
 func validateRequest(request Request) error {
 	switch normalizedReportType(request) {
-	case CustomerReturnsReportType, CustomerShipmentSalesReportType:
+	case CustomerReturnsReportType, CustomerShipmentSalesReportType, FBAInventoryReportType, ReservedInventoryReportType, AFNInventoryReportType:
 	default:
 		return fmt.Errorf("report export: unsupported report type %q", normalizedReportType(request))
 	}

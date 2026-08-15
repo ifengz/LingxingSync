@@ -139,6 +139,20 @@ func TestReportBusinessDatesUsesInclusiveCalendarDays(t *testing.T) {
 	}
 }
 
+func TestFormalReportBusinessDatesUsesOnlyUTCInventorySnapshotDay(t *testing.T) {
+	now := time.Date(2026, 8, 15, 18, 30, 0, 0, time.FixedZone("CST", 8*60*60))
+	from, to, err := formalReportBusinessDates(reportexport.FBAInventoryReportType, reportexport.Request{
+		DateFrom: "2026-08-01T00:00:00Z", DateTo: "2026-08-14T23:59:59Z",
+	}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "2026-08-15"
+	if from.Format("2006-01-02") != want || to.Format("2006-01-02") != want || from.Location() != time.UTC || to.Location() != time.UTC {
+		t.Fatalf("inventory snapshot dates = %s..%s (%s/%s), want UTC %s", from, to, from.Location(), to.Location(), want)
+	}
+}
+
 func TestProjectCustomerReturnsProjectsEveryCoveredDay(t *testing.T) {
 	reader := &reportProjectionReader{}
 	store := &reportProjectionStore{}

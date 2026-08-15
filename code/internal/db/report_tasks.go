@@ -310,6 +310,155 @@ func (d *DBReportStore) SaveCustomerShipmentSales(ctx context.Context, id int64,
 	return nil
 }
 
+func (d *DBReportStore) SaveFBAInventory(ctx context.Context, id int64, rows []reportexport.FBAInventory, downloadSHA string, documentID string) error {
+	if err := d.ensure(); err != nil {
+		return err
+	}
+	tx, err := d.db.BeginTxx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("db report: begin FBA inventory transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	meta, err := loadReportMeta(ctx, tx, id)
+	if err != nil {
+		return err
+	}
+	const insert = "INSERT INTO ls_fba_myi_unsuppressed_inventory\n" +
+		"(account_id, seller_id, store_id, report_task_id, `row_number`, row_sha256, sku, fnsku, asin, `product-name`, `condition`, `your-price`, `mfn-listing-exists`, `mfn-fulfillable-quantity`, `afn-listing-exists`, `afn-warehouse-quantity`, `afn-fulfillable-quantity`, `afn-unsellable-quantity`, `afn-reserved-quantity`, `afn-total-quantity`, `per-unit-volume`, `afn-inbound-working-quantity`, `afn-inbound-shipped-quantity`, `afn-inbound-receiving-quantity`, `afn-researching-quantity`, `afn-reserved-future-supply`, `afn-future-supply-buyable`)\n" +
+		"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\n" +
+		"ON DUPLICATE KEY UPDATE row_sha256 = VALUES(row_sha256), sku = VALUES(sku), fnsku = VALUES(fnsku), asin = VALUES(asin), `product-name` = VALUES(`product-name`), `condition` = VALUES(`condition`), `your-price` = VALUES(`your-price`), `mfn-listing-exists` = VALUES(`mfn-listing-exists`), `mfn-fulfillable-quantity` = VALUES(`mfn-fulfillable-quantity`), `afn-listing-exists` = VALUES(`afn-listing-exists`), `afn-warehouse-quantity` = VALUES(`afn-warehouse-quantity`), `afn-fulfillable-quantity` = VALUES(`afn-fulfillable-quantity`), `afn-unsellable-quantity` = VALUES(`afn-unsellable-quantity`), `afn-reserved-quantity` = VALUES(`afn-reserved-quantity`), `afn-total-quantity` = VALUES(`afn-total-quantity`), `per-unit-volume` = VALUES(`per-unit-volume`), `afn-inbound-working-quantity` = VALUES(`afn-inbound-working-quantity`), `afn-inbound-shipped-quantity` = VALUES(`afn-inbound-shipped-quantity`), `afn-inbound-receiving-quantity` = VALUES(`afn-inbound-receiving-quantity`), `afn-researching-quantity` = VALUES(`afn-researching-quantity`), `afn-reserved-future-supply` = VALUES(`afn-reserved-future-supply`), `afn-future-supply-buyable` = VALUES(`afn-future-supply-buyable` )"
+	stmt, err := tx.PrepareContext(ctx, insert)
+	if err != nil {
+		return fmt.Errorf("db report: prepare FBA inventory insert: %w", err)
+	}
+	defer stmt.Close()
+	for i, row := range rows {
+		values := []string{row.SKU, row.FNSKU, row.ASIN, row.ProductName, row.Condition, row.YourPrice, row.MFNListingExists, row.MFNFulfillableQuantityRaw, row.AFNListingExists, row.AFNWarehouseQuantityRaw, row.AFNFulfillableQuantityRaw, row.AFNUnsellableQuantityRaw, row.AFNReservedQuantityRaw, row.AFNTotalQuantityRaw, row.PerUnitVolume, row.AFNInboundWorkingRaw, row.AFNInboundShippedRaw, row.AFNInboundReceivingRaw, row.AFNResearchingQuantityRaw, row.AFNReservedFutureSupplyRaw, row.AFNFutureSupplyBuyable}
+		if err := execInventoryRow(ctx, stmt, meta, i+1, values); err != nil {
+			return fmt.Errorf("db report: insert FBA inventory row %d: %w", i+1, err)
+		}
+	}
+	if err := finalizeReportTx(ctx, tx, id, documentID, downloadSHA, len(rows)); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("db report: commit FBA inventory transaction: %w", err)
+	}
+	return nil
+}
+
+func (d *DBReportStore) SaveReservedInventory(ctx context.Context, id int64, rows []reportexport.ReservedInventory, downloadSHA string, documentID string) error {
+	if err := d.ensure(); err != nil {
+		return err
+	}
+	tx, err := d.db.BeginTxx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("db report: begin reserved inventory transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	meta, err := loadReportMeta(ctx, tx, id)
+	if err != nil {
+		return err
+	}
+	const insert = "INSERT INTO ls_fba_reserved_inventory\n" +
+		"(account_id, seller_id, store_id, report_task_id, `row_number`, row_sha256, sku, fnsku, asin, `product-name`, reserved_qty, reserved_customerorders, `reserved_fc-processing`)\n" +
+		"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\n" +
+		"ON DUPLICATE KEY UPDATE row_sha256 = VALUES(row_sha256), sku = VALUES(sku), fnsku = VALUES(fnsku), asin = VALUES(asin), `product-name` = VALUES(`product-name`), reserved_qty = VALUES(reserved_qty), reserved_customerorders = VALUES(reserved_customerorders), `reserved_fc-processing` = VALUES(`reserved_fc-processing`)"
+	stmt, err := tx.PrepareContext(ctx, insert)
+	if err != nil {
+		return fmt.Errorf("db report: prepare reserved inventory insert: %w", err)
+	}
+	defer stmt.Close()
+	for i, row := range rows {
+		values := []string{row.SKU, row.FNSKU, row.ASIN, row.ProductName, row.ReservedQtyRaw, row.ReservedCustomerOrdersRaw, row.ReservedFCProcessingRaw}
+		if err := execInventoryRow(ctx, stmt, meta, i+1, values); err != nil {
+			return fmt.Errorf("db report: insert reserved inventory row %d: %w", i+1, err)
+		}
+	}
+	if err := finalizeReportTx(ctx, tx, id, documentID, downloadSHA, len(rows)); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("db report: commit reserved inventory transaction: %w", err)
+	}
+	return nil
+}
+
+func (d *DBReportStore) SaveAFNInventory(ctx context.Context, id int64, rows []reportexport.AFNInventory, downloadSHA string, documentID string) error {
+	if err := d.ensure(); err != nil {
+		return err
+	}
+	tx, err := d.db.BeginTxx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("db report: begin AFN inventory transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	meta, err := loadReportMeta(ctx, tx, id)
+	if err != nil {
+		return err
+	}
+	const insert = "INSERT INTO ls_afn_inventory\n" +
+		"(account_id, seller_id, store_id, report_task_id, `row_number`, row_sha256, `seller-sku`, `fulfillment-channel-sku`, asin, `condition-type`, `Warehouse-Condition-code`, `Quantity Available`)\n" +
+		"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\n" +
+		"ON DUPLICATE KEY UPDATE row_sha256 = VALUES(row_sha256), `seller-sku` = VALUES(`seller-sku`), `fulfillment-channel-sku` = VALUES(`fulfillment-channel-sku`), asin = VALUES(asin), `condition-type` = VALUES(`condition-type`), `Warehouse-Condition-code` = VALUES(`Warehouse-Condition-code`), `Quantity Available` = VALUES(`Quantity Available`)"
+	stmt, err := tx.PrepareContext(ctx, insert)
+	if err != nil {
+		return fmt.Errorf("db report: prepare AFN inventory insert: %w", err)
+	}
+	defer stmt.Close()
+	for i, row := range rows {
+		values := []string{row.SellerSKU, row.FulfillmentChannelSKU, row.ASIN, row.ConditionType, row.WarehouseConditionCode, row.QuantityAvailableRaw}
+		if err := execInventoryRow(ctx, stmt, meta, i+1, values); err != nil {
+			return fmt.Errorf("db report: insert AFN inventory row %d: %w", i+1, err)
+		}
+	}
+	if err := finalizeReportTx(ctx, tx, id, documentID, downloadSHA, len(rows)); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("db report: commit AFN inventory transaction: %w", err)
+	}
+	return nil
+}
+
+type reportMeta struct {
+	AccountID    string `db:"account_id"`
+	SellerID     string `db:"seller_id"`
+	StoreID      string `db:"store_id"`
+	ReportTaskID string `db:"report_task_id"`
+}
+
+func loadReportMeta(ctx context.Context, tx *sqlx.Tx, id int64) (reportMeta, error) {
+	var meta reportMeta
+	if err := tx.GetContext(ctx, &meta, `SELECT account_id, seller_id, store_id, report_task_id FROM ls_report_export_tasks WHERE id = ?`, id); err != nil {
+		return meta, fmt.Errorf("db report: load audit id=%d: %w", id, err)
+	}
+	if strings.TrimSpace(meta.ReportTaskID) == "" {
+		return meta, fmt.Errorf("db report: audit id=%d has no report task id", id)
+	}
+	return meta, nil
+}
+
+func execInventoryRow(ctx context.Context, stmt *sql.Stmt, meta reportMeta, rowNumber int, values []string) error {
+	rawKey := strings.Join(values, "\x00")
+	sum := sha256.Sum256([]byte(rawKey))
+	args := make([]any, 0, len(values)+6)
+	args = append(args, meta.AccountID, meta.SellerID, meta.StoreID, meta.ReportTaskID, rowNumber, hex.EncodeToString(sum[:]))
+	for _, value := range values {
+		args = append(args, value)
+	}
+	_, err := stmt.ExecContext(ctx, args...)
+	return err
+}
+
+func finalizeReportTx(ctx context.Context, tx *sqlx.Tx, id int64, documentID, downloadSHA string, rows int) error {
+	const update = `UPDATE ls_report_export_tasks SET status = 'SUCCESS', active_scope_key = NULL, report_document_id = NULLIF(?, ''), download_sha256 = ?, downloaded_at = CURRENT_TIMESTAMP, rows_imported = ?, error_message = NULL WHERE id = ?`
+	if _, err := tx.ExecContext(ctx, update, documentID, downloadSHA, rows, id); err != nil {
+		return fmt.Errorf("db report: finalize audit id=%d: %w", id, err)
+	}
+	return nil
+}
+
 func reportType(req reportexport.Request) string {
 	if strings.TrimSpace(req.ReportType) == "" {
 		return reportexport.CustomerReturnsReportType

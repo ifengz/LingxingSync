@@ -317,7 +317,13 @@ window.syncManage = function () {
     },
     reportScopeKey(row) { return [row.type, row.account, row.store_id].join('|'); },
     reportTypeLabel(type) {
-      return { fba_customer_returns: 'FBA 退货', fba_customer_shipment_sales: 'FBA 发货销售' }[type] || type || '未知正式报表';
+      return {
+        fba_customer_returns: 'FBA 退货',
+        fba_customer_shipment_sales: 'FBA 发货销售',
+        fba_myi_unsuppressed_inventory: 'FBA Manage Inventory',
+        fba_reserved_inventory: 'FBA Reserved Inventory',
+        afn_inventory: 'FBA Amazon Fulfilled Inventory'
+      }[type] || type || '未知正式报表';
     },
     reportStatusFor(row) { return this.reportStatuses[this.reportScopeKey(row)] || { latest_task: null, differences: {} }; },
     reportStatusText(row) {

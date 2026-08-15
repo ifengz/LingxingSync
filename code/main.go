@@ -314,6 +314,23 @@ func formalReportSchemaRequirements(reportType string) map[string][]string {
 			"shipment-date", "sku", "fnsku", "asin", "fulfillment-center-id", "quantity", "amazon-order-id", "currency",
 			"item-price-per-unit", "shipping-price", "gift-wrap-price", "ship-city", "ship-state", "ship-postal-code",
 		}
+	case reportexport.FBAInventoryReportType:
+		requirements["ls_fba_myi_unsuppressed_inventory"] = append([]string{
+			"account_id", "seller_id", "store_id", "report_task_id", "row_number", "row_sha256",
+		}, []string{
+			"sku", "fnsku", "asin", "product-name", "condition", "your-price", "mfn-listing-exists", "mfn-fulfillable-quantity",
+			"afn-listing-exists", "afn-warehouse-quantity", "afn-fulfillable-quantity", "afn-unsellable-quantity", "afn-reserved-quantity",
+			"afn-total-quantity", "per-unit-volume", "afn-inbound-working-quantity", "afn-inbound-shipped-quantity",
+			"afn-inbound-receiving-quantity", "afn-researching-quantity", "afn-reserved-future-supply", "afn-future-supply-buyable",
+		}...)
+	case reportexport.ReservedInventoryReportType:
+		requirements["ls_fba_reserved_inventory"] = append([]string{
+			"account_id", "seller_id", "store_id", "report_task_id", "row_number", "row_sha256",
+		}, []string{"sku", "fnsku", "asin", "product-name", "reserved_qty", "reserved_customerorders", "reserved_fc-processing"}...)
+	case reportexport.AFNInventoryReportType:
+		requirements["ls_afn_inventory"] = append([]string{
+			"account_id", "seller_id", "store_id", "report_task_id", "row_number", "row_sha256",
+		}, []string{"seller-sku", "fulfillment-channel-sku", "asin", "condition-type", "Warehouse-Condition-code", "Quantity Available"}...)
 	default:
 		return nil
 	}
@@ -390,7 +407,7 @@ func projectFormalReport(ctx context.Context, dailyReader listingdaily.SourceRea
 	if evidence.AuditID <= 0 || strings.TrimSpace(evidence.ReportTaskID) == "" {
 		return fmt.Errorf("正式报告日维投影缺少本次 report audit/task")
 	}
-	from, to, err := reportBusinessDates(request)
+	from, to, err := formalReportBusinessDates(reportType, request, time.Now().UTC())
 	if err != nil {
 		return err
 	}
@@ -438,6 +455,14 @@ func reportBusinessDates(request reportexport.Request) (time.Time, time.Time, er
 		return time.Time{}, time.Time{}, fmt.Errorf("Customer Returns date_to 不能早于 date_from")
 	}
 	return from, to, nil
+}
+
+func formalReportBusinessDates(reportType string, request reportexport.Request, now time.Time) (time.Time, time.Time, error) {
+	if reportType == reportexport.FBAInventoryReportType || reportType == reportexport.ReservedInventoryReportType || reportType == reportexport.AFNInventoryReportType {
+		date := time.Date(now.UTC().Year(), now.UTC().Month(), now.UTC().Day(), 0, 0, 0, 0, time.UTC)
+		return date, date, nil
+	}
+	return reportBusinessDates(request)
 }
 
 func splitNonEmpty(value string) []string {

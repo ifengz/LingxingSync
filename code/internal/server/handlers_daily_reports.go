@@ -215,12 +215,12 @@ func defaultReportExportDTO() reportExportConfigDTO {
 }
 
 func availableReportExportTypes() []string {
-	return []string{config.ReportExportCustomerReturns, config.ReportExportCustomerShipmentSales}
+	return []string{config.ReportExportCustomerReturns, config.ReportExportCustomerShipmentSales, config.ReportExportFBAInventory, config.ReportExportReservedInventory, config.ReportExportAFNInventory}
 }
 
 func supportedReportExportType(value string) bool {
 	switch value {
-	case config.ReportExportCustomerReturns, config.ReportExportCustomerShipmentSales:
+	case config.ReportExportCustomerReturns, config.ReportExportCustomerShipmentSales, config.ReportExportFBAInventory, config.ReportExportReservedInventory, config.ReportExportAFNInventory:
 		return true
 	default:
 		return false
@@ -233,6 +233,12 @@ func reportExportAPIType(value string) string {
 		return reportexport.CustomerReturnsReportType
 	case config.ReportExportCustomerShipmentSales:
 		return reportexport.CustomerShipmentSalesReportType
+	case config.ReportExportFBAInventory:
+		return reportexport.FBAInventoryReportType
+	case config.ReportExportReservedInventory:
+		return reportexport.ReservedInventoryReportType
+	case config.ReportExportAFNInventory:
+		return reportexport.AFNInventoryReportType
 	default:
 		return ""
 	}
