@@ -132,6 +132,27 @@ func TestSnapshotReturnsAllowlistedFieldsAndMetadata(t *testing.T) {
 	}
 }
 
+func TestSnapshotDefaultsToDatasetFieldsInsteadOfProjectFieldSubset(t *testing.T) {
+	reader := &fixtureReader{}
+	rawToken := "project-token-for-all-fields"
+	h, err := New(Config{
+		FieldAllowlist: []string{"sales", "returns"},
+		CursorSecret:   []byte("cursor-secret-for-tests"),
+		Tokens:         []Token{{ID: "tok_reader", ProjectID: "reader", Hash: HashToken(rawToken), DatasetScopes: []string{DatasetID}, StoreScopes: []string{"store-a"}, Fields: []string{"sales"}}},
+	}, reader)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	rec := requestJSON(t, h, http.MethodPost, SnapshotPath, rawToken, `{"store":"store-a","date_from":"2026-08-01","date_to":"2026-08-01"}`)
+	if rec.Code != http.StatusOK || strings.Join(reader.lastQuery.Fields, ",") != "returns,sales" {
+		t.Fatalf("dataset default fields status=%d fields=%v body=%s", rec.Code, reader.lastQuery.Fields, rec.Body.String())
+	}
+	rec = requestJSON(t, h, http.MethodPost, SnapshotPath, rawToken, `{"store":"store-a","date_from":"2026-08-01","date_to":"2026-08-01","fields":["returns"]}`)
+	if rec.Code != http.StatusOK || strings.Join(reader.lastQuery.Fields, ",") != "returns" {
+		t.Fatalf("dataset requested field status=%d fields=%v body=%s", rec.Code, reader.lastQuery.Fields, rec.Body.String())
+	}
+}
+
 func TestChangesRejectsMissingAndSnapshotCursor(t *testing.T) {
 	updated := time.Date(2026, 8, 1, 1, 2, 3, 0, time.UTC)
 	reader := &fixtureReader{page: Page{Rows: []Row{{
@@ -454,7 +475,11 @@ func TestFieldsRouteReturnsAndPersistsOnlyAllowlistedFields(t *testing.T) {
 	})
 
 	get := requestJSON(t, h, http.MethodGet, FieldsPath, "", ``)
-	if get.Code != http.StatusOK || !strings.Contains(get.Body.String(), "units") {
+	var catalog FieldsResponse
+	if err := json.Unmarshal(get.Body.Bytes(), &catalog); err != nil {
+		t.Fatalf("decode fields catalog: %v", err)
+	}
+	if get.Code != http.StatusOK || catalog.Data.DatasetName != DatasetName || strings.Join(catalog.Data.FixedFields, ",") != strings.Join(FixedFields, ",") || !strings.Contains(get.Body.String(), "units") {
 		t.Fatalf("fields GET status=%d body=%s", get.Code, get.Body.String())
 	}
 	put := requestJSON(t, h, http.MethodPut, FieldsPath, token, `{"project_id":"project-a","fields":["internal_secret"]}`)

@@ -1179,11 +1179,39 @@ function normalizeDatasetProjects(data) {
     return {
       project_id: projectId,
       token_id: tokenId,
+      store_scopes: Array.isArray(item.store_scopes) ? item.store_scopes.filter((scope) => typeof scope === 'string' && scope.trim()) : [],
       key,
       label: typeof item.label === 'string' && item.label.trim() ? item.label.trim() : projectId + ' / ' + tokenId,
     };
   });
   return { projects, detail: null };
+}
+
+function normalizeListingDailyCatalog(data) {
+  if (!data || data.dataset_id !== 'listing-daily-v1' || typeof data.dataset_name !== 'string' || !data.dataset_name.trim() ||
+      !Array.isArray(data.fixed_fields) || !Array.isArray(data.available_fields)) {
+    throw new Error('数据表配置响应格式错误');
+  }
+  const fixedLabels = {
+    store: '店铺', channel: '渠道', asin: 'ASIN', sku: 'SKU', business_date: '业务日期', updated_at: '更新时间',
+    is_provisional: '是否临时数据', verification_status: '验证状态',
+  };
+  const seen = new Set();
+  const fixedFields = data.fixed_fields.map((name) => {
+    if (typeof name !== 'string' || !fixedLabels[name] || seen.has(name)) throw new Error('固定字段响应格式错误');
+    seen.add(name);
+    return { name, label: fixedLabels[name] };
+  });
+  const fields = normalizeListingDailyFields({
+    dataset_id: data.dataset_id, project_id: '', token_id: '', available_fields: data.available_fields, fields: [],
+  }, '', '');
+  return {
+    datasetID: data.dataset_id,
+    datasetName: data.dataset_name.trim(),
+    fixedFields,
+    fieldGroups: fields.groups,
+    projects: normalizeDatasetProjects(data).projects,
+  };
 }
 
 function normalizeListingDailyFields(data, projectId, tokenId) {
@@ -1250,10 +1278,18 @@ window.dataSources = function () {
     columns: [],
     colError: '',       // 读字段失败时的提示（不静默空白）
     refreshing: false,  // 刷新主表工作态（只重拉 /api/endpoints，不动整页）
+    datasetTab: 'table',
+    datasetID: 'listing-daily-v1',
+    datasetName: '',
+    fixedFields: [],
     fieldGroups: [],
     selectedFields: [],
     savedFields: [],
     datasetProjects: [],
+    datasetStores: [],
+    datasetStoresLoading: false,
+    datasetStoresError: '',
+    datasetStoreSelection: {},
     selectedProjectKey: '',
     selectedProjectId: '',
     selectedTokenId: '',
@@ -1268,7 +1304,7 @@ window.dataSources = function () {
     fieldsCompleting: false,
     datasetCreateError: '',
     datasetCreateResult: null,
-    datasetCreateForm: { project_id: '', store_scopes: '' },
+    datasetCreateForm: { project_id: '' },
     dailyPreviewFilters: { date_from: '', date_to: '', store: '', asin: '', sku: '', page: 1, page_size: 20 },
     dailyPreviewItems: [],
     dailyPreviewTotal: 0,
@@ -1285,27 +1321,130 @@ window.dataSources = function () {
     get selectedFieldCount() { return this.selectedFields.length; },
     get hasDatasetSelection() { return Boolean(this.selectedProjectKey && this.selectedProjectId && this.selectedTokenId); },
     get projectOptions() { return this.datasetProjects; },
+    get datasetSelectedStoreCount() {
+      return this.datasetStores.filter((store) => this.isDatasetStoreSelected(store)).length;
+    },
     get dailyPreviewPages() {
       return Math.max(1, Math.ceil(this.dailyPreviewTotal / this.dailyPreviewFilters.page_size));
     },
 
     async load() {
       await this.loadEndpoints();
-      await this.loadDatasetProjects();
+      await this.loadDatasetCatalog();
+    },
+    async loadDatasetCatalog() {
+      const requestVersion = ++this.fieldsRequestVersion;
+      this.fieldsLoading = true;
+      this.fieldsError = '';
+      try {
+        const data = await window.apiGet(listingDailyFieldsPath());
+        if (requestVersion !== this.fieldsRequestVersion) return;
+        const catalog = normalizeListingDailyCatalog(data);
+        this.datasetID = catalog.datasetID;
+        this.datasetName = catalog.datasetName;
+        this.fixedFields = catalog.fixedFields;
+        this.fieldGroups = catalog.fieldGroups;
+        this.datasetProjects = catalog.projects;
+      } catch (error) {
+        if (requestVersion === this.fieldsRequestVersion) this.fieldsError = errorMessage(error, '未能读取数据表配置');
+      } finally {
+        if (requestVersion === this.fieldsRequestVersion) this.fieldsLoading = false;
+      }
+    },
+    async loadDatasetStores() {
+      this.datasetStoresLoading = true;
+      this.datasetStoresError = '';
+      try {
+        const config = await window.apiGet('/api/config');
+        const accounts = Array.isArray(config && config.accounts) ? config.accounts : [];
+        const batches = await Promise.all(accounts.map(async (account) => {
+          const data = await window.apiGet('/api/accounts/' + encodeURIComponent(account.id) + '/stores');
+          const items = Array.isArray(data && data.items) ? data.items : [];
+          return items.map((store) => ({
+            account_id: account.id,
+            account_name: account.name || account.id,
+            sid: String(store.sid || '').trim(),
+            store_name: String(store.store_name || '').trim(),
+            store_type: String(store.store_type || '').trim(),
+            country: String(store.country || '').trim(),
+          }));
+        }));
+        const stores = batches.flat();
+        if (stores.some((store) => !store.sid)) throw new Error('店铺目录响应缺少店铺 ID');
+        const owners = new Map();
+        stores.forEach((store) => {
+          const owner = owners.get(store.sid);
+          if (owner && owner !== store.account_id) throw new Error('店铺 ID ' + store.sid + ' 在多个账号中重复，无法安全限定访问范围');
+          owners.set(store.sid, store.account_id);
+        });
+        this.datasetStores = stores;
+        this.datasetStoreSelection = {};
+      } catch (error) {
+        this.datasetStores = [];
+        this.datasetStoresError = errorMessage(error, '未能读取店铺目录');
+      } finally {
+        this.datasetStoresLoading = false;
+      }
+    },
+    datasetStoreKey(store) {
+      return [store && store.account_id, store && store.sid].join('|');
+    },
+    isDatasetStoreSelected(store) {
+      return !!this.datasetStoreSelection[this.datasetStoreKey(store)];
+    },
+    toggleDatasetStore(store) {
+      const key = this.datasetStoreKey(store);
+      const next = { ...this.datasetStoreSelection };
+      if (next[key]) delete next[key];
+      else next[key] = true;
+      this.datasetStoreSelection = next;
+    },
+    toggleAllDatasetStores(checked) {
+      this.datasetStoreSelection = checked
+        ? Object.fromEntries(this.datasetStores.map((store) => [this.datasetStoreKey(store), true]))
+        : {};
+    },
+    datasetStoreScopes() {
+      const scopes = [];
+      const seen = new Set();
+      this.datasetStores.forEach((store) => {
+        if (!this.isDatasetStoreSelected(store) || seen.has(store.sid)) return;
+        seen.add(store.sid);
+        scopes.push(store.sid);
+      });
+      return scopes;
+    },
+    datasetStoreLabel(scope) {
+      const store = this.datasetStores.find((item) => item.sid === scope);
+      return store ? (store.store_name ? store.store_name + '（' + scope + '）' : scope) : scope;
+    },
+    formatDatasetStoreScopes(scopes) {
+      return (Array.isArray(scopes) ? scopes : []).map((scope) => this.datasetStoreLabel(scope)).join('、') || '—';
     },
     async createDatasetProjectToken() {
       if (this.datasetCreating) return;
       this.datasetCreateError = '';
-      const split = (value) => String(value || '').split(',').map((item) => item.trim()).filter(Boolean);
+      const storeScopes = this.datasetStoreScopes();
+      if (storeScopes.length === 0) {
+        this.datasetCreateError = '请至少选择一个可读取店铺';
+        return;
+      }
       const body = {
         project_id: this.datasetCreateForm.project_id,
-        store_scopes: split(this.datasetCreateForm.store_scopes),
+        store_scopes: storeScopes,
       };
       this.datasetCreating = true;
       try {
         this.datasetCreateResult = await window.apiPost('/api/datasources/datasets/listing-daily-v1/projects', body);
-        this.datasetCreateForm = { project_id: '', store_scopes: '' };
-        this.datasetCreateOpen = true;
+        this.datasetProjects.push({
+          project_id: this.datasetCreateResult.project_id,
+          token_id: this.datasetCreateResult.token_id,
+          store_scopes: [...body.store_scopes],
+          key: datasetProjectKey(this.datasetCreateResult.project_id, this.datasetCreateResult.token_id),
+          label: this.datasetCreateResult.project_id + ' / ' + this.datasetCreateResult.token_id,
+        });
+        this.datasetCreateForm = { project_id: '' };
+        this.datasetStoreSelection = {};
         window.toast('success', '项目 Token 已创建，请先复制明文 Token');
       } catch (error) {
         this.datasetCreateError = errorMessage(error, '创建项目 Token 失败');
@@ -1315,7 +1454,10 @@ window.dataSources = function () {
     },
     async restartAfterDatasetToken() {
       const result = await window.apiPost('/api/settings/restart', {}).catch(window.toastError);
-      if (result) window.toast('success', result.message || '同步机正在重启');
+      if (result) {
+        window.toast('success', result.message || '同步机正在重启');
+        setTimeout(() => window.location.reload(), 3000);
+      }
     },
     async completeDatasetFields() {
       if (this.fieldsCompleting) return;

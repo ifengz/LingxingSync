@@ -40,7 +40,7 @@ func TestCreateDatasetProjectTokenReturnsPlaintextOnceAndPersistsOnlyHash(t *tes
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 		t.Fatalf("decode create response: %v", err)
 	}
-	if response.Data.ProjectID != "polabel2" || response.Data.TokenID != "polabel2" || response.Data.Token == "" || !response.Data.NeedRestart {
+	if response.Data.ProjectID != "polabel2" || !strings.HasPrefix(response.Data.TokenID, "tok_") || response.Data.TokenID == "polabel2" || response.Data.Token == "" || !response.Data.NeedRestart {
 		t.Fatalf("create response=%+v", response.Data)
 	}
 	saved := store.Current().DatasetAPI.Tokens
@@ -52,6 +52,9 @@ func TestCreateDatasetProjectTokenReturnsPlaintextOnceAndPersistsOnlyHash(t *tes
 	}
 	if strings.Contains(saved[0].TokenHash, response.Data.Token) || saved[0].TokenHash == response.Data.Token {
 		t.Fatal("plaintext token must not be persisted")
+	}
+	if saved[0].ID != response.Data.TokenID || len(saved[0].Fields) != len(availableDatasetFields) {
+		t.Fatalf("saved token id/fields=%q/%d", saved[0].ID, len(saved[0].Fields))
 	}
 }
 
@@ -96,7 +99,7 @@ func TestCreateDatasetProjectTokenInitializesEmptyDatasetConfig(t *testing.T) {
 	if len(saved.FieldAllowlist) != len(availableDatasetFields) || len(saved.CursorSecret) < 16 || len(saved.Tokens) != 1 {
 		t.Fatalf("initialized dataset config=%+v", saved)
 	}
-	if got := saved.Tokens[0].Fields; len(got) != len(defaultDatasetFields) || got[0] != "sales_units" || got[len(got)-1] != "sb_spend" {
+	if got := saved.Tokens[0].Fields; len(got) != len(availableDatasetFields) || got[0] != "sales_units" || got[len(got)-1] != "sb_orders" {
 		t.Fatalf("initialized token fields=%v", got)
 	}
 }

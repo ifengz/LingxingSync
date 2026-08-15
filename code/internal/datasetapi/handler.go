@@ -23,6 +23,7 @@ import (
 
 const (
 	DatasetID       = "listing-daily-v1"
+	DatasetName     = "Listing 日维指标表"
 	SnapshotPath    = "/api/v1/datasets/listing-daily-v1/snapshot"
 	ChangesPath     = "/api/v1/datasets/listing-daily-v1/changes"
 	FieldsPath      = "/api/datasources/datasets/listing-daily-v1/fields"
@@ -31,6 +32,10 @@ const (
 	DefaultDateSpan = 31
 	DefaultMaxPage  = 1000
 )
+
+var FixedFields = []string{
+	"store", "channel", "asin", "sku", "business_date", "updated_at", "is_provisional", "verification_status",
+}
 
 type Config struct {
 	Tokens          []Token
@@ -143,6 +148,8 @@ type FieldsResponse struct {
 
 type FieldsResponseData struct {
 	DatasetID       string          `json:"dataset_id"`
+	DatasetName     string          `json:"dataset_name"`
+	FixedFields     []string        `json:"fixed_fields"`
 	ProjectID       string          `json:"project_id,omitempty"`
 	TokenID         string          `json:"token_id,omitempty"`
 	AvailableFields []string        `json:"available_fields"`
@@ -151,9 +158,10 @@ type FieldsResponseData struct {
 }
 
 type ProjectFields struct {
-	ProjectID string   `json:"project_id"`
-	TokenID   string   `json:"token_id"`
-	Fields    []string `json:"fields"`
+	ProjectID   string   `json:"project_id"`
+	TokenID     string   `json:"token_id"`
+	StoreScopes []string `json:"store_scopes"`
+	Fields      []string `json:"fields"`
 }
 
 type fieldsRequest struct {
@@ -366,7 +374,7 @@ func (h *Handler) serveFields(w http.ResponseWriter, r *http.Request) {
 		available := sortedKeys(h.available)
 		projects := make([]ProjectFields, 0, len(h.tokens))
 		for _, token := range h.tokens {
-			projects = append(projects, ProjectFields{ProjectID: token.ProjectID, TokenID: token.ID, Fields: append([]string(nil), token.Fields...)})
+			projects = append(projects, ProjectFields{ProjectID: token.ProjectID, TokenID: token.ID, StoreScopes: append([]string(nil), token.StoreScopes...), Fields: append([]string(nil), token.Fields...)})
 		}
 		h.mu.RUnlock()
 		sort.Slice(projects, func(i, j int) bool {
@@ -375,7 +383,7 @@ func (h *Handler) serveFields(w http.ResponseWriter, r *http.Request) {
 			}
 			return projects[i].ProjectID < projects[j].ProjectID
 		})
-		writeJSON(w, http.StatusOK, FieldsResponse{OK: true, Data: FieldsResponseData{DatasetID: DatasetID, AvailableFields: available, Projects: projects}})
+		writeJSON(w, http.StatusOK, FieldsResponse{OK: true, Data: FieldsResponseData{DatasetID: DatasetID, DatasetName: DatasetName, FixedFields: append([]string(nil), FixedFields...), AvailableFields: available, Projects: projects}})
 		return
 	}
 	token, err := h.resolveToken(requestedProjectID, requestedTokenID)
@@ -395,7 +403,7 @@ func (h *Handler) serveFields(w http.ResponseWriter, r *http.Request) {
 		h.mu.RLock()
 		available := sortedKeys(h.available)
 		h.mu.RUnlock()
-		writeJSON(w, http.StatusOK, FieldsResponse{OK: true, Data: FieldsResponseData{DatasetID: DatasetID, ProjectID: token.ProjectID, TokenID: token.ID, AvailableFields: available, Fields: sortedKeys(current)}})
+		writeJSON(w, http.StatusOK, FieldsResponse{OK: true, Data: FieldsResponseData{DatasetID: DatasetID, DatasetName: DatasetName, FixedFields: append([]string(nil), FixedFields...), ProjectID: token.ProjectID, TokenID: token.ID, AvailableFields: available, Fields: sortedKeys(current)}})
 		return
 	}
 	if requestedProjectID == "" {
@@ -444,7 +452,7 @@ func (h *Handler) serveFields(w http.ResponseWriter, r *http.Request) {
 	// A PUT updates the persisted project configuration. The current request's
 	// token remains authoritative until the config is reloaded, so one project
 	// cannot mutate another project's in-memory field scope.
-	writeJSON(w, http.StatusOK, FieldsResponse{OK: true, Data: FieldsResponseData{DatasetID: DatasetID, ProjectID: token.ProjectID, TokenID: token.ID, AvailableFields: sortedKeys(h.available), Fields: fields}})
+	writeJSON(w, http.StatusOK, FieldsResponse{OK: true, Data: FieldsResponseData{DatasetID: DatasetID, DatasetName: DatasetName, FixedFields: append([]string(nil), FixedFields...), ProjectID: token.ProjectID, TokenID: token.ID, AvailableFields: sortedKeys(h.available), Fields: fields}})
 }
 
 func (h *Handler) resolveToken(projectID, tokenID string) (Token, error) {
@@ -509,10 +517,12 @@ func (h *Handler) validateRequest(in *request, snapshot bool, token Token) ([]st
 			return nil, 0, errors.New("date range exceeds the allowed span")
 		}
 	}
-	allow := make(map[string]struct{}, len(token.Fields))
-	for _, field := range token.Fields {
+	h.mu.RLock()
+	allow := make(map[string]struct{}, len(h.available))
+	for field := range h.available {
 		allow[field] = struct{}{}
 	}
+	h.mu.RUnlock()
 	fields := in.Fields
 	if len(fields) == 0 {
 		fields = make([]string, 0, len(allow))

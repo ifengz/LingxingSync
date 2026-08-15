@@ -47,24 +47,25 @@ assert.equal(entryManage.advancedAdd, false);
   assert.doesNotMatch(template, /absolute left-1\/2 top-full/);
 }
 
-// 数据集字段配置固定走 listing-daily-v1 的字段合同，不接受表名或 SQL 输入。
+// 数据表配置与新增项目是两个切卡；表定义不依赖项目，且不接受表名或 SQL 输入。
 {
   const template = fs.readFileSync(__dirname + '/../templates/dataset_fields.html', 'utf8');
-  assert.match(template, /API 数据集返回字段/);
-  assert.match(template, /listing-daily-v1/);
+  assert.match(template, /数据表配置/);
+  assert.match(template, /新增项目/);
+  assert.match(template, /数据表 ID/);
+  assert.match(template, /x-text="datasetID"/);
+  assert.match(template, /flex flex-wrap items-center justify-between gap-3/);
+  assert.match(template, /<nav class="flex items-center gap-1\.5" aria-label="数据表管理">/);
   assert.match(template, /x-data="dataSources\(\)"/);
-  assert.match(template, /x-init="loadDatasetProjects\(\)"/);
-  assert.match(template, /@click="saveDatasetFields\(\)"/);
-  assert.match(template, /可选字段/);
-  assert.match(template, /已获准字段/);
-  assert.match(template, /未保存修改/);
-  assert.match(template, /项目 ID/);
-  assert.match(template, /selectedProjectKey/);
-  assert.match(template, /selectProject/);
-  assert.match(template, /新增项目 \/ Token/);
+  assert.match(template, /x-init="loadDatasetCatalog\(\); loadDatasetStores\(\)"/);
+  assert.match(template, /业务字段/);
+  assert.match(template, /固定字段/);
+  assert.match(template, /固定字段，不能删除/);
+  assert.match(template, /Token ID/);
+  assert.match(template, /店铺范围/);
   assert.match(template, /createDatasetProjectToken\(\)/);
-  assert.match(template, /尚未配置可选字段/);
-  assert.doesNotMatch(template, /fieldGroups.length>0" class="grid/);
+  assert.match(template, /尚未登记业务字段/);
+  assert.doesNotMatch(template, /saveDatasetFields\(\)/);
   assert.doesNotMatch(template, /<input[^>]*(?:table|sql)/i);
   assert.doesNotMatch(template, /type=["']password/i);
   assert.doesNotMatch(template, /CREATE\s+TABLE|ALTER\s+TABLE|DROP\s+TABLE|SQL\s*:/i);
@@ -78,7 +79,9 @@ assert.equal(entryManage.advancedAdd, false);
 {
   const source = fs.readFileSync(__dirname + '/app.js', 'utf8');
   assert.match(source, /datasetCreateForm/);
-  assert.match(source, /store_scopes: split\(this\.datasetCreateForm\.store_scopes\)/);
+  assert.match(source, /const storeScopes = this\.datasetStoreScopes\(\)/);
+  assert.match(source, /store_scopes: storeScopes/);
+  assert.doesNotMatch(source, /datasetCreateForm\.store_scopes/);
   assert.doesNotMatch(source, /datasetCreateForm\.fields/);
   assert.match(source, /datasetCreateResult = await window\.apiPost/);
 }
@@ -235,6 +238,55 @@ root.confirmResolve(true);
 confirmation.then((accepted) => assert.equal(accepted, true));
 
 void (async () => {
+  // 数据表目录独立于项目：完整业务字段和固定字段先可见，项目只带读取范围。
+  {
+    const catalog = sandbox.window.dataSources();
+    sandbox.window.apiGet = async (url) => {
+      assert.equal(url, '/api/datasources/datasets/listing-daily-v1/fields');
+      return {
+        dataset_id: 'listing-daily-v1',
+        dataset_name: 'Listing 日维指标表',
+        fixed_fields: ['store', 'channel', 'asin', 'sku', 'business_date', 'updated_at', 'is_provisional', 'verification_status'],
+        available_fields: ['sales_units', 'inventory_sellable', 'sessions_total'],
+        projects: [{ project_id: 'polabel2', token_id: 'tok_reader', store_scopes: ['12534'] }],
+      };
+    };
+    await catalog.loadDatasetCatalog();
+    assert.equal(catalog.datasetName, 'Listing 日维指标表');
+    assert.equal(catalog.fixedFields.length, 8);
+    assert.equal(catalog.catalogFieldCount, 3);
+    assert.equal(catalog.datasetProjects[0].token_id, 'tok_reader');
+    assert.equal(JSON.stringify(catalog.datasetProjects[0].store_scopes), JSON.stringify(['12534']));
+
+    const storeCalls = [];
+    sandbox.window.apiGet = async (url) => {
+      storeCalls.push(url);
+      if (url === '/api/config') return { accounts: [{ id: 'sc_us_1', name: '美国自营' }] };
+      if (url === '/api/accounts/sc_us_1/stores') return {
+        items: [{ sid: '12534', store_name: '美国主店', country: 'US', store_type: 'SC' }],
+      };
+      throw new Error('unexpected store URL ' + url);
+    };
+    await catalog.loadDatasetStores();
+    assert.equal(JSON.stringify(storeCalls), JSON.stringify(['/api/config', '/api/accounts/sc_us_1/stores']));
+    assert.equal(catalog.datasetStores[0].store_name, '美国主店');
+    catalog.toggleAllDatasetStores(true);
+    assert.equal(JSON.stringify(catalog.datasetStoreScopes()), JSON.stringify(['12534']));
+    assert.equal(catalog.formatDatasetStoreScopes(['12534']), '美国主店（12534）');
+
+    let createRequest = null;
+    sandbox.window.apiPost = async (url, body) => {
+      createRequest = { url, body };
+      return { project_id: 'reader', token_id: 'tok_new', token: 'secret' };
+    };
+    catalog.datasetCreateForm = { project_id: 'reader' };
+    await catalog.createDatasetProjectToken();
+    assert.equal(JSON.stringify(createRequest), JSON.stringify({
+      url: '/api/datasources/datasets/listing-daily-v1/projects',
+      body: { project_id: 'reader', store_scopes: ['12534'] },
+    }));
+  }
+
   let request = null;
   sandbox.window.syncConfirm = async () => true;
   sandbox.window.apiPost = async (url, body) => {

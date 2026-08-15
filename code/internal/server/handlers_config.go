@@ -59,12 +59,6 @@ type createDatasetProjectTokenRequest struct {
 	StoreScopes []string `json:"store_scopes"`
 }
 
-var defaultDatasetFields = []string{
-	"sales_units", "sales_amount", "returns_qty", "inventory_sellable",
-	"sessions_desktop", "sessions_mobile", "sessions_total", "review_count", "rating",
-	"sp_spend", "sd_spend", "hsa_spend", "sb_spend",
-}
-
 var availableDatasetFields = []string{
 	"sales_units", "sales_amount", "returns_qty",
 	"inventory_sellable", "inventory_inbound", "inventory_reserved", "inventory_unfulfillable", "inventory_local_warehouse",
@@ -100,12 +94,16 @@ func (s *Server) apiCreateDatasetProjectToken(w http.ResponseWriter, r *http.Req
 		return
 	}
 	current := s.store.Current()
-	tokenID := in.ProjectID
 	for _, token := range current.DatasetAPI.Tokens {
-		if token.ID == tokenID || token.ProjectID == in.ProjectID {
+		if token.ProjectID == in.ProjectID {
 			errJSON(w, http.StatusConflict, "项目 ID 已存在: "+in.ProjectID)
 			return
 		}
+	}
+	tokenID, err := newDatasetTokenID(current.DatasetAPI.Tokens)
+	if err != nil {
+		errJSON(w, http.StatusInternalServerError, "生成 Token ID 失败: "+err.Error())
+		return
 	}
 	rawToken, err := newDatasetBearerToken()
 	if err != nil {
@@ -114,9 +112,7 @@ func (s *Server) apiCreateDatasetProjectToken(w http.ResponseWriter, r *http.Req
 	}
 	old := current
 	snap := s.store.Snapshot()
-	if len(snap.DatasetAPI.FieldAllowlist) == 0 {
-		snap.DatasetAPI.FieldAllowlist = append([]string(nil), availableDatasetFields...)
-	}
+	snap.DatasetAPI.FieldAllowlist = completeDatasetFieldAllowlist(snap.DatasetAPI.FieldAllowlist)
 	if snap.DatasetAPI.CursorSecret == "" {
 		snap.DatasetAPI.CursorSecret, err = newDatasetBearerToken()
 		if err != nil {
@@ -130,7 +126,7 @@ func (s *Server) apiCreateDatasetProjectToken(w http.ResponseWriter, r *http.Req
 		TokenHash:     datasetapi.HashToken(rawToken),
 		DatasetScopes: []string{datasetapi.DatasetID},
 		StoreScopes:   storeScopes,
-		Fields:        append([]string(nil), defaultDatasetFields...),
+		Fields:        append([]string(nil), availableDatasetFields...),
 	})
 	s.applyConfigWrite(w, old, snap, "项目 Token 已新增，请保存明文 Token 并重启同步机", map[string]any{
 		"project_id":   in.ProjectID,
@@ -140,9 +136,8 @@ func (s *Server) apiCreateDatasetProjectToken(w http.ResponseWriter, r *http.Req
 	})
 }
 
-// apiCompleteDatasetFields adds only fixed, already implemented listing-daily
-// metrics to the global selectable list. It never changes a project's current
-// field permission; the administrator still moves fields into that project.
+// apiCompleteDatasetFields extends the fixed table-level business-field catalog.
+// Reader projects inherit this catalog; they only restrict store scope.
 func (s *Server) apiCompleteDatasetFields(w http.ResponseWriter, _ *http.Request) {
 	if s.store == nil {
 		errJSON(w, http.StatusInternalServerError, "配置存储未初始化")
@@ -150,16 +145,7 @@ func (s *Server) apiCompleteDatasetFields(w http.ResponseWriter, _ *http.Request
 	}
 	old := s.store.Current()
 	snap := s.store.Snapshot()
-	seen := make(map[string]struct{}, len(snap.DatasetAPI.FieldAllowlist))
-	for _, field := range snap.DatasetAPI.FieldAllowlist {
-		seen[field] = struct{}{}
-	}
-	for _, field := range availableDatasetFields {
-		if _, exists := seen[field]; exists {
-			continue
-		}
-		snap.DatasetAPI.FieldAllowlist = append(snap.DatasetAPI.FieldAllowlist, field)
-	}
+	snap.DatasetAPI.FieldAllowlist = completeDatasetFieldAllowlist(snap.DatasetAPI.FieldAllowlist)
 	s.applyConfigWrite(w, old, snap, "可选字段已补全，请重启同步机后继续配置", map[string]any{"need_restart": true, "field_count": len(snap.DatasetAPI.FieldAllowlist)})
 }
 
@@ -189,6 +175,42 @@ func newDatasetBearerToken() (string, error) {
 		return "", err
 	}
 	return base64.RawURLEncoding.EncodeToString(b), nil
+}
+
+func newDatasetTokenID(tokens []config.DatasetToken) (string, error) {
+	existing := make(map[string]struct{}, len(tokens))
+	for _, token := range tokens {
+		existing[token.ID] = struct{}{}
+	}
+	for range 3 {
+		b := make([]byte, 12)
+		if _, err := rand.Read(b); err != nil {
+			return "", err
+		}
+		id := "tok_" + base64.RawURLEncoding.EncodeToString(b)
+		if _, exists := existing[id]; !exists {
+			return id, nil
+		}
+	}
+	return "", fmt.Errorf("Token ID 冲突")
+}
+
+func completeDatasetFieldAllowlist(existing []string) []string {
+	seen := make(map[string]struct{}, len(existing)+len(availableDatasetFields))
+	result := make([]string, 0, len(existing)+len(availableDatasetFields))
+	for _, field := range existing {
+		if _, exists := seen[field]; !exists {
+			seen[field] = struct{}{}
+			result = append(result, field)
+		}
+	}
+	for _, field := range availableDatasetFields {
+		if _, exists := seen[field]; !exists {
+			seen[field] = struct{}{}
+			result = append(result, field)
+		}
+	}
+	return result
 }
 
 // ---------------------------------------------------------------------------

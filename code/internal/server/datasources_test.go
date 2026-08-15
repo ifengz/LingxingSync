@@ -76,7 +76,7 @@ func TestDatasetFieldsTemplateKeepsBothColumnsVisibleWhenConfigurationIsEmpty(t 
 		t.Fatalf("读 dataset_fields.html: %v", err)
 	}
 	source := string(raw)
-	for _, required := range []string{"API 数据集返回字段", "全部字段", "已获准字段", "h-[1000px]", "overflow-y-auto", "尚未配置可选字段", "尚未创建项目", "新增项目 / Token", "createDatasetProjectToken", "补全可选字段并重启"} {
+	for _, required := range []string{"数据表配置", "新增项目", "数据表 ID", "固定字段", "业务字段", "Token ID", "店铺范围", "h-[1000px]", "overflow-y-auto", "createDatasetProjectToken"} {
 		if !strings.Contains(source, required) {
 			t.Fatalf("数据集字段页缺少 %q", required)
 		}
