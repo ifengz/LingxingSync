@@ -11,6 +11,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"lingxing-sync/internal/api"
 )
 
 type signedClientFunc func(context.Context, string, string, map[string]any) ([]byte, int, int, error)
@@ -491,6 +493,25 @@ func TestDownloadPreservesReportContentType(t *testing.T) {
 	}
 	if contentType != "text/plain; charset=cp1252" {
 		t.Fatalf("content type = %q, want cp1252 declaration", contentType)
+	}
+}
+
+func TestReportCallRetriesLingxingBusinessCode429(t *testing.T) {
+	calls := 0
+	client := signedClientFunc(func(_ context.Context, _, _ string, _ map[string]any) ([]byte, int, int, error) {
+		calls++
+		if calls == 1 {
+			return nil, http.StatusOK, http.StatusTooManyRequests, api.NewFetchError(http.StatusOK, http.StatusTooManyRequests, "请求过于频繁", time.Millisecond, true)
+		}
+		return []byte(`{"code":0,"data":{"progress_status":"IN_PROGRESS"}}`), http.StatusOK, 0, nil
+	})
+	runner := Runner{Client: client}
+	raw, err := runner.call(context.Background(), queryPath, map[string]any{"task_id": "task-1"})
+	if err != nil {
+		t.Fatalf("call after rate limit = %v", err)
+	}
+	if calls != 2 || !strings.Contains(string(raw), "IN_PROGRESS") {
+		t.Fatalf("calls=%d raw=%s", calls, raw)
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,6 +14,8 @@ import (
 	"strings"
 	"time"
 	"unicode"
+
+	"lingxing-sync/internal/api"
 )
 
 const (
@@ -24,6 +27,8 @@ const (
 	defaultDownloadTimeout = 60 * time.Second
 	defaultSharedTaskWait  = 10 * time.Second
 )
+
+var reportRateLimitDelays = []time.Duration{5 * time.Second, 15 * time.Second, 30 * time.Second, 60 * time.Second, 120 * time.Second}
 
 // SignedJSONClient is implemented by api.Client. Keeping this small interface
 // lets the lifecycle test use an httptest-backed client without a second signer.
@@ -372,13 +377,50 @@ func (r *Runner) download(ctx context.Context, request Request, data reportStatu
 }
 
 func (r *Runner) call(ctx context.Context, path string, body map[string]any) ([]byte, error) {
-	if r.Limiter != nil {
-		if err := r.Limiter.Wait(ctx); err != nil {
-			return nil, fmt.Errorf("report export: rate limiter: %w", err)
+	for attempt := 0; ; attempt++ {
+		if r.Limiter != nil {
+			if err := r.Limiter.Wait(ctx); err != nil {
+				return nil, fmt.Errorf("report export: rate limiter: %w", err)
+			}
+		}
+		raw, httpStatus, apiCode, err := r.Client.DoSignedJSON(ctx, http.MethodPost, path, body)
+		if err == nil {
+			return raw, nil
+		}
+		delay, retry := reportRateLimitRetry(err, httpStatus, apiCode, attempt)
+		if !retry {
+			return raw, err
+		}
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, ctx.Err()
+		case <-timer.C:
 		}
 	}
-	raw, _, _, err := r.Client.DoSignedJSON(ctx, http.MethodPost, path, body)
-	return raw, err
+}
+
+func reportRateLimitRetry(err error, httpStatus, apiCode, attempt int) (time.Duration, bool) {
+	var fetchErr *api.FetchError
+	if errors.As(err, &fetchErr) {
+		if httpStatus == 0 {
+			httpStatus = fetchErr.HTTPStatus
+		}
+		if apiCode == 0 {
+			apiCode = fetchErr.APICode
+		}
+	}
+	if httpStatus != http.StatusTooManyRequests && apiCode != http.StatusTooManyRequests && apiCode != 3001008 {
+		return 0, false
+	}
+	if attempt >= len(reportRateLimitDelays) {
+		return 0, false
+	}
+	if fetchErr != nil && fetchErr.RetryAfter > 0 {
+		return fetchErr.RetryAfter, true
+	}
+	return reportRateLimitDelays[attempt], true
 }
 
 func createBody(request Request) map[string]any {
