@@ -545,7 +545,7 @@ func scPerformanceValues(sessions, sessionsMobile, sessionsTotal, reviewsCount s
 	return Values{SessionsDesktop: nullableInt(sessions), SessionsMobile: nullableInt(sessionsMobile), SessionsTotal: nullableInt(sessionsTotal), ReviewCount: nullableInt(reviewsCount), Rating: nullableFloat(avgStar)}
 }
 
-const scInventorySQL = "SELECT asin, sku, afn_fulfillable_quantity, afn_inbound_receiving_quantity, afn_inbound_shipped_quantity, afn_inbound_working_quantity, reserved_customerorders, reserved_fc_processing, reserved_fc_transfers, afn_unsellable_quantity FROM ls_fba_inventory WHERE account_id = ? AND sid = ? AND DATE(synced_at) = ?"
+const scInventorySQL = "SELECT asin, sku, fnsku, afn_fulfillable_quantity, afn_inbound_receiving_quantity, afn_inbound_shipped_quantity, afn_inbound_working_quantity, reserved_customerorders, reserved_fc_processing, reserved_fc_transfers, afn_unsellable_quantity FROM ls_fba_inventory WHERE account_id = ? AND sid = ? AND DATE(synced_at) = ?"
 
 const vcInventorySQL = "SELECT asin, sellableOnHandInventoryUnits, unsellableOnHandInventoryUnits, netReceivedInventoryUnits, unhealthyInventoryUnits, aged90PlusDaysSellableInventoryUnits, sellThroughRate, receiveFillRate, vendorConfirmationRate, averageVendorLeadTimeDays, sellableOnHandInventoryCostAmount, unsellableOnHandInventoryCostAmount, aged90PlusDaysSellableInventoryCostAmount, unhealthyInventoryCostAmount, netReceivedInventoryCostAmount, sellableOnHandInventoryCostCurrencyCode, unsellableOnHandInventoryCostCurrencyCode, aged90PlusDaysSellableInventoryCostCurrencyCode, unhealthyInventoryCostCurrencyCode, netReceivedInventoryCostCurrencyCode FROM ls_vc_inventory WHERE account_id = ? AND sid = ? AND `date` = ?"
 
@@ -559,34 +559,73 @@ func (r SQLSourceReader) readInventory(ctx context.Context, out *SQLProjection, 
 		CoverageUnknown{"ls_fba_inventory.reserved", storeID, "", date, "raw source provides components only; no total reserved field"},
 		CoverageUnknown{"ls_fba_inventory.local_warehouse", storeID, "", date, "no local warehouse field in current-state FBA raw source"},
 	)
-	var rows []struct {
-		ASIN               string        `db:"asin"`
-		SKU                string        `db:"sku"`
-		Sellable           sql.NullInt64 `db:"afn_fulfillable_quantity"`
-		InboundReceiving   sql.NullInt64 `db:"afn_inbound_receiving_quantity"`
-		InboundShipped     sql.NullInt64 `db:"afn_inbound_shipped_quantity"`
-		InboundWorking     sql.NullInt64 `db:"afn_inbound_working_quantity"`
-		ReservedCustomer   sql.NullInt64 `db:"reserved_customerorders"`
-		ReservedProcessing sql.NullInt64 `db:"reserved_fc_processing"`
-		ReservedTransfers  sql.NullInt64 `db:"reserved_fc_transfers"`
-		Unfulfillable      sql.NullInt64 `db:"afn_unsellable_quantity"`
-	}
+	var rows []scInventoryRow
 	if err := r.DB.SelectContext(ctx, &rows, scInventorySQL, accountID, storeID, date); err != nil {
 		return fmt.Errorf("listing daily: read ls_fba_inventory: %w", err)
 	}
+	records, unknown := aggregateSCInventoryRows(rows, storeID, channel, date, skus)
+	out.Records = append(out.Records, records...)
+	out.Unknown = append(out.Unknown, unknown...)
+	return nil
+}
+
+type scInventoryRow struct {
+	ASIN               string        `db:"asin"`
+	SKU                string        `db:"sku"`
+	FNSKU              string        `db:"fnsku"`
+	Sellable           sql.NullInt64 `db:"afn_fulfillable_quantity"`
+	InboundReceiving   sql.NullInt64 `db:"afn_inbound_receiving_quantity"`
+	InboundShipped     sql.NullInt64 `db:"afn_inbound_shipped_quantity"`
+	InboundWorking     sql.NullInt64 `db:"afn_inbound_working_quantity"`
+	ReservedCustomer   sql.NullInt64 `db:"reserved_customerorders"`
+	ReservedProcessing sql.NullInt64 `db:"reserved_fc_processing"`
+	ReservedTransfers  sql.NullInt64 `db:"reserved_fc_transfers"`
+	Unfulfillable      sql.NullInt64 `db:"afn_unsellable_quantity"`
+}
+
+func aggregateSCInventoryRows(rows []scInventoryRow, storeID, channel string, date time.Time, skus map[string]string) ([]RawRecord, []CoverageUnknown) {
+	records := make([]RawRecord, 0, len(rows))
+	unknown := make([]CoverageUnknown, 0)
+	indexes := make(map[string]int, len(rows))
 	for _, row := range rows {
 		sku := row.SKU
 		if sku == "" {
 			sku = skus[row.ASIN]
 		}
 		if row.ASIN == "" || sku == "" {
-			out.Unknown = append(out.Unknown, CoverageUnknown{"ls_fba_inventory", storeID, row.ASIN, date, "missing listing identity"})
+			unknown = append(unknown, CoverageUnknown{"ls_fba_inventory", storeID, row.ASIN, date, "missing listing identity"})
 			continue
 		}
-		values := scInventoryValues(row.Sellable, row.InboundReceiving, row.InboundShipped, row.InboundWorking, row.ReservedCustomer, row.ReservedProcessing, row.ReservedTransfers, row.Unfulfillable)
-		out.Records = append(out.Records, RawRecord{Source: SourceAPI, Input: Input{Key: Key{Store: storeID, Channel: channel, ASIN: row.ASIN, SKU: sku, BusinessDate: date}, Scope: ScopeListing, Values: values}})
+		key := Key{Store: storeID, Channel: channel, ASIN: row.ASIN, SKU: sku, BusinessDate: date}
+		id := keyID(key, ScopeListing)
+		index, exists := indexes[id]
+		if !exists {
+			index = len(records)
+			indexes[id] = index
+			records = append(records, RawRecord{Source: SourceAPI, Input: Input{Key: key, Scope: ScopeListing}})
+		}
+		values := &records[index].Input.Values
+		values.InventorySellable = sumNullableInt64(values.InventorySellable, row.Sellable)
+		values.InventoryInboundReceiving = sumNullableInt64(values.InventoryInboundReceiving, row.InboundReceiving)
+		values.InventoryInboundShipped = sumNullableInt64(values.InventoryInboundShipped, row.InboundShipped)
+		values.InventoryInboundWorking = sumNullableInt64(values.InventoryInboundWorking, row.InboundWorking)
+		values.InventoryReservedCustomerOrders = sumNullableInt64(values.InventoryReservedCustomerOrders, row.ReservedCustomer)
+		values.InventoryReservedFCProcessing = sumNullableInt64(values.InventoryReservedFCProcessing, row.ReservedProcessing)
+		values.InventoryReservedFCTransfers = sumNullableInt64(values.InventoryReservedFCTransfers, row.ReservedTransfers)
+		values.InventoryUnfulfillable = sumNullableInt64(values.InventoryUnfulfillable, row.Unfulfillable)
 	}
-	return nil
+	return records, unknown
+}
+
+func sumNullableInt64(total *int64, value sql.NullInt64) *int64 {
+	if !value.Valid {
+		return total
+	}
+	if total == nil {
+		total = new(int64)
+	}
+	*total += value.Int64
+	return total
 }
 
 func scInventoryValues(sellable, inboundReceiving, inboundShipped, inboundWorking, reservedCustomer, reservedProcessing, reservedTransfers, unfulfillable sql.NullInt64) Values {

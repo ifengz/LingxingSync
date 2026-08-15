@@ -3,9 +3,13 @@ package listingdaily
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
+	"io"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jmoiron/sqlx"
 )
 
 func TestInventoryProjectionContractsSeparateVCDailyAndSCSnapshotSources(t *testing.T) {
@@ -14,7 +18,7 @@ func TestInventoryProjectionContractsSeparateVCDailyAndSCSnapshotSources(t *test
 			t.Fatalf("VC inventory query missing %q: %s", want, vcInventorySQL)
 		}
 	}
-	for _, want := range []string{"FROM ls_fba_inventory", "DATE(synced_at) = ?", "afn_fulfillable_quantity", "afn_inbound_receiving_quantity", "reserved_customerorders", "reserved_fc_transfers", "afn_unsellable_quantity"} {
+	for _, want := range []string{"FROM ls_fba_inventory", "DATE(synced_at) = ?", "fnsku", "afn_fulfillable_quantity", "afn_inbound_receiving_quantity", "reserved_customerorders", "reserved_fc_transfers", "afn_unsellable_quantity"} {
 		if !strings.Contains(scInventorySQL, want) {
 			t.Fatalf("SC inventory query missing %q: %s", want, scInventorySQL)
 		}
@@ -250,6 +254,94 @@ func TestBuildFromSQLReconcilesFBAInventoryFieldsFromFormalReport(t *testing.T) 
 	if rows[0].Sources["inventory_sellable"] != SourceReport || rows[0].Sources["inventory_reserved"] != SourceReport {
 		t.Fatalf("inventory sources = %#v", rows[0].Sources)
 	}
+}
+
+func TestReadInventorySumsFNSKURowsBeforeAFNReconciliation(t *testing.T) {
+	now := time.Now().UTC()
+	date := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	fixtures := []inventoryFixtureRow{
+		{FNSKU: "FNSKU-1", Values: []driver.Value{"B01", "SKU-1", "FNSKU-1", int64(3), nil, nil, nil, nil, nil, nil, nil}},
+		{FNSKU: "FNSKU-2", Values: []driver.Value{"B01", "SKU-1", "FNSKU-2", int64(5), nil, nil, nil, nil, nil, nil, nil}},
+	}
+	if fixtures[0].FNSKU == fixtures[1].FNSKU {
+		t.Fatal("fixture must represent two FNSKUs")
+	}
+	db := sql.OpenDB(inventoryFixtureConnector{Rows: fixtures})
+	defer db.Close()
+	out := SQLProjection{}
+	if err := (SQLSourceReader{DB: sqlx.NewDb(db, "inventory-fixture")}).readInventory(context.Background(), &out, "account-1", "store-1", "sc_fba", date, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	reportSellable := int64(10)
+	key := Key{Store: "store-1", Channel: "sc_fba", ASIN: "B01", SKU: "SKU-1", BusinessDate: date}
+	reader := &reconciledSourceReader{
+		api: out,
+		inventoryReport: []RawRecord{{Source: SourceReport, Input: Input{
+			Key: key, Scope: ScopeListing, Values: Values{InventorySellable: &reportSellable},
+		}}},
+	}
+	evidence := ReportEvidence{AuditID: 31, ReportTaskID: "inventory-task-31", ReportType: "GET_AFN_INVENTORY_DATA"}
+	projection, rows, err := BuildFromSQL(context.Background(), reader, "account-1", "store-1", "sc_fba", date, date.AddDate(0, 0, 1), ReportReconciled, evidence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if projection.Reconciliation == nil || len(projection.Reconciliation.FieldDiffs) != 1 {
+		t.Fatalf("inventory reconciliation = %#v", projection.Reconciliation)
+	}
+	databaseValue, ok := projection.Reconciliation.FieldDiffs[0].Database.(*int64)
+	if !ok || databaseValue == nil || *databaseValue != 8 {
+		t.Fatalf("API inventory_sellable = %#v, want 8", projection.Reconciliation.FieldDiffs[0].Database)
+	}
+	if len(rows) != 1 || rows[0].Values.InventorySellable == nil || *rows[0].Values.InventorySellable != reportSellable {
+		t.Fatalf("AFN inventory correction = %#v", rows)
+	}
+}
+
+type inventoryFixtureRow struct {
+	FNSKU  string
+	Values []driver.Value
+}
+
+type inventoryFixtureConnector struct{ Rows []inventoryFixtureRow }
+
+func (c inventoryFixtureConnector) Connect(context.Context) (driver.Conn, error) {
+	return &inventoryFixtureConn{rows: c.Rows}, nil
+}
+
+func (inventoryFixtureConnector) Driver() driver.Driver { return inventoryFixtureDriver{} }
+
+type inventoryFixtureDriver struct{}
+
+func (inventoryFixtureDriver) Open(string) (driver.Conn, error) { return nil, driver.ErrBadConn }
+
+type inventoryFixtureConn struct{ rows []inventoryFixtureRow }
+
+func (c *inventoryFixtureConn) Prepare(string) (driver.Stmt, error) { return nil, driver.ErrSkip }
+func (c *inventoryFixtureConn) Close() error                        { return nil }
+func (c *inventoryFixtureConn) Begin() (driver.Tx, error)           { return nil, driver.ErrSkip }
+func (c *inventoryFixtureConn) QueryContext(context.Context, string, []driver.NamedValue) (driver.Rows, error) {
+	return &inventoryFixtureRows{rows: c.rows}, nil
+}
+
+type inventoryFixtureRows struct {
+	rows  []inventoryFixtureRow
+	index int
+}
+
+func (*inventoryFixtureRows) Columns() []string {
+	return []string{"asin", "sku", "fnsku", "afn_fulfillable_quantity", "afn_inbound_receiving_quantity", "afn_inbound_shipped_quantity", "afn_inbound_working_quantity", "reserved_customerorders", "reserved_fc_processing", "reserved_fc_transfers", "afn_unsellable_quantity"}
+}
+
+func (*inventoryFixtureRows) Close() error { return nil }
+
+func (r *inventoryFixtureRows) Next(values []driver.Value) error {
+	if r.index >= len(r.rows) {
+		return io.EOF
+	}
+	copy(values, r.rows[r.index].Values)
+	r.index++
+	return nil
 }
 
 func TestBuildFromSQLRejectsUnknownReportTypeBeforeReadingRaw(t *testing.T) {
