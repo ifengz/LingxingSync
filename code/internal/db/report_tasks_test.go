@@ -40,6 +40,22 @@ func TestSaveAllOrdersAcceptsCanonicalThirtyFourColumnRow(t *testing.T) {
 	}
 }
 
+func TestSaveFBAInventoryAcceptsProductionTwentyFourColumnRow(t *testing.T) {
+	store := &DBReportStore{}
+	err := store.SaveFBAInventory(context.Background(), 1, []reportexport.FBAInventory{{AFNFCTransferQuantity: "1", AFNOnhandBuyableQuantity: "2", Store: "store", AFNFulfillableQuantityRaw: "3"}}, "sha", "doc")
+	if err == nil || !strings.Contains(err.Error(), "nil database") {
+		t.Fatalf("error = %v, want 24-column placeholder validation to pass before nil database", err)
+	}
+}
+
+func TestSaveFBAAllInventoryAcceptsProductionTwentyFourColumnRow(t *testing.T) {
+	store := &DBReportStore{}
+	err := store.SaveFBAAllInventory(context.Background(), 1, []reportexport.FBAAllInventory{{AFNFCTransferQuantity: "1", AFNOnhandBuyableQuantity: "2", Store: "store", AFNFulfillableQuantityRaw: "3"}}, "sha", "doc")
+	if err == nil || !strings.Contains(err.Error(), "nil database") {
+		t.Fatalf("error = %v, want 24-column placeholder validation to pass before nil database", err)
+	}
+}
+
 func TestSaveFulfilledShipmentsAcceptsOfficialFortyEightColumnRow(t *testing.T) {
 	store := &DBReportStore{}
 	err := store.SaveFulfilledShipments(context.Background(), 1, []reportexport.FulfilledShipment{{Values: make([]string, 48)}}, "sha", "doc")

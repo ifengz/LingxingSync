@@ -374,7 +374,7 @@ func formalReportSchemaRequirements(reportType string) map[string][]string {
 			"afn-listing-exists", "afn-warehouse-quantity", "afn-fulfillable-quantity", "afn-unsellable-quantity", "afn-reserved-quantity",
 			"afn-total-quantity", "per-unit-volume", "afn-inbound-working-quantity", "afn-inbound-shipped-quantity",
 			"afn-inbound-receiving-quantity", "afn-researching-quantity", "afn-reserved-future-supply", "afn-future-supply-buyable",
-			"afn-fulfillable-quantity-local", "afn-fulfillable-quantity-remote",
+			"afn-fc-transfer-quantity", "afn-onhand-buyable-quantity", "store", "afn-fulfillable-quantity-local", "afn-fulfillable-quantity-remote",
 		}...)
 	case reportexport.FBAAllInventoryReportType:
 		requirements["ls_fba_myi_all_inventory"] = append([]string{
@@ -384,7 +384,7 @@ func formalReportSchemaRequirements(reportType string) map[string][]string {
 			"afn-listing-exists", "afn-warehouse-quantity", "afn-fulfillable-quantity", "afn-unsellable-quantity", "afn-reserved-quantity",
 			"afn-total-quantity", "per-unit-volume", "afn-inbound-working-quantity", "afn-inbound-shipped-quantity",
 			"afn-inbound-receiving-quantity", "afn-researching-quantity", "afn-reserved-future-supply", "afn-future-supply-buyable",
-			"afn-fulfillable-quantity-local", "afn-fulfillable-quantity-remote",
+			"afn-fc-transfer-quantity", "afn-onhand-buyable-quantity", "store", "afn-fulfillable-quantity-local", "afn-fulfillable-quantity-remote",
 		}...)
 	case reportexport.ReservedInventoryReportType:
 		requirements["ls_fba_reserved_inventory"] = append([]string{

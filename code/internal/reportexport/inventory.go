@@ -24,6 +24,8 @@ var fbaInventoryHeader = []string{
 
 var fbaInventoryEUHeader = append(append([]string(nil), fbaInventoryHeader...), "afn-fulfillable-quantity-local", "afn-fulfillable-quantity-remote")
 
+var fbaInventoryProductionHeader = append(append([]string(nil), fbaInventoryHeader...), "afn-fc-transfer-quantity", "afn-onhand-buyable-quantity", "store")
+
 var reservedInventoryHeader = []string{
 	"sku", "fnsku", "asin", "product-name", "reserved_qty", "reserved_customerorders", "reserved_fc-transfers", "reserved_fc-processing",
 }
@@ -71,6 +73,9 @@ type FBAInventory struct {
 	AFNFutureSupplyBuyable       string
 	AFNFulfillableQuantityLocal  string
 	AFNFulfillableQuantityRemote string
+	AFNFCTransferQuantity        string
+	AFNOnhandBuyableQuantity     string
+	Store                        string
 }
 
 // FBAAllInventory has the same official 21-column contract as the active MYI
@@ -107,7 +112,7 @@ type AFNInventory struct {
 }
 
 func ParseFBAInventory(downloaded []byte, compressionAlgorithm, contentType string) ([]FBAInventory, error) {
-	records, header, err := readExactTSVVariants(downloaded, compressionAlgorithm, contentType, "FBA inventory", [][]string{fbaInventoryHeader, fbaInventoryEUHeader})
+	records, header, err := readExactTSVVariants(downloaded, compressionAlgorithm, contentType, "FBA inventory", [][]string{fbaInventoryHeader, fbaInventoryEUHeader, fbaInventoryProductionHeader})
 	if err != nil {
 		return nil, err
 	}
@@ -117,7 +122,7 @@ func ParseFBAInventory(downloaded []byte, compressionAlgorithm, contentType stri
 		if err != nil {
 			return nil, err
 		}
-		rows = append(rows, FBAInventory{
+		row := FBAInventory{
 			SKU: record[0], FNSKU: record[1], ASIN: record[2], ProductName: record[3], Condition: record[4], YourPrice: record[5], MFNListingExists: record[6],
 			MFNFulfillableQuantity: quantities[7], MFNFulfillableQuantityRaw: record[7], AFNListingExists: record[8],
 			AFNWarehouseQuantity: quantities[9], AFNWarehouseQuantityRaw: record[9], AFNFulfillableQuantity: quantities[10], AFNFulfillableQuantityRaw: record[10],
@@ -126,8 +131,17 @@ func ParseFBAInventory(downloaded []byte, compressionAlgorithm, contentType stri
 			AFNInboundWorkingQuantity: quantities[15], AFNInboundWorkingRaw: record[15], AFNInboundShippedQuantity: quantities[16], AFNInboundShippedRaw: record[16],
 			AFNInboundReceivingQuantity: quantities[17], AFNInboundReceivingRaw: record[17], AFNResearchingQuantity: quantities[18], AFNResearchingQuantityRaw: record[18],
 			AFNReservedFutureSupply: quantities[19], AFNReservedFutureSupplyRaw: record[19], AFNFutureSupplyBuyable: record[20],
-			AFNFulfillableQuantityLocal: optionalRecordValue(record, header, 21), AFNFulfillableQuantityRemote: optionalRecordValue(record, header, 22),
-		})
+		}
+		switch len(header) {
+		case len(fbaInventoryEUHeader):
+			row.AFNFulfillableQuantityLocal = record[21]
+			row.AFNFulfillableQuantityRemote = record[22]
+		case len(fbaInventoryProductionHeader):
+			row.AFNFCTransferQuantity = record[21]
+			row.AFNOnhandBuyableQuantity = record[22]
+			row.Store = record[23]
+		}
+		rows = append(rows, row)
 	}
 	return rows, nil
 }
@@ -300,7 +314,7 @@ func parseIntegerColumns(name string, line int, record []string, columns ...int)
 func recordHeader(name string, column int) string {
 	switch name {
 	case "FBA inventory":
-		return fbaInventoryHeader[column]
+		return fbaInventoryProductionHeader[column]
 	case "reserved inventory":
 		return reservedInventoryHeader[column]
 	case "replacement":

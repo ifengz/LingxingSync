@@ -125,6 +125,25 @@ func TestReservedInventorySchemaRequiresFCTransfers(t *testing.T) {
 	}
 }
 
+func TestMYISchemaRequiresProductionTwentyFourColumns(t *testing.T) {
+	for _, reportType := range []string{reportexport.FBAInventoryReportType, reportexport.FBAAllInventoryReportType} {
+		requirements := formalReportSchemaRequirements(reportType)
+		table := "ls_fba_myi_unsuppressed_inventory"
+		if reportType == reportexport.FBAAllInventoryReportType {
+			table = "ls_fba_myi_all_inventory"
+		}
+		columns := requirements[table]
+		for _, want := range []string{"afn-fc-transfer-quantity", "afn-onhand-buyable-quantity", "store"} {
+			if !slices.Contains(columns, want) {
+				t.Fatalf("%s schema missing %q: %#v", reportType, want, columns)
+			}
+		}
+		if !reportRequiresDailyProjection(reportType) {
+			t.Fatalf("%s must retain its existing daily projection", reportType)
+		}
+	}
+}
+
 func TestShipmentReplacementsIsRawOnlyWithoutDailyProjection(t *testing.T) {
 	if reportRequiresDailyProjection(reportexport.CustomerShipmentReplacementsReportType) {
 		t.Fatal("replacement report must not be mapped onto an unrelated daily metric")
