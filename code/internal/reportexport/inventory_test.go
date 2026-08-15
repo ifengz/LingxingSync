@@ -53,6 +53,17 @@ func TestParseInventoryRejectsWrongHeaderAndMalformedQuantity(t *testing.T) {
 	}
 }
 
+func TestParseInventoryAcceptsTrailingTabWithoutAddingAField(t *testing.T) {
+	data := "seller-sku\tfulfillment-channel-sku\tasin\tcondition-type\tWarehouse-Condition-code\tQuantity Available\t\nSKU-1\tFC-SKU-1\tASIN-1\tNew\tSELLABLE\t17\t\n"
+	rows, err := ParseAFNInventory([]byte(data), "", "")
+	if err != nil {
+		t.Fatalf("trailing tab should be ignored: %v", err)
+	}
+	if len(rows) != 1 || rows[0].QuantityAvailable != 17 {
+		t.Fatalf("rows = %#v", rows)
+	}
+}
+
 func TestInventoryReportTypesAreDistinct(t *testing.T) {
 	if FBAInventoryReportType == ReservedInventoryReportType || FBAInventoryReportType == AFNInventoryReportType || ReservedInventoryReportType == AFNInventoryReportType {
 		t.Fatal("inventory report types must remain distinct")

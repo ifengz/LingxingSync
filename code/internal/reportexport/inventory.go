@@ -159,11 +159,12 @@ func readExactTSV(downloaded []byte, compressionAlgorithm, contentType, name str
 	}
 	reader := csv.NewReader(bytes.NewReader(payload))
 	reader.Comma = '\t'
-	reader.FieldsPerRecord = len(header)
+	reader.FieldsPerRecord = -1
 	actual, err := reader.Read()
 	if err != nil {
 		return nil, fmt.Errorf("read %s TSV header: %w", name, err)
 	}
+	actual = trimTrailingEmptyField(actual, len(header))
 	if len(actual) != len(header) {
 		return nil, fmt.Errorf("%s TSV header has %d columns, want %d", name, len(actual), len(header))
 	}
@@ -181,8 +182,19 @@ func readExactTSV(downloaded []byte, compressionAlgorithm, contentType, name str
 		if err != nil {
 			return nil, fmt.Errorf("read %s TSV row %d: %w", name, line, err)
 		}
+		record = trimTrailingEmptyField(record, len(header))
+		if len(record) != len(header) {
+			return nil, fmt.Errorf("%s TSV row %d has %d columns, want %d", name, line, len(record), len(header))
+		}
 		rows = append(rows, record)
 	}
+}
+
+func trimTrailingEmptyField(record []string, expected int) []string {
+	if len(record) == expected+1 && record[len(record)-1] == "" {
+		return record[:expected]
+	}
+	return record
 }
 
 func parseIntegerColumns(name string, line int, record []string, columns ...int) (map[int]int64, error) {
