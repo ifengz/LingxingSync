@@ -75,6 +75,15 @@ func TestReservedInventoryReportIncludesFCTransfers(t *testing.T) {
 	}
 }
 
+func TestReservedInventoryReportOmitsFieldsAbsentFromProductionVariant(t *testing.T) {
+	value := int64(8)
+	rows := []Metric{{Values: Values{InventoryReserved: &value}}}
+	fields := reportFieldsPresent(inventoryReportFields("GET_RESERVED_INVENTORY_DATA"), rows)
+	if len(fields) != 1 || fields[0] != "inventory_reserved" {
+		t.Fatalf("fields = %#v", fields)
+	}
+}
+
 func TestVCInventoryIdentityDoesNotUseInventoryMSKU(t *testing.T) {
 	if strings.Contains(vcInventorySQL, "SELECT asin, msku") {
 		t.Fatalf("VC inventory must share ls_vc_listing identity, query=%s", vcInventorySQL)

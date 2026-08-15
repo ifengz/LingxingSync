@@ -44,6 +44,20 @@ func TestParseReservedInventoryRequiresExactOfficialHeader(t *testing.T) {
 	}
 }
 
+func TestParseReservedInventoryAcceptsProductionNineColumnHeader(t *testing.T) {
+	data := "sku\tfnsku\tasin\tproduct-name\treserved_qty\treserved_customerorders\treserved_fc-processing\treserved_staging\tprogram\nSKU-1\tFNSKU-1\tASIN-1\tWidget\t8\t2\t3\t1\tFBA\n"
+	rows, err := ParseReservedInventory([]byte(data), "", "")
+	if err != nil {
+		t.Fatalf("ParseReservedInventory returned error: %v", err)
+	}
+	if len(rows) != 1 || rows[0].ReservedStaging != 1 || rows[0].ReservedStagingRaw != "1" || rows[0].Program != "FBA" {
+		t.Fatalf("parsed production reserved row = %#v", rows)
+	}
+	if rows[0].ReservedFCTransfersRaw != "" {
+		t.Fatalf("production variant must not invent FC transfers: %#v", rows[0])
+	}
+}
+
 func TestParseAFNInventoryPreservesOfficialCaseAndSpaces(t *testing.T) {
 	data := "seller-sku\tfulfillment-channel-sku\tasin\tcondition-type\tWarehouse-Condition-code\tQuantity Available\nSKU-1\tFC-SKU-1\tASIN-1\tNew\tSELLABLE\t17\n"
 	rows, err := ParseAFNInventory([]byte(data), "", "")

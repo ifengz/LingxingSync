@@ -253,6 +253,9 @@ func BuildFromSQL(ctx context.Context, reader SourceReader, accountID, storeID, 
 		if err != nil {
 			return projection, nil, err
 		}
+		if isInventoryReportType(reportType) {
+			fields = reportFieldsPresent(fields, metricsFromRaw(reportRaw))
+		}
 		apiMetrics := metricsWithFields(metricsFromRaw(projection.Records), fields)
 		reportMetrics := metricsWithFields(metricsFromRaw(reportRaw), fields)
 		reconciliation, reconcileErr := ReconcileFields(apiMetrics, reportMetrics, fields)
@@ -293,6 +296,28 @@ func metricsWithFields(rows []Metric, fields []string) []Metric {
 		result = append(result, Metric{Key: row.Key, Scope: row.Scope, Values: values})
 	}
 	return result
+}
+
+func reportFieldsPresent(fields []string, rows []Metric) []string {
+	present := make([]string, 0, len(fields))
+	for _, field := range fields {
+		for _, row := range rows {
+			if valueFieldPresent(row.Values, field) {
+				present = append(present, field)
+				break
+			}
+		}
+	}
+	return present
+}
+
+func valueFieldPresent(values Values, field string) bool {
+	for _, known := range knownFields(values) {
+		if known == field {
+			return true
+		}
+	}
+	return false
 }
 
 func setMetricField(values *Values, field string, value any) {
@@ -1009,8 +1034,10 @@ func inventoryReportValues(reportType string, row struct {
 		if values.InventoryReservedCustomerOrders, err = integerValue(row.ReservedCustomerOrder); err != nil {
 			return Values{}, fmt.Errorf("reserved customer orders: %w", err)
 		}
-		if values.InventoryReservedFCTransfers, err = integerValue(row.ReservedFCTransfers); err != nil {
-			return Values{}, fmt.Errorf("reserved FC transfers: %w", err)
+		if row.ReservedFCTransfers.Valid {
+			if values.InventoryReservedFCTransfers, err = integerValue(row.ReservedFCTransfers); err != nil {
+				return Values{}, fmt.Errorf("reserved FC transfers: %w", err)
+			}
 		}
 		if values.InventoryReservedFCProcessing, err = integerValue(row.ReservedFCProcessing); err != nil {
 			return Values{}, fmt.Errorf("reserved FC processing: %w", err)

@@ -28,6 +28,10 @@ var reservedInventoryHeader = []string{
 	"sku", "fnsku", "asin", "product-name", "reserved_qty", "reserved_customerorders", "reserved_fc-transfers", "reserved_fc-processing",
 }
 
+var reservedInventoryProductionHeader = []string{
+	"sku", "fnsku", "asin", "product-name", "reserved_qty", "reserved_customerorders", "reserved_fc-processing", "reserved_staging", "program",
+}
+
 var afnInventoryHeader = []string{
 	"seller-sku", "fulfillment-channel-sku", "asin", "condition-type", "Warehouse-Condition-code", "Quantity Available",
 }
@@ -87,6 +91,9 @@ type ReservedInventory struct {
 	ReservedFCTransfersRaw    string
 	ReservedFCProcessing      int64
 	ReservedFCProcessingRaw   string
+	ReservedStaging           int64
+	ReservedStagingRaw        string
+	Program                   string
 }
 
 type AFNInventory struct {
@@ -138,21 +145,51 @@ func ParseFBAAllInventory(downloaded []byte, compressionAlgorithm, contentType s
 }
 
 func ParseReservedInventory(downloaded []byte, compressionAlgorithm, contentType string) ([]ReservedInventory, error) {
-	records, err := readExactTSV(downloaded, compressionAlgorithm, contentType, "reserved inventory", reservedInventoryHeader)
+	records, header, err := readExactTSVVariants(downloaded, compressionAlgorithm, contentType, "reserved inventory", [][]string{reservedInventoryHeader, reservedInventoryProductionHeader})
 	if err != nil {
 		return nil, err
 	}
+	index := make(map[string]int, len(header))
+	for i, name := range header {
+		index[name] = i
+	}
 	rows := make([]ReservedInventory, 0, len(records))
 	for i, record := range records {
-		quantities, err := parseIntegerColumns("reserved inventory", i+2, record, 4, 5, 6, 7)
+		quantityColumns := []int{index["reserved_qty"], index["reserved_customerorders"], index["reserved_fc-processing"]}
+		if transferIndex, ok := index["reserved_fc-transfers"]; ok {
+			quantityColumns = append(quantityColumns, transferIndex)
+		}
+		if stagingIndex, ok := index["reserved_staging"]; ok {
+			quantityColumns = append(quantityColumns, stagingIndex)
+		}
+		quantities, err := parseIntegerColumns("reserved inventory", i+2, record, quantityColumns...)
 		if err != nil {
 			return nil, err
 		}
+		reservedQty := quantities[index["reserved_qty"]]
+		reservedCustomerOrders := quantities[index["reserved_customerorders"]]
+		reservedProcessing := quantities[index["reserved_fc-processing"]]
+		reservedTransfers, reservedTransfersRaw := int64(0), ""
+		if transferIndex, ok := index["reserved_fc-transfers"]; ok {
+			reservedTransfers = quantities[transferIndex]
+			reservedTransfersRaw = record[transferIndex]
+		}
+		reservedStaging, reservedStagingRaw := int64(0), ""
+		if stagingIndex, ok := index["reserved_staging"]; ok {
+			reservedStaging = quantities[stagingIndex]
+			reservedStagingRaw = record[stagingIndex]
+		}
+		program := ""
+		if programIndex, ok := index["program"]; ok {
+			program = record[programIndex]
+		}
 		rows = append(rows, ReservedInventory{
-			SKU: record[0], FNSKU: record[1], ASIN: record[2], ProductName: record[3], ReservedQty: quantities[4], ReservedQtyRaw: record[4],
-			ReservedCustomerOrders: quantities[5], ReservedCustomerOrdersRaw: record[5],
-			ReservedFCTransfers: quantities[6], ReservedFCTransfersRaw: record[6],
-			ReservedFCProcessing: quantities[7], ReservedFCProcessingRaw: record[7],
+			SKU: record[0], FNSKU: record[1], ASIN: record[2], ProductName: record[3], ReservedQty: reservedQty, ReservedQtyRaw: record[index["reserved_qty"]],
+			ReservedCustomerOrders: reservedCustomerOrders, ReservedCustomerOrdersRaw: record[index["reserved_customerorders"]],
+			ReservedFCTransfers: reservedTransfers, ReservedFCTransfersRaw: reservedTransfersRaw,
+			ReservedFCProcessing: reservedProcessing, ReservedFCProcessingRaw: record[index["reserved_fc-processing"]],
+			ReservedStaging: reservedStaging, ReservedStagingRaw: reservedStagingRaw,
+			Program: program,
 		})
 	}
 	return rows, nil
