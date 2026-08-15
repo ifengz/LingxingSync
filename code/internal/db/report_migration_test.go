@@ -63,6 +63,24 @@ func TestReservedInventoryFCTransfersMigrationIsIdempotentAndNonDestructive(t *t
 	}
 }
 
+func TestCustomerShipmentReplacementsMigrationContractIsIndependent(t *testing.T) {
+	raw, err := os.ReadFile("../../migrations/042_add_fba_customer_shipment_replacements_report.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sql := strings.ToUpper(string(raw))
+	for _, want := range []string{"LS_FBA_FULFILLMENT_CUSTOMER_SHIPMENT_REPLACEMENTS", "REPLACEMENT-AMAZON-ORDER-ID", "ORIGINAL-AMAZON-ORDER-ID", "CREATE TABLE IF NOT EXISTS"} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("replacement migration missing %q", want)
+		}
+	}
+	for _, forbidden := range []string{"DROP TABLE", "DELETE FROM", "TRUNCATE"} {
+		if strings.Contains(sql, forbidden) {
+			t.Fatalf("replacement migration contains destructive %s", forbidden)
+		}
+	}
+}
+
 func TestCustomerReturnsReportMigrationIsRepeatableAgainstLocalMySQL(t *testing.T) {
 	dsn := os.Getenv("LINGXING_MIGRATION_TEST_DSN")
 	if dsn == "" {

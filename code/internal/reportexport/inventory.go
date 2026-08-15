@@ -266,6 +266,8 @@ func recordHeader(name string, column int) string {
 		return fbaInventoryHeader[column]
 	case "reserved inventory":
 		return reservedInventoryHeader[column]
+	case "replacement":
+		return replacementHeader[column]
 	default:
 		return "quantity"
 	}

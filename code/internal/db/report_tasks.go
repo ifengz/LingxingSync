@@ -458,6 +458,47 @@ func (d *DBReportStore) SaveAFNInventory(ctx context.Context, id int64, rows []r
 	return nil
 }
 
+func (d *DBReportStore) SaveCustomerShipmentReplacements(ctx context.Context, id int64, rows []reportexport.CustomerShipmentReplacement, downloadSHA string, documentID string) error {
+	if err := d.ensure(); err != nil {
+		return err
+	}
+	tx, err := d.db.BeginTxx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("db report: begin replacements transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	meta, err := loadReportMeta(ctx, tx, id)
+	if err != nil {
+		return err
+	}
+	const insert = "INSERT INTO ls_fba_fulfillment_customer_shipment_replacements\n" +
+		"(account_id, seller_id, store_id, report_task_id, `row_number`, row_sha256, `shipment-date`, sku, asin, `fulfillment-center-id`, `original-fulfillment-center-id`, quantity, `replacement-reason-code`, `replacement-amazon-order-id`, `original-amazon-order-id`)\n" +
+		"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\n" +
+		"ON DUPLICATE KEY UPDATE row_sha256 = VALUES(row_sha256), `shipment-date` = VALUES(`shipment-date`), sku = VALUES(sku), asin = VALUES(asin), `fulfillment-center-id` = VALUES(`fulfillment-center-id`), `original-fulfillment-center-id` = VALUES(`original-fulfillment-center-id`), quantity = VALUES(quantity), `replacement-reason-code` = VALUES(`replacement-reason-code`), `replacement-amazon-order-id` = VALUES(`replacement-amazon-order-id`), `original-amazon-order-id` = VALUES(`original-amazon-order-id`)"
+	stmt, err := tx.PrepareContext(ctx, insert)
+	if err != nil {
+		return fmt.Errorf("db report: prepare replacements insert: %w", err)
+	}
+	defer stmt.Close()
+	for i, row := range rows {
+		quantity := row.QuantityRaw
+		if quantity == "" {
+			quantity = strconv.FormatInt(row.Quantity, 10)
+		}
+		values := []string{row.ShipmentDate, row.SKU, row.ASIN, row.FulfillmentCenterID, row.OriginalFulfillmentCenterID, quantity, row.ReplacementReasonCode, row.ReplacementAmazonOrderID, row.OriginalAmazonOrderID}
+		if err := execInventoryRow(ctx, stmt, meta, i+1, values); err != nil {
+			return fmt.Errorf("db report: insert replacement row %d: %w", i+1, err)
+		}
+	}
+	if err := finalizeReportTx(ctx, tx, id, documentID, downloadSHA, len(rows)); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("db report: commit replacements transaction: %w", err)
+	}
+	return nil
+}
+
 type reportMeta struct {
 	AccountID    string `db:"account_id"`
 	SellerID     string `db:"seller_id"`

@@ -127,8 +127,10 @@ func main() {
 		if err != nil {
 			log.Fatalf("[main] Amazon 正式报告导出失败 type=%s: %v", *reportType, err)
 		}
-		if err := projectFormalReport(context.Background(), listingdaily.SQLSourceReader{DB: dbx}, listingdaily.SQLStore{DB: dbx}, request, result, *reportType); err != nil {
-			log.Fatalf("[main] Amazon 正式报告日维纠正失败 type=%s: %v", *reportType, err)
+		if reportRequiresDailyProjection(*reportType) {
+			if err := projectFormalReport(context.Background(), listingdaily.SQLSourceReader{DB: dbx}, listingdaily.SQLStore{DB: dbx}, request, result, *reportType); err != nil {
+				log.Fatalf("[main] Amazon 正式报告日维纠正失败 type=%s: %v", *reportType, err)
+			}
 		}
 		log.Printf("[main] Amazon 正式报告完成：type=%s audit=%d task=%s document=%s rows=%d sha256=%s", *reportType, result.AuditID, result.ReportTaskID, result.ReportDocumentID, result.Rows, result.DownloadSHA256)
 		return
@@ -274,8 +276,10 @@ func customerReturnsRun(cfg *config.Config, clients *api.ClientRegistry, store r
 		if err != nil {
 			return result, err
 		}
-		if err := projectFormalReport(ctx, dailyReader, dailyStore, request, result, normalizedReportType(request)); err != nil {
-			return result, err
+		if reportRequiresDailyProjection(normalizedReportType(request)) {
+			if err := projectFormalReport(ctx, dailyReader, dailyStore, request, result, normalizedReportType(request)); err != nil {
+				return result, err
+			}
 		}
 		return result, nil
 	}
@@ -342,6 +346,10 @@ func formalReportSchemaRequirements(reportType string) map[string][]string {
 		requirements["ls_afn_inventory"] = append([]string{
 			"account_id", "seller_id", "store_id", "report_task_id", "row_number", "row_sha256",
 		}, []string{"seller-sku", "fulfillment-channel-sku", "asin", "condition-type", "Warehouse-Condition-code", "Quantity Available"}...)
+	case reportexport.CustomerShipmentReplacementsReportType:
+		requirements["ls_fba_fulfillment_customer_shipment_replacements"] = append([]string{
+			"account_id", "seller_id", "store_id", "report_task_id", "row_number", "row_sha256",
+		}, []string{"shipment-date", "sku", "asin", "fulfillment-center-id", "original-fulfillment-center-id", "quantity", "replacement-reason-code", "replacement-amazon-order-id", "original-amazon-order-id"}...)
 	default:
 		return nil
 	}
@@ -385,6 +393,10 @@ func normalizedReportType(request reportexport.Request) string {
 		return reportexport.CustomerReturnsReportType
 	}
 	return strings.TrimSpace(request.ReportType)
+}
+
+func reportRequiresDailyProjection(reportType string) bool {
+	return reportType != reportexport.CustomerShipmentReplacementsReportType
 }
 
 func projectDailyBatch(ctx context.Context, dailyReader listingdaily.SourceReader, dailyStore listingdaily.Store, accountID string, targets []worker.DailyProjectionTarget, today time.Time) error {

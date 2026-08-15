@@ -125,6 +125,12 @@ func TestReservedInventorySchemaRequiresFCTransfers(t *testing.T) {
 	}
 }
 
+func TestShipmentReplacementsIsRawOnlyWithoutDailyProjection(t *testing.T) {
+	if reportRequiresDailyProjection(reportexport.CustomerShipmentReplacementsReportType) {
+		t.Fatal("replacement report must not be mapped onto an unrelated daily metric")
+	}
+}
+
 func TestValidateFormalReportSchemaRejectsUnsupportedType(t *testing.T) {
 	err := validateFormalReportSchema("GET_UNSUPPORTED_REPORT", func(string) ([]string, error) {
 		t.Fatal("unsupported report type must fail before schema reads")

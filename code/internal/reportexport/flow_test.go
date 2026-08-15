@@ -72,16 +72,17 @@ func TestParseCustomerReturnsRejectsUnknownCompression(t *testing.T) {
 }
 
 type fakeStore struct {
-	nextID        int64
-	audits        []Audit
-	progress      []string
-	saved         int
-	savedFBA      int
-	savedFBAAll   int
-	savedReserved int
-	savedAFN      int
-	errors        int
-	markErrorErr  error
+	nextID            int64
+	audits            []Audit
+	progress          []string
+	saved             int
+	savedFBA          int
+	savedFBAAll       int
+	savedReserved     int
+	savedAFN          int
+	savedReplacements int
+	errors            int
+	markErrorErr      error
 }
 
 type countingLimiter struct{ waits int }
@@ -134,6 +135,10 @@ func (s *fakeStore) SaveAFNInventory(_ context.Context, _ int64, rows []AFNInven
 	s.savedAFN += len(rows)
 	return nil
 }
+func (s *fakeStore) SaveCustomerShipmentReplacements(_ context.Context, _ int64, rows []CustomerShipmentReplacement, _ string, _ string) error {
+	s.savedReplacements += len(rows)
+	return nil
+}
 func (s *fakeStore) MarkReportError(_ context.Context, _ int64, _ string, _ error) error {
 	s.errors++
 	return s.markErrorErr
@@ -179,10 +184,11 @@ func TestRunnerExportsCustomerShipmentSalesAndPersistsTypedRows(t *testing.T) {
 
 func TestRunnerPersistsEachInventoryReportThroughItsTypedStore(t *testing.T) {
 	fixtures := map[string][]byte{
-		FBAInventoryReportType:      []byte("sku\tfnsku\tasin\tproduct-name\tcondition\tyour-price\tmfn-listing-exists\tmfn-fulfillable-quantity\tafn-listing-exists\tafn-warehouse-quantity\tafn-fulfillable-quantity\tafn-unsellable-quantity\tafn-reserved-quantity\tafn-total-quantity\tper-unit-volume\tafn-inbound-working-quantity\tafn-inbound-shipped-quantity\tafn-inbound-receiving-quantity\tafn-researching-quantity\tafn-reserved-future-supply\tafn-future-supply-buyable\nSKU-1\tFNSKU-1\tASIN-1\tWidget\tNew\t12.50\tyes\t1\tyes\t2\t3\t4\t5\t14\t0.25\t6\t7\t8\t0\t1\tyes\n"),
-		FBAAllInventoryReportType:   []byte("sku\tfnsku\tasin\tproduct-name\tcondition\tyour-price\tmfn-listing-exists\tmfn-fulfillable-quantity\tafn-listing-exists\tafn-warehouse-quantity\tafn-fulfillable-quantity\tafn-unsellable-quantity\tafn-reserved-quantity\tafn-total-quantity\tper-unit-volume\tafn-inbound-working-quantity\tafn-inbound-shipped-quantity\tafn-inbound-receiving-quantity\tafn-researching-quantity\tafn-reserved-future-supply\tafn-future-supply-buyable\nSKU-1\tFNSKU-1\tASIN-1\tArchived Widget\tNew\t12.50\tyes\t1\tyes\t2\t3\t4\t5\t14\t0.25\t6\t7\t8\t0\t1\tyes\n"),
-		ReservedInventoryReportType: []byte("sku\tfnsku\tasin\tproduct-name\treserved_qty\treserved_customerorders\treserved_fc-transfers\treserved_fc-processing\t\nSKU-1\tFNSKU-1\tASIN-1\tWidget\t8\t2\t3\t3\t\n"),
-		AFNInventoryReportType:      []byte("seller-sku\tfulfillment-channel-sku\tasin\tcondition-type\tWarehouse-Condition-code\tQuantity Available\nSKU-1\tFC-SKU-1\tASIN-1\tNew\tSELLABLE\t17\n"),
+		FBAInventoryReportType:                 []byte("sku\tfnsku\tasin\tproduct-name\tcondition\tyour-price\tmfn-listing-exists\tmfn-fulfillable-quantity\tafn-listing-exists\tafn-warehouse-quantity\tafn-fulfillable-quantity\tafn-unsellable-quantity\tafn-reserved-quantity\tafn-total-quantity\tper-unit-volume\tafn-inbound-working-quantity\tafn-inbound-shipped-quantity\tafn-inbound-receiving-quantity\tafn-researching-quantity\tafn-reserved-future-supply\tafn-future-supply-buyable\nSKU-1\tFNSKU-1\tASIN-1\tWidget\tNew\t12.50\tyes\t1\tyes\t2\t3\t4\t5\t14\t0.25\t6\t7\t8\t0\t1\tyes\n"),
+		FBAAllInventoryReportType:              []byte("sku\tfnsku\tasin\tproduct-name\tcondition\tyour-price\tmfn-listing-exists\tmfn-fulfillable-quantity\tafn-listing-exists\tafn-warehouse-quantity\tafn-fulfillable-quantity\tafn-unsellable-quantity\tafn-reserved-quantity\tafn-total-quantity\tper-unit-volume\tafn-inbound-working-quantity\tafn-inbound-shipped-quantity\tafn-inbound-receiving-quantity\tafn-researching-quantity\tafn-reserved-future-supply\tafn-future-supply-buyable\nSKU-1\tFNSKU-1\tASIN-1\tArchived Widget\tNew\t12.50\tyes\t1\tyes\t2\t3\t4\t5\t14\t0.25\t6\t7\t8\t0\t1\tyes\n"),
+		ReservedInventoryReportType:            []byte("sku\tfnsku\tasin\tproduct-name\treserved_qty\treserved_customerorders\treserved_fc-transfers\treserved_fc-processing\t\nSKU-1\tFNSKU-1\tASIN-1\tWidget\t8\t2\t3\t3\t\n"),
+		AFNInventoryReportType:                 []byte("seller-sku\tfulfillment-channel-sku\tasin\tcondition-type\tWarehouse-Condition-code\tQuantity Available\nSKU-1\tFC-SKU-1\tASIN-1\tNew\tSELLABLE\t17\n"),
+		CustomerShipmentReplacementsReportType: []byte("shipment-date\tsku\tasin\tfulfillment-center-id\toriginal-fulfillment-center-id\tquantity\treplacement-reason-code\treplacement-amazon-order-id\toriginal-amazon-order-id\n2026-08-11\tSKU-1\tASIN-1\tFC-1\tFC-2\t2\tDAMAGED\tORDER-2\tORDER-1\n"),
 	}
 	for reportType, body := range fixtures {
 		t.Run(reportType, func(t *testing.T) {
@@ -208,6 +214,10 @@ func TestRunnerPersistsEachInventoryReportThroughItsTypedStore(t *testing.T) {
 			case AFNInventoryReportType:
 				if store.savedAFN != 1 || store.savedFBA != 0 || store.savedReserved != 0 {
 					t.Fatalf("typed saves=%d/%d/%d", store.savedFBA, store.savedReserved, store.savedAFN)
+				}
+			case CustomerShipmentReplacementsReportType:
+				if store.savedReplacements != 1 {
+					t.Fatalf("replacement saves=%d", store.savedReplacements)
 				}
 			}
 		})
