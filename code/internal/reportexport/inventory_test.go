@@ -19,6 +19,20 @@ func TestParseFBAInventoryRequiresExactOfficialHeaderAndQuantities(t *testing.T)
 	}
 }
 
+func TestParseFBAInventoryAcceptsOfficialEUQuantityVariant(t *testing.T) {
+	data := strings.Join([]string{
+		strings.Join(fbaInventoryEUHeader, "\t"),
+		"SKU-1\tFNSKU-1\tASIN-1\tWidget\tNew\t12.50\tyes\t5\tyes\t2\t10\t1\t3\t14\t0.25\t4\t5\t6\t0\t1\tyes\t7\t3\t",
+	}, "\n") + "\n"
+	rows, err := ParseFBAInventory([]byte(data), "", "")
+	if err != nil {
+		t.Fatalf("EU quantity variant returned error: %v", err)
+	}
+	if len(rows) != 1 || rows[0].AFNFulfillableQuantityLocal != "7" || rows[0].AFNFulfillableQuantityRemote != "3" {
+		t.Fatalf("rows = %#v", rows)
+	}
+}
+
 func TestParseReservedInventoryRequiresExactOfficialHeader(t *testing.T) {
 	data := "sku\tfnsku\tasin\tproduct-name\treserved_qty\treserved_customerorders\treserved_fc-processing\nSKU-1\tFNSKU-1\tASIN-1\tWidget\t8\t2\t6\n"
 	rows, err := ParseReservedInventory([]byte(data), "", "")

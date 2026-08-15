@@ -22,6 +22,8 @@ var fbaInventoryHeader = []string{
 	"afn-inbound-receiving-quantity", "afn-researching-quantity", "afn-reserved-future-supply", "afn-future-supply-buyable",
 }
 
+var fbaInventoryEUHeader = append(append([]string(nil), fbaInventoryHeader...), "afn-fulfillable-quantity-local", "afn-fulfillable-quantity-remote")
+
 var reservedInventoryHeader = []string{
 	"sku", "fnsku", "asin", "product-name", "reserved_qty", "reserved_customerorders", "reserved_fc-processing",
 }
@@ -31,38 +33,40 @@ var afnInventoryHeader = []string{
 }
 
 type FBAInventory struct {
-	SKU                         string
-	FNSKU                       string
-	ASIN                        string
-	ProductName                 string
-	Condition                   string
-	YourPrice                   string
-	MFNListingExists            string
-	MFNFulfillableQuantity      int64
-	MFNFulfillableQuantityRaw   string
-	AFNListingExists            string
-	AFNWarehouseQuantity        int64
-	AFNWarehouseQuantityRaw     string
-	AFNFulfillableQuantity      int64
-	AFNFulfillableQuantityRaw   string
-	AFNUnsellableQuantity       int64
-	AFNUnsellableQuantityRaw    string
-	AFNReservedQuantity         int64
-	AFNReservedQuantityRaw      string
-	AFNTotalQuantity            int64
-	AFNTotalQuantityRaw         string
-	PerUnitVolume               string
-	AFNInboundWorkingQuantity   int64
-	AFNInboundWorkingRaw        string
-	AFNInboundShippedQuantity   int64
-	AFNInboundShippedRaw        string
-	AFNInboundReceivingQuantity int64
-	AFNInboundReceivingRaw      string
-	AFNResearchingQuantity      int64
-	AFNResearchingQuantityRaw   string
-	AFNReservedFutureSupply     int64
-	AFNReservedFutureSupplyRaw  string
-	AFNFutureSupplyBuyable      string
+	SKU                          string
+	FNSKU                        string
+	ASIN                         string
+	ProductName                  string
+	Condition                    string
+	YourPrice                    string
+	MFNListingExists             string
+	MFNFulfillableQuantity       int64
+	MFNFulfillableQuantityRaw    string
+	AFNListingExists             string
+	AFNWarehouseQuantity         int64
+	AFNWarehouseQuantityRaw      string
+	AFNFulfillableQuantity       int64
+	AFNFulfillableQuantityRaw    string
+	AFNUnsellableQuantity        int64
+	AFNUnsellableQuantityRaw     string
+	AFNReservedQuantity          int64
+	AFNReservedQuantityRaw       string
+	AFNTotalQuantity             int64
+	AFNTotalQuantityRaw          string
+	PerUnitVolume                string
+	AFNInboundWorkingQuantity    int64
+	AFNInboundWorkingRaw         string
+	AFNInboundShippedQuantity    int64
+	AFNInboundShippedRaw         string
+	AFNInboundReceivingQuantity  int64
+	AFNInboundReceivingRaw       string
+	AFNResearchingQuantity       int64
+	AFNResearchingQuantityRaw    string
+	AFNReservedFutureSupply      int64
+	AFNReservedFutureSupplyRaw   string
+	AFNFutureSupplyBuyable       string
+	AFNFulfillableQuantityLocal  string
+	AFNFulfillableQuantityRemote string
 }
 
 // FBAAllInventory has the same official 21-column contract as the active MYI
@@ -94,7 +98,7 @@ type AFNInventory struct {
 }
 
 func ParseFBAInventory(downloaded []byte, compressionAlgorithm, contentType string) ([]FBAInventory, error) {
-	records, err := readExactTSV(downloaded, compressionAlgorithm, contentType, "FBA inventory", fbaInventoryHeader)
+	records, header, err := readExactTSVVariants(downloaded, compressionAlgorithm, contentType, "FBA inventory", [][]string{fbaInventoryHeader, fbaInventoryEUHeader})
 	if err != nil {
 		return nil, err
 	}
@@ -113,6 +117,7 @@ func ParseFBAInventory(downloaded []byte, compressionAlgorithm, contentType stri
 			AFNInboundWorkingQuantity: quantities[15], AFNInboundWorkingRaw: record[15], AFNInboundShippedQuantity: quantities[16], AFNInboundShippedRaw: record[16],
 			AFNInboundReceivingQuantity: quantities[17], AFNInboundReceivingRaw: record[17], AFNResearchingQuantity: quantities[18], AFNResearchingQuantityRaw: record[18],
 			AFNReservedFutureSupply: quantities[19], AFNReservedFutureSupplyRaw: record[19], AFNFutureSupplyBuyable: record[20],
+			AFNFulfillableQuantityLocal: optionalRecordValue(record, header, 21), AFNFulfillableQuantityRemote: optionalRecordValue(record, header, 22),
 		})
 	}
 	return rows, nil
@@ -167,45 +172,70 @@ func ParseAFNInventory(downloaded []byte, compressionAlgorithm, contentType stri
 }
 
 func readExactTSV(downloaded []byte, compressionAlgorithm, contentType, name string, header []string) ([][]string, error) {
+	records, _, err := readExactTSVVariants(downloaded, compressionAlgorithm, contentType, name, [][]string{header})
+	return records, err
+}
+
+func readExactTSVVariants(downloaded []byte, compressionAlgorithm, contentType, name string, headers [][]string) ([][]string, []string, error) {
 	payload, err := decompress(downloaded, compressionAlgorithm)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	payload, err = decodeReportText(payload, contentType)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	reader := csv.NewReader(bytes.NewReader(payload))
 	reader.Comma = '\t'
 	reader.FieldsPerRecord = -1
 	actual, err := reader.Read()
 	if err != nil {
-		return nil, fmt.Errorf("read %s TSV header: %w", name, err)
+		return nil, nil, fmt.Errorf("read %s TSV header: %w", name, err)
 	}
-	actual = trimTrailingEmptyField(actual, len(header))
-	if len(actual) != len(header) {
-		return nil, fmt.Errorf("%s TSV header has %d columns, want %d", name, len(actual), len(header))
-	}
-	for i, want := range header {
-		if actual[i] != want {
-			return nil, fmt.Errorf("%s TSV header column %d = %q, want %q", name, i+1, actual[i], want)
+	var matched []string
+	for _, candidate := range headers {
+		candidateActual := trimTrailingEmptyField(actual, len(candidate))
+		if len(candidateActual) != len(candidate) {
+			continue
 		}
+		matches := true
+		for i, want := range candidate {
+			if candidateActual[i] != want {
+				matches = false
+				break
+			}
+		}
+		if matches {
+			matched = candidate
+			actual = candidateActual
+			break
+		}
+	}
+	if matched == nil {
+		return nil, nil, fmt.Errorf("%s TSV header has %d columns, want one of %d or %d", name, len(actual), len(headers[0]), len(headers[len(headers)-1]))
 	}
 	rows := make([][]string, 0)
 	for line := 2; ; line++ {
 		record, err := reader.Read()
 		if err == io.EOF {
-			return rows, nil
+			return rows, matched, nil
 		}
 		if err != nil {
-			return nil, fmt.Errorf("read %s TSV row %d: %w", name, line, err)
+			return nil, nil, fmt.Errorf("read %s TSV row %d: %w", name, line, err)
 		}
-		record = trimTrailingEmptyField(record, len(header))
-		if len(record) != len(header) {
-			return nil, fmt.Errorf("%s TSV row %d has %d columns, want %d", name, line, len(record), len(header))
+		record = trimTrailingEmptyField(record, len(matched))
+		if len(record) != len(matched) {
+			return nil, nil, fmt.Errorf("%s TSV row %d has %d columns, want %d", name, line, len(record), len(matched))
 		}
 		rows = append(rows, record)
 	}
+}
+
+func optionalRecordValue(record []string, header []string, index int) string {
+	if index >= len(header) || index >= len(record) {
+		return ""
+	}
+	return record[index]
 }
 
 func trimTrailingEmptyField(record []string, expected int) []string {
