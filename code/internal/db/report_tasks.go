@@ -514,7 +514,7 @@ func (d *DBReportStore) SaveFBAReimbursements(ctx context.Context, id int64, row
 	}
 	const insert = "INSERT INTO ls_fba_reimbursements\n" +
 		"(account_id, seller_id, store_id, report_task_id, `row_number`, row_sha256, `approval-date`, `reimbursement-id`, `case-id`, `amazon-order-id`, reason, sku, fnsku, asin, `product-name`, `condition`, `currency-unit`, `amount-per-unit`, `amount-total`, `quantity-reimbursed-cash`, `quantity-reimbursed-inventory`, `quantity-reimbursed-total`, `original-reimbursement-id`, `original-reimbursement-type`)\n" +
-		"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\n" +
+		"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\n" +
 		"ON DUPLICATE KEY UPDATE row_sha256 = VALUES(row_sha256), `approval-date` = VALUES(`approval-date`), `reimbursement-id` = VALUES(`reimbursement-id`), `case-id` = VALUES(`case-id`), `amazon-order-id` = VALUES(`amazon-order-id`), reason = VALUES(reason), sku = VALUES(sku), fnsku = VALUES(fnsku), asin = VALUES(asin), `product-name` = VALUES(`product-name`), `condition` = VALUES(`condition`), `currency-unit` = VALUES(`currency-unit`), `amount-per-unit` = VALUES(`amount-per-unit`), `amount-total` = VALUES(`amount-total`), `quantity-reimbursed-cash` = VALUES(`quantity-reimbursed-cash`), `quantity-reimbursed-inventory` = VALUES(`quantity-reimbursed-inventory`), `quantity-reimbursed-total` = VALUES(`quantity-reimbursed-total`), `original-reimbursement-id` = VALUES(`original-reimbursement-id`), `original-reimbursement-type` = VALUES(`original-reimbursement-type`)"
 	stmt, err := tx.PrepareContext(ctx, insert)
 	if err != nil {
