@@ -97,3 +97,34 @@
 - **meltano/singer-sdk**:https://github.com/meltano/sdk —— Stream 基类的 state/bookmark 断点续传、partition 级失败隔离。
 
 ⚠️ 这两个都是**重量级运行时框架**,只借鉴设计思想(`cursor_field` / `lookback_window` / 429 指数退避 / partition state),**不引入代码**——会违反本项目的轻量红线。
+
+## 7. 2026-08 官方增量与报告导出交叉核对
+
+Amazon 源报表还有生成频率边界：日报通常不超过每 4 小时生成一次，近实时报告不超过每 30 分钟生成一次。因此“正式报表自动下载”不能等同于每次调度都创建任务；同一店铺/报表/范围需要任务状态与最小间隔控制，失败时保留审计，不静默重复轰炸上游。
+
+官方文档的结论必须按接口拆开，不能抽象成一个全局 `modified_since`：
+
+| 数据 | 官方时间参数 | 同步策略 |
+|---|---|---|
+| Amazon 订单 | `date_type=2` 订单修改时间；`date_type=3` 平台更新时间 | 更新时间窗口增量 |
+| Listing | `pair_update_*` 或 `listing_update_*` | 配对/Listing 更新时间增量 |
+| FBA 退货 | `date_type=2` 更新时间 | 更新时间窗口增量 |
+| VC PO | `search_field_time=3` 订单更新时间 | 更新时间窗口增量 |
+| SC 日销量 | 单日 `event_date` | 重拉日期窗口 |
+| 产品表现 | `start_date/end_date`，最多 92 天 | 按天请求形成日维 |
+| SP/SD/HSA | 单日 `report_date`；活动级返回没有 ASIN/SKU | SP/SD 商品级按 ASIN 聚合；HSA/SB 保留店铺级，不能伪造 ASIN |
+| Review/Feedback | `reviewDetail` / `feedbackDetail` 按日期查询 | 可形成新增量日维；不能把区间总量当每日新增 |
+| VC 销量/流量/库存 | `startDate/endDate` 业务日期 | 重拉日期窗口 |
+
+库存不能统一理解为一个数值。领星官方已注明旧 [`dailyInventory`](https://apidoc.lingxing.com/docs/SourceData/DailyInventory.md) 在 2023-12-01 后停更；SC 当前库存只能在 Sync 运行当天沉淀为快照，历史库存可另用官方 [`summaryQuery`](https://apidoc.lingxing.com/docs/Finance/summaryQuery.md) 或正式 Amazon Inventory Ledger 报表核对。VC [`inventory/list`](https://apidoc.lingxing.com/docs/Statistics/vcInventoryList.md) 本身返回 `date`、可售、不可售、90 天以上、unhealthy、收货满足率、售罄率、供应商确认率、平均交付周期及成本币种，可直接进入日维事实字段。
+
+公开 SDK 仅作旁证，不能替代官方合同：
+
+- [AresJef/LingXingApi 销售参数](https://github.com/AresJef/LingXingApi/blob/f9aa683f8cd7f63f2b448b32e7dac1a867fc7e82/src/lingxingapi/sales/param.py) 同时列出订单 `date_type=2/3` 与 Listing `listing_update_*`。
+- [zach22-1999/lingxing-mcp 报告服务](https://github.com/zach22-1999/lingxing-mcp/blob/09372d54a71306124f20aae3f296db42e71c419b/lib/lingxing_openapi/services.py) 已实现报告创建、查询、续期和下载四个动作。
+- [SongKehao/lingxing-sdk 报告接口](https://github.com/SongKehao/lingxing-sdk/blob/7db7d8472a6f303037bb13dbee103067c3516940/src/lingxing/endpoints/statistics.py) 交叉实现同一组三个 OpenAPI 路径。
+- [Gemma-Analytics/ewah 的 FBA 退货配置](https://github.com/Gemma-Analytics/ewah/blob/0882d17d60a623ef526470efb207296ebb7822a7/ewah/hooks/amazon_seller_central.py) 明确该报告没有稳定业务主键，只能按报告任务与行号保留原始行，不能臆造 `return_date+order_id+sku` 唯一键。
+
+最终准绳仍是领星官方文档：[订单](https://apidoc.lingxing.com/docs/Sale/Orderlists.md)、[Listing](https://apidoc.lingxing.com/docs/Sale/Listing.md)、[退货](https://apidoc.lingxing.com/docs/SourceData/RefundOrders.md)、[销量日报](https://apidoc.lingxing.com/docs/Statistics/AsinDailyLists.md)、[产品表现](https://apidoc.lingxing.com/docs/Statistics/AsinListNew.md)、[SP 活动报表](https://apidoc.lingxing.com/docs/newAd/report/spCampaignReports)、[SP 商品报表](https://apidoc.lingxing.com/docs/newAd/report/spProductAdReports)、[SB/HSA 活动报表](https://apidoc.lingxing.com/docs/newAd/report/hsaCampaignReports)、[SD 活动报表](https://apidoc.lingxing.com/docs/newAd/report/sdCampaignReports)、[VC 销量](https://apidoc.lingxing.com/docs/Statistics/vcSalesList)、[VC 库存](https://apidoc.lingxing.com/docs/Statistics/vcInventoryList)、[报告创建](https://apidoc.lingxing.com/docs/Statistics/reportCreateReportExportTask.md)、[报告查询](https://apidoc.lingxing.com/docs/Statistics/reportQueryReportExportTask.md)、[链接续期](https://apidoc.lingxing.com/docs/Statistics/AmazonReportExportTask.md)。
+
+领星帮助中心还区分了网页下载能力：[跨站点广告下载](https://www.lingxing.com/help/article/downloadCenter) 是创建任务后由网页生成 Excel；[下载中心自动生成报告](https://www.lingxing.com/help/article/DownloadCenter1) 当前明确写的是利润报表。两者都不能当作通用第三方 API 合同，Sync 只接入上面的正式 OpenAPI 报告导出链路。
