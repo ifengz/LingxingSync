@@ -390,9 +390,9 @@ func reportTaskUIStatus(status string) string {
 	switch strings.ToUpper(strings.TrimSpace(status)) {
 	case "SUCCESS":
 		return "success"
-	case "ERROR", "FATAL", "CANCELLED", "UNKNOWN":
+	case "ERROR", "FATAL", "CANCELLED":
 		return "error"
-	case "IN_PROGRESS", "DONE":
+	case "IN_PROGRESS", "DONE", "UNKNOWN":
 		return "running"
 	default:
 		return "pending"

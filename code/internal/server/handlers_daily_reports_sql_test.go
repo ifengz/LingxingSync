@@ -24,8 +24,8 @@ func TestDailyPreviewSQLIsFixedAndParameterised(t *testing.T) {
 func TestReportTaskUIStatusDoesNotTreatDoneAsImported(t *testing.T) {
 	for raw, want := range map[string]string{
 		"PENDING": "pending", "CREATING": "pending", "IN_QUEUE": "pending",
-		"IN_PROGRESS": "running", "DONE": "running", "SUCCESS": "success",
-		"ERROR": "error", "FATAL": "error", "CANCELLED": "error", "UNKNOWN": "error",
+		"IN_PROGRESS": "running", "DONE": "running", "UNKNOWN": "running", "SUCCESS": "success",
+		"ERROR": "error", "FATAL": "error", "CANCELLED": "error",
 	} {
 		if got := reportTaskUIStatus(raw); got != want {
 			t.Fatalf("reportTaskUIStatus(%q)=%q, want %q", raw, got, want)
