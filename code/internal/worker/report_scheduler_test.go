@@ -219,3 +219,136 @@ func TestCustomerReturnsRunnerFailureIsLoggedByItsJob(t *testing.T) {
 		t.Fatalf("runner failure log = %q", output.String())
 	}
 }
+
+func TestReportCronSkipsOverlappingRun(t *testing.T) {
+	report := config.ReportExport{
+		Type: config.ReportExportCustomerReturns, Enabled: true, Cron: "@every 1h", Account: "sc_us", SellerID: "SELLER-1", StoreID: "STORE-1",
+		Region: "na", MarketplaceIDs: []string{"ATVPDKIKX0DER"}, WindowDays: 1,
+	}
+	started := make(chan struct{}, 2)
+	release := make(chan struct{})
+	released := false
+	t.Cleanup(func() {
+		if !released {
+			close(release)
+		}
+	})
+	s := NewScheduler(&config.Config{ReportExports: []config.ReportExport{report}}, NewRegistry(), nil, nil)
+	s.ctx = context.Background()
+	s.customerReturnsRun = func(context.Context, reportexport.Request) (reportexport.Result, error) {
+		started <- struct{}{}
+		<-release
+		return reportexport.Result{Status: "SUCCESS"}, nil
+	}
+	if err := s.registerReportJobsLocked(s.cfg); err != nil {
+		t.Fatal(err)
+	}
+	var job cron.Job
+	for entryID := range s.reportEntries {
+		job = s.cron.Entry(entryID).WrappedJob
+	}
+	if job == nil {
+		t.Fatal("report cron job was not registered")
+	}
+	firstDone := make(chan struct{})
+	go func() {
+		job.Run()
+		close(firstDone)
+	}()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("first report cron invocation did not start")
+	}
+	secondDone := make(chan struct{})
+	go func() {
+		job.Run()
+		close(secondDone)
+	}()
+	select {
+	case <-secondDone:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("overlapping report cron invocation was not skipped")
+	}
+	select {
+	case <-started:
+		t.Fatal("overlapping report cron invocation reached runner")
+	default:
+	}
+	if err := s.Rebuild(&config.Config{ReportExports: []config.ReportExport{report}}); err != nil {
+		t.Fatal(err)
+	}
+	var rebuiltJob cron.Job
+	for entryID := range s.reportEntries {
+		rebuiltJob = s.cron.Entry(entryID).WrappedJob
+	}
+	if rebuiltJob == nil {
+		t.Fatal("rebuilt report cron job was not registered")
+	}
+	rebuiltDone := make(chan struct{})
+	go func() {
+		rebuiltJob.Run()
+		close(rebuiltDone)
+	}()
+	select {
+	case <-rebuiltDone:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("rebuilt report cron invocation was not skipped")
+	}
+	select {
+	case <-started:
+		t.Fatal("rebuilt report cron invocation reached runner")
+	default:
+	}
+	close(release)
+	released = true
+	select {
+	case <-firstDone:
+	case <-time.After(time.Second):
+		t.Fatal("first report cron invocation did not finish")
+	}
+	thirdDone := make(chan struct{})
+	go func() {
+		rebuiltJob.Run()
+		close(thirdDone)
+	}()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("report cron did not resume after the first invocation completed")
+	}
+	select {
+	case <-thirdDone:
+	case <-time.After(time.Second):
+		t.Fatal("resumed report cron invocation did not finish")
+	}
+}
+
+func TestReportCronCanRunAgainAfterRunnerPanic(t *testing.T) {
+	report := config.ReportExport{
+		Type: config.ReportExportCustomerReturns, Enabled: true, Cron: "@every 1h", Account: "sc_us", SellerID: "SELLER-1", StoreID: "STORE-1",
+		Region: "na", MarketplaceIDs: []string{"ATVPDKIKX0DER"}, WindowDays: 1,
+	}
+	s := NewScheduler(&config.Config{ReportExports: []config.ReportExport{report}}, NewRegistry(), nil, nil)
+	s.cron = cron.New(cron.WithChain(cron.Recover(cron.DiscardLogger)))
+	s.ctx = context.Background()
+	calls := 0
+	s.customerReturnsRun = func(context.Context, reportexport.Request) (reportexport.Result, error) {
+		calls++
+		if calls == 1 {
+			panic("report runner panic")
+		}
+		return reportexport.Result{Status: "SUCCESS"}, nil
+	}
+	if err := s.registerReportJobsLocked(s.cfg); err != nil {
+		t.Fatal(err)
+	}
+	for entryID := range s.reportEntries {
+		job := s.cron.Entry(entryID).WrappedJob
+		job.Run()
+		job.Run()
+	}
+	if calls != 2 {
+		t.Fatalf("report runner calls=%d, want 2 after panic recovery", calls)
+	}
+}

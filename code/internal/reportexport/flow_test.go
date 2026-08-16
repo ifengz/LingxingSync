@@ -525,6 +525,30 @@ func TestRunnerDefaultPollingBoundaryIsTwentyFourHours(t *testing.T) {
 	}
 }
 
+func TestRunnerUsesOneMinuteWhenPollIntervalIsUnconfigured(t *testing.T) {
+	queries := 0
+	runner := Runner{
+		Client: signedClientFunc(func(_ context.Context, _ string, path string, _ map[string]any) ([]byte, int, int, error) {
+			if path != queryPath {
+				return nil, 0, 0, fmt.Errorf("unexpected signed path %s", path)
+			}
+			queries++
+			return []byte(`{"code":0,"data":{"progress_status":"IN_PROGRESS"}}`), http.StatusOK, 0, nil
+		}),
+		Store:       &fakeStore{},
+		PollTimeout: time.Minute,
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+	defer cancel()
+	_, err := runner.waitForDone(ctx, Request{SellerID: "seller", Region: "na"}, 1, "task-1")
+	if err != context.DeadlineExceeded {
+		t.Fatalf("waitForDone error=%v, want context deadline", err)
+	}
+	if queries != 1 {
+		t.Fatalf("queries=%d before one minute default interval, want 1", queries)
+	}
+}
+
 type concurrentStore struct {
 	mu      sync.Mutex
 	audit   Audit

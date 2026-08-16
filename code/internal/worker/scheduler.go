@@ -49,6 +49,7 @@ type Scheduler struct {
 	entries           map[cron.EntryID]*EndpointWorker
 	connectionEntries map[cron.EntryID]struct{}
 	reportEntries     map[cron.EntryID]struct{}
+	reportRunGates    map[string]chan struct{}
 }
 
 // NewScheduler 构造调度器。不立即启动 cron。
@@ -71,6 +72,7 @@ func NewScheduler(cfg *config.Config, reg *Registry, dbx *sqlx.DB, connectionChe
 		entries:           make(map[cron.EntryID]*EndpointWorker),
 		connectionEntries: make(map[cron.EntryID]struct{}),
 		reportEntries:     make(map[cron.EntryID]struct{}),
+		reportRunGates:    make(map[string]chan struct{}),
 	}
 }
 
@@ -130,7 +132,7 @@ func (s *Scheduler) registerReportJobsLocked(cfg *config.Config) error {
 			return fmt.Errorf("启用了正式报表计划，但未注入执行器")
 		}
 		report := report
-		entryID, err := s.cron.AddFunc(report.Cron, func() {
+		job := cron.FuncJob(func() {
 			now := time.Now
 			if s.now != nil {
 				now = s.now
@@ -147,12 +149,44 @@ func (s *Scheduler) registerReportJobsLocked(cfg *config.Config) error {
 			}
 			log.Printf("[scheduler] 正式报表完成 type=%s account=%s store=%s audit=%d rows=%d", report.Type, report.Account, report.StoreID, result.AuditID, result.Rows)
 		})
+		gate := s.reportRunGate(report)
+		guardedJob := cron.FuncJob(func() {
+			select {
+			case token := <-gate:
+				defer func() { gate <- token }()
+				job.Run()
+			default:
+				cron.DefaultLogger.Info("skip")
+			}
+		})
+		entryID, err := s.cron.AddJob(report.Cron, cron.NewChain(cron.Recover(cron.DefaultLogger)).Then(guardedJob))
 		if err != nil {
 			return fmt.Errorf("注册正式报表 cron 失败 type=%s spec=%q: %w", report.Type, report.Cron, err)
 		}
 		s.reportEntries[entryID] = struct{}{}
 	}
 	return nil
+}
+
+func (s *Scheduler) reportRunGate(report config.ReportExport) chan struct{} {
+	if s.reportRunGates == nil {
+		s.reportRunGates = make(map[string]chan struct{})
+	}
+	key := reportexport.ActiveScopeKey(reportexport.Request{
+		ReportType:     report.Type,
+		AccountID:      report.Account,
+		SellerID:       report.SellerID,
+		StoreID:        report.StoreID,
+		Region:         report.Region,
+		MarketplaceIDs: report.MarketplaceIDs,
+	})
+	if gate := s.reportRunGates[key]; gate != nil {
+		return gate
+	}
+	gate := make(chan struct{}, 1)
+	gate <- struct{}{}
+	s.reportRunGates[key] = gate
+	return gate
 }
 
 func customerReturnsRequest(report config.ReportExport, now time.Time) (reportexport.Request, error) {

@@ -588,10 +588,7 @@ type reportStatus struct {
 }
 
 func (r *Runner) waitForDone(ctx context.Context, request Request, auditID int64, taskID string) (reportStatus, error) {
-	interval := r.PollInterval
-	if interval <= 0 {
-		interval = 5 * time.Second
-	}
+	interval := r.pollInterval()
 	timeout := r.PollTimeout
 	if timeout <= 0 {
 		timeout = defaultPollTimeout
@@ -637,6 +634,13 @@ func (r *Runner) waitForDone(ctx context.Context, request Request, auditID int64
 		case <-time.After(interval):
 		}
 	}
+}
+
+func (r Runner) pollInterval() time.Duration {
+	if r.PollInterval > 0 {
+		return r.PollInterval
+	}
+	return defaultPollInterval
 }
 
 func (r *Runner) download(ctx context.Context, request Request, data reportStatus) ([]byte, string, string, error) {
