@@ -1,19 +1,60 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"lingxing-sync/internal/config"
 	"lingxing-sync/internal/datasetapi"
 )
 
+type datasetExportFixtureReader struct {
+	queries []datasetapi.Query
+}
+
+func (r *datasetExportFixtureReader) Snapshot(_ context.Context, query datasetapi.Query) (datasetapi.Page, error) {
+	r.queries = append(r.queries, query)
+	return datasetapi.Page{Rows: []datasetapi.Row{{
+		Store: "12534", Channel: "SC", ASIN: "ASIN1", SKU: "SKU1", BusinessDate: "2026-08-14",
+		UpdatedAt: time.Date(2026, 8, 16, 3, 4, 5, 0, time.UTC), StableKey: "1|2026-08-14", VerificationStatus: "verified",
+		Values: map[string]any{"sales_units": int64(3)},
+	}}}, nil
+}
+
+func (datasetExportFixtureReader) Changes(context.Context, datasetapi.Query) (datasetapi.Page, error) {
+	return datasetapi.Page{}, nil
+}
+
 const datasetProjectsPath = "/api/datasources/datasets/listing-daily-v1/projects"
 const datasetFieldsCompletePath = "/api/datasources/datasets/listing-daily-v1/fields/complete"
 const datasetFieldsConfigPath = "/api/datasources/datasets/listing-daily-v1/fields/config"
+
+func TestExportDatasetCSVUsesRegisteredReaderAndDateRange(t *testing.T) {
+	cfg := validDatasetProjectTestConfig()
+	cfg.DatasetAPI.FieldAllowlist = []string{"sales_units"}
+	store := config.NewStore(t.TempDir()+"/config.yaml", cfg)
+	s := New(cfg, nil, nil, nil, "", Assets{FS: renderTestFS, TemplateFS: "testdata", StaticFS: "testdata"}, store, nil, nil, "")
+	definition, _ := datasetapi.DefinitionFor(datasetapi.DatasetID)
+	reader := &datasetExportFixtureReader{}
+	handler, err := datasetapi.New(datasetapi.Config{Definition: definition, FieldAllowlist: []string{"sales_units"}, CursorSecret: []byte("cursor-secret-for-tests")}, reader)
+	if err != nil {
+		t.Fatalf("new dataset handler: %v", err)
+	}
+	s.datasetAPIs[datasetapi.DatasetID] = handler
+	rec := httptest.NewRecorder()
+	s.Routes().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/datasources/datasets/listing-daily-v1/export?stores=12534,12536&date_from=2026-08-14&date_to=2026-08-14", nil))
+	if rec.Code != http.StatusOK || !strings.HasPrefix(rec.Header().Get("Content-Type"), "text/csv") || !strings.Contains(rec.Header().Get("Content-Disposition"), "listing-daily-v1_2026-08-14_2026-08-14.csv") || !strings.Contains(rec.Body.String(), "ASIN1") {
+		t.Fatalf("export status=%d headers=%v body=%q", rec.Code, rec.Header(), rec.Body.String())
+	}
+	if len(reader.queries) != 1 || strings.Join(reader.queries[0].Stores, ",") != "12534,12536" {
+		t.Fatalf("export stores=%+v, want [12534 12536]", reader.queries)
+	}
+}
 
 func TestSaveDatasetFieldAllowlistPersistsTableSelectionForAllProjects(t *testing.T) {
 	cfg := validDatasetProjectTestConfig()

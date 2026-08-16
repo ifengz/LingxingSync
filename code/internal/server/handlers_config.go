@@ -18,9 +18,11 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -52,6 +54,7 @@ func (s *Server) registerConfigRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/datasources/datasets/projects", s.apiCreateDatasetProjectToken)
 	mux.HandleFunc("POST /api/datasources/datasets/listing-daily-v1/fields/complete", s.apiCompleteDatasetFields)
 	mux.HandleFunc("GET /api/datasources/datasets/catalog", s.apiDatasetCatalog)
+	mux.HandleFunc("GET /api/datasources/datasets/{id}/export", s.apiExportDatasetCSV)
 	mux.HandleFunc("GET /api/datasources/datasets/{id}/fields/config", s.apiGetDatasetFieldAllowlist)
 	mux.HandleFunc("PUT /api/datasources/datasets/{id}/fields/config", s.apiSaveDatasetFieldAllowlist)
 	mux.HandleFunc("POST /api/settings/restart", s.apiRestart)
@@ -274,6 +277,58 @@ func (s *Server) apiDatasetCatalog(w http.ResponseWriter, _ *http.Request) {
 		})
 	}
 	okJSON(w, map[string]any{"datasets": items})
+}
+
+func (s *Server) apiExportDatasetCSV(w http.ResponseWriter, r *http.Request) {
+	datasetID := r.PathValue("id")
+	if _, ok := datasetapi.DefinitionFor(datasetID); !ok {
+		errJSON(w, http.StatusNotFound, "数据表不存在")
+		return
+	}
+	handler := s.datasetAPIs[datasetID]
+	if handler == nil {
+		errJSON(w, http.StatusServiceUnavailable, "数据表读取服务未初始化")
+		return
+	}
+	fields := make([]string, 0)
+	if raw := strings.TrimSpace(r.URL.Query().Get("fields")); raw != "" {
+		for _, field := range strings.Split(raw, ",") {
+			if field = strings.TrimSpace(field); field != "" {
+				fields = append(fields, field)
+			}
+		}
+	}
+	stores := make([]string, 0)
+	for _, raw := range strings.Split(r.URL.Query().Get("stores"), ",") {
+		if store := strings.TrimSpace(raw); store != "" {
+			stores = append(stores, store)
+		}
+	}
+	file, err := os.CreateTemp("", "lingxing-dataset-export-*.csv")
+	if err != nil {
+		errJSON(w, http.StatusInternalServerError, "创建导出文件失败")
+		return
+	}
+	defer os.Remove(file.Name())
+	defer file.Close()
+	count, err := handler.ExportCSV(r.Context(), datasetapi.Query{
+		Store: r.URL.Query().Get("store"), Stores: stores, DateFrom: r.URL.Query().Get("date_from"), DateTo: r.URL.Query().Get("date_to"), Fields: fields,
+	}, file)
+	if err != nil {
+		errJSON(w, http.StatusBadRequest, "导出失败: "+err.Error())
+		return
+	}
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		errJSON(w, http.StatusInternalServerError, "读取导出文件失败")
+		return
+	}
+	filename := datasetID + "_" + r.URL.Query().Get("date_from") + "_" + r.URL.Query().Get("date_to") + ".csv"
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
+	w.Header().Set("X-Exported-Rows", strconv.Itoa(count))
+	if _, err := io.Copy(w, file); err != nil {
+		log.Printf("[server] dataset CSV export write failed: %v", err)
+	}
 }
 
 func normalizeDatasetFieldAllowlist(values []string) ([]string, error) {

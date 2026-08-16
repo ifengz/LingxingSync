@@ -10,9 +10,11 @@ import (
 	"crypto/sha512"
 	"crypto/subtle"
 	"encoding/base64"
+	"encoding/csv"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"sort"
@@ -82,6 +84,7 @@ type Row struct {
 
 type Query struct {
 	Store    string
+	Stores   []string
 	DateFrom string
 	DateTo   string
 	Fields   []string
@@ -306,21 +309,25 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path == h.snapshotPath() {
 		query = Query{Store: in.Store, DateFrom: in.DateFrom, DateTo: in.DateTo, Fields: fields, PageSize: pageSize}
 		if in.Cursor != "" {
-			cursor, err := h.decodeCursor(in.Cursor, "snapshot", token.ID, in.Store, in.DateFrom, in.DateTo)
-			if err != nil {
-				writeError(w, cursorErrorStatus(err), err.Error())
+			cursor, cursorErr := h.decodeCursor(in.Cursor, "snapshot", token.ID, in.Store, in.DateFrom, in.DateTo)
+			if cursorErr != nil {
+				writeError(w, cursorErrorStatus(cursorErr), cursorErr.Error())
 				return
 			}
 			query.Cursor = &cursor.Key
 			snapshotWatermark = cursor.Watermark
 		} else {
-			snapshotWatermark = &CursorKey{UpdatedAt: time.Now().UTC(), StableKey: "0|1000-01-01"}
+			initialCursor := h.definition.InitialCursor
+			if initialCursor == "" {
+				initialCursor = "0|1000-01-01"
+			}
+			snapshotWatermark = &CursorKey{UpdatedAt: time.Now().UTC(), StableKey: initialCursor}
 		}
 		page, err = reader.Snapshot(r.Context(), query)
 	} else {
-		cursor, err := h.decodeCursor(in.Cursor, "changes", token.ID, in.Store, "", "")
-		if err != nil {
-			writeError(w, cursorErrorStatus(err), err.Error())
+		cursor, cursorErr := h.decodeCursor(in.Cursor, "changes", token.ID, in.Store, "", "")
+		if cursorErr != nil {
+			writeError(w, cursorErrorStatus(cursorErr), cursorErr.Error())
 			return
 		}
 		query = Query{Store: in.Store, Fields: fields, PageSize: pageSize, Cursor: &cursor.Key}
@@ -370,6 +377,125 @@ func (h *Handler) SetReader(reader Reader) {
 	h.mu.Lock()
 	h.reader = reader
 	h.mu.Unlock()
+}
+
+// ExportCSV writes one registered dataset in the requested business-date
+// range. It reuses the dataset reader and its keyset pagination, so export
+// never accepts user-provided SQL or loads the entire result into memory.
+func (h *Handler) ExportCSV(ctx context.Context, in Query, out io.Writer) (int, error) {
+	from, err := parseDate(in.DateFrom)
+	if err != nil {
+		return 0, errors.New("date_from must be YYYY-MM-DD")
+	}
+	to, err := parseDate(in.DateTo)
+	if err != nil {
+		return 0, errors.New("date_to must be YYYY-MM-DD")
+	}
+	if to.Before(from) || int(to.Sub(from).Hours()/24)+1 > h.cfg.MaxDateSpanDays {
+		return 0, errors.New("date range exceeds the allowed span")
+	}
+	h.mu.RLock()
+	reader := h.reader
+	available := make(map[string]struct{}, len(h.available))
+	for field := range h.available {
+		available[field] = struct{}{}
+	}
+	h.mu.RUnlock()
+	if reader == nil {
+		return 0, errors.New("dataset reader is not configured")
+	}
+	fields := in.Fields
+	if len(fields) == 0 {
+		fields = sortedKeys(available)
+	}
+	seen := make(map[string]struct{}, len(fields))
+	for _, field := range fields {
+		if _, ok := available[field]; !ok {
+			return 0, errors.New("requested field is not allowlisted")
+		}
+		if _, duplicate := seen[field]; duplicate {
+			return 0, errors.New("requested field is duplicated")
+		}
+		seen[field] = struct{}{}
+	}
+	csvWriter := csv.NewWriter(out)
+	header := append([]string(nil), h.definition.FixedFields...)
+	header = append(header, fields...)
+	if err := csvWriter.Write(header); err != nil {
+		return 0, err
+	}
+	count := 0
+	var cursor *CursorKey
+	for {
+		page, err := reader.Snapshot(ctx, Query{Store: in.Store, Stores: in.Stores, DateFrom: in.DateFrom, DateTo: in.DateTo, Fields: fields, PageSize: h.cfg.MaxPageSize, Cursor: cursor})
+		if err != nil {
+			return count, err
+		}
+		for _, row := range page.Rows {
+			if row.DeletedAt != nil {
+				continue
+			}
+			record := make([]string, 0, len(header))
+			for _, field := range h.definition.FixedFields {
+				record = append(record, csvValue(exportFixedValue(row, field)))
+			}
+			for _, field := range fields {
+				record = append(record, csvValue(row.Values[field]))
+			}
+			if err := csvWriter.Write(record); err != nil {
+				return count, err
+			}
+			count++
+		}
+		if !page.HasMore {
+			break
+		}
+		if page.Next == nil || page.Next.UpdatedAt.IsZero() || page.Next.StableKey == "" {
+			return count, errors.New("reader returned an invalid export cursor")
+		}
+		cursor = page.Next
+	}
+	csvWriter.Flush()
+	if err := csvWriter.Error(); err != nil {
+		return count, err
+	}
+	return count, nil
+}
+
+func exportFixedValue(row Row, field string) any {
+	if row.FixedValues != nil {
+		return row.FixedValues[field]
+	}
+	switch field {
+	case "store":
+		return row.Store
+	case "channel":
+		return row.Channel
+	case "asin":
+		return row.ASIN
+	case "sku":
+		return row.SKU
+	case "business_date":
+		return row.BusinessDate
+	case "updated_at":
+		return row.UpdatedAt.UTC().Format(time.RFC3339Nano)
+	case "is_provisional":
+		return row.IsProvisional
+	case "verification_status":
+		return row.VerificationStatus
+	default:
+		return nil
+	}
+}
+
+func csvValue(value any) string {
+	if value == nil {
+		return ""
+	}
+	if timestamp, ok := value.(time.Time); ok {
+		return timestamp.UTC().Format(time.RFC3339Nano)
+	}
+	return fmt.Sprint(value)
 }
 
 func IsBearerPath(path string) bool {

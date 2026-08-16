@@ -166,8 +166,8 @@ func (r *DetailSQLReader) read(ctx context.Context, query Query, snapshot bool) 
 	if r == nil || r.queryer == nil {
 		return Page{}, fmt.Errorf("registered detail SQL reader is not configured")
 	}
-	if query.Store == "" || query.PageSize < 1 {
-		return Page{}, fmt.Errorf("store and positive page size are required")
+	if query.PageSize < 1 {
+		return Page{}, fmt.Errorf("positive page size is required")
 	}
 	fields, err := r.selectedFields(query.Fields)
 	if err != nil {
@@ -178,16 +178,19 @@ func (r *DetailSQLReader) read(ctx context.Context, query Query, snapshot bool) 
 	}
 	selectColumns := append([]string(nil), r.definition.baseColumns...)
 	selectColumns = append(selectColumns, fields...)
-	queryText := "SELECT " + strings.Join(selectColumns, ", ") + " FROM " + r.definition.sourceTable + " " + r.definition.alias + " WHERE " + r.definition.alias + ".sid = ?"
-	args := []any{query.Store}
+	queryText := "SELECT " + strings.Join(selectColumns, ", ") + " FROM " + r.definition.sourceTable + " " + r.definition.alias
+	where := make([]string, 0, 3)
+	args := make([]any, 0, 6)
+	where, args = appendStoreFilter(where, args, r.definition.alias+".sid", query)
 	if snapshot {
-		queryText += " AND " + r.definition.dateColumn + " BETWEEN ? AND ?"
+		where = append(where, r.definition.dateColumn+" BETWEEN ? AND ?")
 		args = append(args, query.DateFrom, query.DateTo)
 	}
 	if query.Cursor != nil {
-		queryText += " AND (" + r.definition.alias + ".synced_at > ? OR (" + r.definition.alias + ".synced_at = ? AND " + r.definition.stableKeyColumn + " > ?))"
+		where = append(where, "("+r.definition.alias+".synced_at > ? OR ("+r.definition.alias+".synced_at = ? AND "+r.definition.stableKeyColumn+" > ?))")
 		args = append(args, query.Cursor.UpdatedAt, query.Cursor.UpdatedAt, query.Cursor.StableKey)
 	}
+	queryText += " WHERE " + strings.Join(where, " AND ")
 	queryText += " ORDER BY " + r.definition.alias + ".synced_at ASC, " + r.definition.stableKeyColumn + " ASC LIMIT ?"
 	args = append(args, query.PageSize+1)
 	rows, err := r.queryer.Query(ctx, queryText, args...)

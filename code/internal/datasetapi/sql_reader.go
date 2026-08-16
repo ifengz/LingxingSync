@@ -99,8 +99,8 @@ func (r *SQLReader) read(ctx context.Context, query Query, snapshot bool) (Page,
 	if r == nil || r.queryer == nil {
 		return Page{}, fmt.Errorf("listing daily SQL reader is not configured")
 	}
-	if query.Store == "" || query.PageSize < 1 {
-		return Page{}, fmt.Errorf("store and positive page size are required")
+	if query.PageSize < 1 {
+		return Page{}, fmt.Errorf("positive page size is required")
 	}
 	fieldNames := append([]string(nil), query.Fields...)
 	fields, err := fixedMetricFields(fieldNames)
@@ -111,10 +111,12 @@ func (r *SQLReader) read(ctx context.Context, query Query, snapshot bool) (Page,
 	if len(fields) > 0 {
 		selectColumns += ", " + strings.Join(fields, ", ")
 	}
-	queryText := "SELECT " + selectColumns + " FROM listing_daily_metrics m JOIN listing_dimensions d ON d.id = m.listing_dimension_id WHERE d.store_id = ?"
-	args := []any{query.Store}
+	queryText := "SELECT " + selectColumns + " FROM listing_daily_metrics m JOIN listing_dimensions d ON d.id = m.listing_dimension_id"
+	where := make([]string, 0, 3)
+	args := make([]any, 0, 6)
+	where, args = appendStoreFilter(where, args, "d.store_id", query)
 	if snapshot {
-		queryText += " AND m.business_date BETWEEN ? AND ?"
+		where = append(where, "m.business_date BETWEEN ? AND ?")
 		args = append(args, query.DateFrom, query.DateTo)
 	}
 	if query.Cursor != nil {
@@ -122,9 +124,10 @@ func (r *SQLReader) read(ctx context.Context, query Query, snapshot bool) (Page,
 		if err != nil {
 			return Page{}, err
 		}
-		queryText += " AND (m.updated_at > ? OR (m.updated_at = ? AND (m.listing_dimension_id > ? OR (m.listing_dimension_id = ? AND m.business_date > ?))))"
+		where = append(where, "(m.updated_at > ? OR (m.updated_at = ? AND (m.listing_dimension_id > ? OR (m.listing_dimension_id = ? AND m.business_date > ?))))")
 		args = append(args, query.Cursor.UpdatedAt, query.Cursor.UpdatedAt, dimensionID, dimensionID, date)
 	}
+	queryText += " WHERE " + strings.Join(where, " AND ")
 	queryText += " ORDER BY m.updated_at ASC, m.listing_dimension_id ASC, m.business_date ASC LIMIT ?"
 	args = append(args, query.PageSize+1)
 	rows, err := r.queryer.Query(ctx, queryText, args...)
@@ -153,6 +156,31 @@ func (r *SQLReader) read(ctx context.Context, query Query, snapshot bool) (Page,
 		page.Next = &CursorKey{UpdatedAt: last.UpdatedAt, StableKey: last.StableKey}
 	}
 	return page, nil
+}
+
+func appendStoreFilter(where []string, args []any, column string, query Query) ([]string, []any) {
+	stores := make([]string, 0, len(query.Stores)+1)
+	seen := make(map[string]struct{}, len(query.Stores)+1)
+	for _, raw := range append(append([]string(nil), query.Stores...), query.Store) {
+		store := strings.TrimSpace(raw)
+		if store == "" {
+			continue
+		}
+		if _, ok := seen[store]; ok {
+			continue
+		}
+		seen[store] = struct{}{}
+		stores = append(stores, store)
+	}
+	if len(stores) == 0 {
+		return where, args
+	}
+	placeholders := strings.TrimRight(strings.Repeat("?,", len(stores)), ",")
+	where = append(where, column+" IN ("+placeholders+")")
+	for _, store := range stores {
+		args = append(args, store)
+	}
+	return where, args
 }
 
 func fixedMetricFields(fields []string) ([]string, error) {

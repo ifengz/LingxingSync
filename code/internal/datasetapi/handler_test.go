@@ -1,14 +1,42 @@
 package datasetapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 )
+
+type exportReader struct {
+	pages   []Page
+	queries []Query
+}
+
+func (r *exportReader) Snapshot(_ context.Context, query Query) (Page, error) {
+	r.queries = append(r.queries, query)
+	return r.pages[len(r.queries)-1], nil
+}
+
+func (r *exportReader) Changes(context.Context, Query) (Page, error) { return Page{}, nil }
+
+type detailCursorReader struct {
+	definition detailReaderDefinition
+}
+
+func (r detailCursorReader) Snapshot(context.Context, Query) (Page, error) { return Page{}, nil }
+
+func (r detailCursorReader) Changes(_ context.Context, query Query) (Page, error) {
+	reader := DetailSQLReader{definition: r.definition}
+	if query.Cursor == nil || !reader.validStableKey(query.Cursor.StableKey) {
+		return Page{}, errors.New("detail cursor stable key is invalid")
+	}
+	return Page{}, nil
+}
 
 type fixtureReader struct {
 	snapshotCalls int
@@ -42,6 +70,30 @@ func newFixtureHandler(t *testing.T, reader Reader) (*Handler, string) {
 		t.Fatalf("New: %v", err)
 	}
 	return h, rawToken
+}
+
+func TestExportCSVStreamsAllPagesInRequestedDateRange(t *testing.T) {
+	updated := time.Date(2026, 8, 16, 3, 4, 5, 0, time.UTC)
+	firstKey := CursorKey{UpdatedAt: updated, StableKey: "1|2026-08-14"}
+	reader := &exportReader{pages: []Page{
+		{Rows: []Row{{Store: "store-a", Channel: "SC", ASIN: "ASIN1", SKU: "SKU1", BusinessDate: "2026-08-14", UpdatedAt: updated, StableKey: firstKey.StableKey, VerificationStatus: "verified", Values: map[string]any{"units": int64(3)}}}, HasMore: true, Next: &firstKey},
+		{Rows: []Row{{Store: "store-a", Channel: "SC", ASIN: "ASIN2", SKU: "SKU2", BusinessDate: "2026-08-15", UpdatedAt: updated, StableKey: "2|2026-08-15", IsProvisional: true, VerificationStatus: "api_unverified", Values: map[string]any{"units": int64(5)}}}},
+	}}
+	h, _ := newFixtureHandler(t, reader)
+	var out bytes.Buffer
+	count, err := h.ExportCSV(context.Background(), Query{Stores: []string{"store-a", "store-b"}, DateFrom: "2026-08-14", DateTo: "2026-08-15", Fields: []string{"units"}}, &out)
+	if err != nil {
+		t.Fatalf("ExportCSV: %v", err)
+	}
+	if count != 2 || len(reader.queries) != 2 || reader.queries[1].Cursor == nil || reader.queries[1].Cursor.StableKey != firstKey.StableKey {
+		t.Fatalf("export pagination count=%d queries=%+v", count, reader.queries)
+	}
+	if got := strings.Join(reader.queries[0].Stores, ","); got != "store-a,store-b" {
+		t.Fatalf("export stores=%q, want store-a,store-b", got)
+	}
+	if !strings.Contains(out.String(), "store,channel,asin,sku,business_date,updated_at,is_provisional,verification_status,units") || !strings.Contains(out.String(), "store-a,SC,ASIN2,SKU2,2026-08-15,2026-08-16T03:04:05Z,true,api_unverified,5") {
+		t.Fatalf("export CSV=%q", out.String())
+	}
 }
 
 func requestJSON(t *testing.T, handler http.Handler, method, path, token string, body string) *httptest.ResponseRecorder {
@@ -517,6 +569,35 @@ func TestHandlerUsesRegisteredDetailDatasetPathAndScope(t *testing.T) {
 	}
 	if rec = requestJSON(t, handler, http.MethodPost, SnapshotPath, rawToken, `{"store":"store-a","date_from":"2026-08-01","date_to":"2026-08-01"}`); rec.Code != http.StatusNotFound {
 		t.Fatalf("listing path served by detail handler: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestDetailSnapshotChangesCursorUsesRegisteredInitialKey(t *testing.T) {
+	definition, _ := DefinitionFor("return-reason-detail-v1")
+	rawToken := "detail-cursor-token"
+	handler, err := New(Config{
+		Definition: definition, FieldAllowlist: []string{"reason"}, CatalogFields: definition.Fields,
+		CursorSecret: []byte("cursor-secret-for-tests"),
+		Tokens:       []Token{{ID: "detail-token", Hash: HashToken(rawToken), DatasetScopes: []string{definition.ID}, StoreScopes: []string{"store-a"}, Fields: []string{"reason"}}},
+	}, detailCursorReader{definition: returnReasonDetailDefinition})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	snapshot := requestJSON(t, handler, http.MethodPost, SnapshotPathFor(definition.ID), rawToken, `{"store":"store-a","date_from":"2026-08-14","date_to":"2026-08-14"}`)
+	if snapshot.Code != http.StatusOK {
+		t.Fatalf("detail snapshot status=%d body=%s", snapshot.Code, snapshot.Body.String())
+	}
+	var response Response
+	if err := json.Unmarshal(snapshot.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode snapshot: %v", err)
+	}
+	decoded, err := handler.decodeCursor(response.Data.ChangesCursor, "changes", "detail-token", "store-a", "", "")
+	if err != nil || !(&DetailSQLReader{definition: returnReasonDetailDefinition}).validStableKey(decoded.Key.StableKey) {
+		t.Fatalf("detail changes cursor is invalid: cursor=%s err=%v", response.Data.ChangesCursor, err)
+	}
+	changes := requestJSON(t, handler, http.MethodPost, ChangesPathFor(definition.ID), rawToken, `{"store":"store-a","cursor":"`+response.Data.ChangesCursor+`"}`)
+	if changes.Code != http.StatusOK {
+		t.Fatalf("detail changes status=%d body=%s", changes.Code, changes.Body.String())
 	}
 }
 

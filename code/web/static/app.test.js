@@ -305,6 +305,7 @@ void (async () => {
       if (url === '/api/accounts/sc_us_1/stores') return {
         items: [
           { sid: '12534', store_name: '美国主店', country: 'US', store_type: 'SC', enabled: true },
+          { sid: '12536', store_name: '加拿大店', country: 'CA', store_type: 'SC', enabled: true },
           { sid: '12535', store_name: '未授权店铺', country: 'US', store_type: 'SC', enabled: false },
         ],
       };
@@ -312,10 +313,10 @@ void (async () => {
     };
     await catalog.loadDatasetStores();
     assert.equal(JSON.stringify(storeCalls), JSON.stringify(['/api/config', '/api/accounts/sc_us_1/stores']));
-    assert.equal(catalog.datasetStores.length, 1, '未勾选的店铺不得进入数据表项目范围');
+    assert.equal(catalog.datasetStores.length, 2, '未勾选的店铺不得进入数据表项目范围');
     assert.equal(catalog.datasetStores[0].store_name, '美国主店');
     catalog.toggleAllDatasetStores(true);
-    assert.equal(JSON.stringify(catalog.datasetStoreScopes()), JSON.stringify(['12534']));
+    assert.equal(JSON.stringify(catalog.datasetStoreScopes()), JSON.stringify(['12534', '12536']));
     assert.equal(catalog.formatDatasetStoreScopes(['12534']), '美国主店（12534）');
 
     let createRequest = null;
@@ -328,8 +329,23 @@ void (async () => {
     await catalog.createDatasetProjectToken();
     assert.equal(JSON.stringify(createRequest), JSON.stringify({
       url: '/api/datasources/datasets/projects',
-      body: { project_id: 'reader', dataset_scopes: ['listing-daily-v1', 'return-reason-detail-v1'], store_scopes: ['12534'] },
+      body: { project_id: 'reader', dataset_scopes: ['listing-daily-v1', 'return-reason-detail-v1'], store_scopes: ['12534', '12536'] },
     }));
+
+    let exportURL = '';
+    sandbox.window.apiDownload = async (url) => {
+      exportURL = url;
+      return { rows: 2 };
+    };
+    catalog.toggleDatasetExportStore(catalog.datasetStores[0]);
+    assert.equal(JSON.stringify(catalog.datasetExport.stores), JSON.stringify(['12534']));
+    catalog.toggleAllDatasetExportStores(true);
+    assert.equal(JSON.stringify(catalog.datasetExport.stores), JSON.stringify(['12534', '12536']));
+    catalog.datasetExport.date_from = '2026-08-14';
+    catalog.datasetExport.date_to = '2026-08-15';
+    await catalog.exportDatasetCSV();
+    assert.equal(exportURL, '/api/datasources/datasets/listing-daily-v1/export?date_from=2026-08-14&date_to=2026-08-15&stores=12534%2C12536');
+    assert.equal(catalog.datasetExportRows, 2);
   }
 
   let request = null;

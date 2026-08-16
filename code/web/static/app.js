@@ -59,6 +59,38 @@ window.apiPost = (url, body) => apiRequest('POST', url, body);
 window.apiPut = (url, body) => apiRequest('PUT', url, body);
 window.apiDelete = (url) => apiRequest('DELETE', url);
 
+window.apiDownload = async function (url) {
+  const headers = {};
+  const sec = syncSecret();
+  if (sec) headers['X-Sync-Secret'] = sec;
+  let response;
+  try {
+    response = await fetch(url, { method: 'GET', headers });
+  } catch (error) {
+    throw new Error('网络错误：' + error.message);
+  }
+  if (!response.ok) {
+    let message = 'HTTP ' + response.status;
+    try {
+      const payload = JSON.parse(await response.text());
+      message = (payload && payload.error) || message;
+    } catch (_) {}
+    throw new Error(message);
+  }
+  const blob = await response.blob();
+  const objectURL = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  const disposition = response.headers.get('Content-Disposition') || '';
+  const match = disposition.match(/filename="([^\"]+)"/);
+  link.href = objectURL;
+  link.download = match ? match[1] : 'dataset.csv';
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(objectURL);
+  return { rows: Number(response.headers.get('X-Exported-Rows')) || 0 };
+};
+
 // 把任意错误冒泡到全局 toast。页面里 await apiGet(...).catch(toastError) 即可。
 window.toastError = function (err) {
   window.dispatchEvent(new CustomEvent('sync-toast', {
@@ -1337,6 +1369,10 @@ window.dataSources = function () {
     datasetCreateError: '',
     datasetCreateResult: null,
     datasetCreateForm: { project_id: '' },
+    datasetExport: { stores: [], date_from: '', date_to: '' },
+    datasetExporting: false,
+    datasetExportError: '',
+    datasetExportRows: 0,
     dailyPreviewFilters: { date_from: '', date_to: '', store: '', asin: '', sku: '', page: 1, page_size: 20 },
     dailyPreviewItems: [],
     dailyPreviewTotal: 0,
@@ -1492,6 +1528,21 @@ window.dataSources = function () {
     formatDatasetStoreScopes(scopes) {
       return (Array.isArray(scopes) ? scopes : []).map((scope) => this.datasetStoreLabel(scope)).join('、') || '—';
     },
+    isDatasetExportStoreSelected(store) {
+      return Array.isArray(this.datasetExport.stores) && this.datasetExport.stores.includes(store.sid);
+    },
+    toggleDatasetExportStore(store) {
+      const stores = new Set(Array.isArray(this.datasetExport.stores) ? this.datasetExport.stores : []);
+      if (stores.has(store.sid)) stores.delete(store.sid);
+      else stores.add(store.sid);
+      this.datasetExport = { ...this.datasetExport, stores: [...stores] };
+    },
+    toggleAllDatasetExportStores(checked) {
+      this.datasetExport = { ...this.datasetExport, stores: checked ? this.datasetStores.map((store) => store.sid) : [] };
+    },
+    get datasetExportStoreCount() {
+      return Array.isArray(this.datasetExport.stores) ? this.datasetExport.stores.length : 0;
+    },
     async createDatasetProjectToken() {
       if (this.datasetCreating) return;
       this.datasetCreateError = '';
@@ -1527,6 +1578,28 @@ window.dataSources = function () {
         this.datasetCreateError = errorMessage(error, '创建下游项目 Token 失败');
       } finally {
         this.datasetCreating = false;
+      }
+    },
+    async exportDatasetCSV() {
+      if (this.datasetExporting) return;
+      this.datasetExportError = '';
+      this.datasetExportRows = 0;
+      const filters = this.datasetExport;
+      if (!filters.date_from || !filters.date_to) {
+        this.datasetExportError = '请选择导出起止日期';
+        return;
+      }
+      const query = new URLSearchParams({ date_from: filters.date_from, date_to: filters.date_to });
+      if (Array.isArray(filters.stores) && filters.stores.length > 0) query.set('stores', filters.stores.join(','));
+      this.datasetExporting = true;
+      try {
+        const result = await window.apiDownload('/api/datasources/datasets/' + encodeURIComponent(this.datasetID) + '/export?' + query.toString());
+        this.datasetExportRows = result.rows;
+        window.toast('success', 'CSV 导出完成，共 ' + result.rows + ' 行');
+      } catch (error) {
+        this.datasetExportError = errorMessage(error, '导出数据表失败');
+      } finally {
+        this.datasetExporting = false;
       }
     },
     async restartAfterDatasetToken() {
