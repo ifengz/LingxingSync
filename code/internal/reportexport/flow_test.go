@@ -516,6 +516,59 @@ func TestRunnerReportsUnknownStatusDiagnosticsAfterTimeout(t *testing.T) {
 	}
 }
 
+func TestResponseDiagnosticsRedactsSensitiveMessageAndDetails(t *testing.T) {
+	raw := []byte(`{"request_id":"trace-429","message":"access_token=do-not-leak","error_details":{"url":"https://example.test/?token=do-not-leak","reason":"too many requests"}}`)
+	got := responseDiagnostics(raw)
+	if strings.Contains(got, "do-not-leak") {
+		t.Fatalf("diagnostics=%q, must redact credentials", got)
+	}
+}
+
+func TestDecodeEnvelopeRedactsSensitiveErrorMessage(t *testing.T) {
+	var target struct {
+		TaskID string `json:"task_id"`
+	}
+	err := decodeEnvelope([]byte(`{"code":429,"message":"app_secret=do-not-leak","data":null}`), &target)
+	if err == nil {
+		t.Fatal("decodeEnvelope should return the upstream error")
+	}
+	if strings.Contains(err.Error(), "do-not-leak") {
+		t.Fatalf("error=%q, must redact credentials", err)
+	}
+}
+
+func TestRunnerTerminalDiagnosticsAreSanitizedForAllNonDoneStatuses(t *testing.T) {
+	for _, status := range []string{"FATAL", "CANCELLED", "UNKNOWN"} {
+		t.Run(status, func(t *testing.T) {
+			client := signedClientFunc(func(_ context.Context, _ string, path string, _ map[string]any) ([]byte, int, int, error) {
+				switch path {
+				case createPath:
+					return []byte(`{"code":0,"data":{"task_id":"task-diagnostics"}}`), http.StatusOK, 0, nil
+				case queryPath:
+					return []byte(`{"code":0,"message":"upstream app_secret=do-not-leak","request_id":"trace-terminal","error_details":{"reason":"detail","access_token":"do-not-leak"},"data":{"progress_status":"` + status + `"}}`), http.StatusOK, 0, nil
+				default:
+					return nil, 0, 0, fmt.Errorf("unexpected signed path %s", path)
+				}
+			})
+			store := &fakeStore{}
+			runner := Runner{Client: client, Store: store, PollInterval: time.Millisecond, PollTimeout: 5 * time.Millisecond}
+			_, err := runner.Run(context.Background(), Request{AccountID: "acct", SellerID: "seller", StoreID: "store-1", Region: "na", MarketplaceIDs: []string{"market"}, DateFrom: "2026-08-11T00:00:00Z", DateTo: "2026-08-11T23:59:59Z"})
+			if err == nil {
+				t.Fatal("expected terminal report error")
+			}
+			if strings.Contains(err.Error(), "do-not-leak") || strings.Contains(err.Error(), `"data"`) {
+				t.Fatalf("error=%q, must not expose secret or raw envelope", err)
+			}
+			if !strings.Contains(err.Error(), "request_id=trace-terminal") || !strings.Contains(err.Error(), "error_details=") {
+				t.Fatalf("error=%q, want sanitized diagnostics", err)
+			}
+			if len(err.Error()) > 1024 {
+				t.Fatalf("error length=%d, want bounded diagnostics", len(err.Error()))
+			}
+		})
+	}
+}
+
 func TestRunnerDefaultPollingBoundaryIsTwentyFourHours(t *testing.T) {
 	if defaultPollInterval != time.Minute {
 		t.Fatalf("default polling interval=%s, want one minute", defaultPollInterval)
@@ -741,22 +794,56 @@ func TestDownloadPreservesReportContentType(t *testing.T) {
 	}
 }
 
-func TestReportCallRetriesLingxingBusinessCode429(t *testing.T) {
+func TestReportCallDoesNotRetryHTTP200BusinessCode429(t *testing.T) {
+	calls := 0
+	client := signedClientFunc(func(_ context.Context, _, _ string, _ map[string]any) ([]byte, int, int, error) {
+		calls++
+		return nil, http.StatusOK, http.StatusTooManyRequests, api.NewFetchError(http.StatusOK, http.StatusTooManyRequests, "请求过于频繁", time.Millisecond, true)
+	})
+	runner := Runner{Client: client}
+	_, err := runner.call(context.Background(), queryPath, map[string]any{"task_id": "task-1"})
+	if err == nil {
+		t.Fatal("call should return the HTTP 200 business error")
+	}
+	if calls != 1 {
+		t.Fatalf("calls=%d, want one request for HTTP 200 business code 429", calls)
+	}
+}
+
+func TestReportCallRetriesHTTP429(t *testing.T) {
 	calls := 0
 	client := signedClientFunc(func(_ context.Context, _, _ string, _ map[string]any) ([]byte, int, int, error) {
 		calls++
 		if calls == 1 {
-			return nil, http.StatusOK, http.StatusTooManyRequests, api.NewFetchError(http.StatusOK, http.StatusTooManyRequests, "请求过于频繁", time.Millisecond, true)
+			return nil, http.StatusTooManyRequests, 0, api.NewFetchError(http.StatusTooManyRequests, 0, "rate limited", time.Millisecond, true)
 		}
 		return []byte(`{"code":0,"data":{"progress_status":"IN_PROGRESS"}}`), http.StatusOK, 0, nil
 	})
 	runner := Runner{Client: client}
 	raw, err := runner.call(context.Background(), queryPath, map[string]any{"task_id": "task-1"})
 	if err != nil {
-		t.Fatalf("call after rate limit = %v", err)
+		t.Fatalf("call after HTTP 429 = %v", err)
 	}
 	if calls != 2 || !strings.Contains(string(raw), "IN_PROGRESS") {
 		t.Fatalf("calls=%d raw=%s", calls, raw)
+	}
+}
+
+func TestReportCallRetriesOfficialBusinessCode3001008(t *testing.T) {
+	calls := 0
+	client := signedClientFunc(func(_ context.Context, _, _ string, _ map[string]any) ([]byte, int, int, error) {
+		calls++
+		if calls == 1 {
+			return nil, http.StatusOK, 3001008, api.NewFetchError(http.StatusOK, 3001008, "new requests too frequently", time.Millisecond, true)
+		}
+		return []byte(`{"code":0,"data":{"progress_status":"IN_PROGRESS"}}`), http.StatusOK, 0, nil
+	})
+	runner := Runner{Client: client}
+	if _, err := runner.call(context.Background(), queryPath, map[string]any{"task_id": "task-1"}); err != nil {
+		t.Fatalf("call after business 3001008 = %v", err)
+	}
+	if calls != 2 {
+		t.Fatalf("calls=%d, want retry for official business code 3001008", calls)
 	}
 }
 

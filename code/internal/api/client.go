@@ -24,6 +24,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 // DefaultPageSize 是领星单页拉取的默认长度。宪法 §4：单页不超过 200。
@@ -69,10 +71,12 @@ func (c *Client) TokenHolder() *TokenHolder {
 // 领星 code 字段实测可能是数字也可能是字符串（如 token 接口返回 "200"），
 // 用 apiCode 自定义类型兼容两种；成功判定走 isSuccess()。
 type apiResponse struct {
-	Code    apiCode         `json:"code"`
-	Message string          `json:"message"`
-	Msg     string          `json:"msg"` // 兼容部分接口用 msg
-	Data    json.RawMessage `json:"data"`
+	Code         apiCode         `json:"code"`
+	Message      string          `json:"message"`
+	Msg          string          `json:"msg"` // 兼容部分接口用 msg
+	Data         json.RawMessage `json:"data"`
+	RequestID    string          `json:"request_id"`
+	ErrorDetails json.RawMessage `json:"error_details"`
 	// Total 是「顶层 total」。部分接口（如 /erp/sc/data/mws/orders）把 data 直接返回成
 	// 裸数组，总数放在响应顶层而不是 data 里：
 	//   {"code":0,"message":"操作成功","data":[...],"total":905,"request_id":"..."}
@@ -195,7 +199,7 @@ func (c *Client) doSignedJSONOnce(ctx context.Context, method, path string, body
 	req.Header.Set("Accept", "application/json")
 	resp, err := c.http.Do(req)
 	if err != nil {
-		fetchErr := NewFetchError(0, 0, fmt.Sprintf("http do %s %s: %v", http.MethodPost, path, err), 0, transportMayHaveReachedUpstream(err))
+		fetchErr := NewFetchError(0, 0, fmt.Sprintf("http do %s %s: %s", http.MethodPost, path, sanitizeDiagnosticText(err.Error())), 0, transportMayHaveReachedUpstream(err))
 		fetchErr.Cause = err
 		return nil, 0, 0, fetchErr
 	}
@@ -205,13 +209,22 @@ func (c *Client) doSignedJSONOnce(ctx context.Context, method, path string, body
 		return nil, resp.StatusCode, 0, fmt.Errorf("lingxing json request: read body: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, resp.StatusCode, 0, NewFetchError(resp.StatusCode, 0,
-			fmt.Sprintf("http status %d for %s %s, body=%s", resp.StatusCode, http.MethodPost, path, truncateForLog(raw)),
-			parseRetryAfterHeader(resp), true)
+		message := fmt.Sprintf("http status %d for %s %s", resp.StatusCode, http.MethodPost, path)
+		var envelope apiResponse
+		if json.Unmarshal(raw, &envelope) == nil {
+			businessMessage := envelope.Message
+			if businessMessage == "" {
+				businessMessage = envelope.Msg
+			}
+			if envelope.RequestID != "" || businessMessage != "" || len(envelope.ErrorDetails) > 0 {
+				message += "; " + formatBusinessError(path, envelope, businessMessage)
+			}
+		}
+		return nil, resp.StatusCode, 0, NewFetchError(resp.StatusCode, 0, message, parseRetryAfterHeader(resp), true)
 	}
 	var envelope apiResponse
 	if err := json.Unmarshal(raw, &envelope); err != nil {
-		return nil, resp.StatusCode, 0, fmt.Errorf("lingxing json request: unmarshal response: %w, body=%s", err, truncateForLog(raw))
+		return nil, resp.StatusCode, 0, fmt.Errorf("lingxing json request: unmarshal response: %w", err)
 	}
 	code := envelope.Code.asInt()
 	if envelope.Code.isSuccess() {
@@ -222,13 +235,130 @@ func (c *Client) doSignedJSONOnce(ctx context.Context, method, path string, body
 		message = envelope.Msg
 	}
 	if isTokenExpiredCode(code, message) {
-		fetchErr := NewFetchError(resp.StatusCode, code, message, parseRetryAfterHeader(resp), true)
+		fetchErr := NewFetchError(resp.StatusCode, code, sanitizeDiagnosticText(message), parseRetryAfterHeader(resp), true)
 		fetchErr.Cause = errTokenExpired
 		return nil, resp.StatusCode, code, fetchErr
 	}
 	return nil, resp.StatusCode, code, NewFetchError(resp.StatusCode, code,
-		fmt.Sprintf("api error code=%s msg=%q path=%s", envelope.Code, message, path), parseRetryAfterHeader(resp), true)
+		formatBusinessError(path, envelope, message), parseRetryAfterHeader(resp), true)
 }
+
+const maxBusinessDiagnosticLength = 256
+
+func formatBusinessError(path string, envelope apiResponse, message string) string {
+	base := fmt.Sprintf("api error code=%s msg=%q path=%s", envelope.Code, sanitizeDiagnosticText(message), path)
+	parts := make([]string, 0, 2)
+	if requestID := sanitizeDiagnosticText(envelope.RequestID); requestID != "" {
+		parts = append(parts, "request_id="+requestID)
+	}
+	if details := sanitizeErrorDetails(envelope.ErrorDetails); details != "" {
+		parts = append(parts, "error_details="+details)
+	}
+	if len(parts) == 0 {
+		return base
+	}
+	return base + "; " + strings.Join(parts, "; ")
+}
+
+func sanitizeErrorDetails(raw json.RawMessage) string {
+	if len(raw) == 0 || string(raw) == "null" {
+		return ""
+	}
+	var value any
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return "[REDACTED]"
+	}
+	value = redactDiagnosticValue(value)
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return ""
+	}
+	return boundDiagnosticText(string(encoded))
+}
+
+func redactDiagnosticValue(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, child := range typed {
+			if isSensitiveDiagnosticKey(key) {
+				typed[key] = "[REDACTED]"
+				continue
+			}
+			typed[key] = redactDiagnosticValue(child)
+		}
+	case []any:
+		for i, child := range typed {
+			typed[i] = redactDiagnosticValue(child)
+		}
+	case string:
+		return sanitizeDiagnosticText(typed)
+	}
+	return value
+}
+
+func isSensitiveDiagnosticKey(key string) bool {
+	normalized := strings.Map(func(r rune) rune {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			return unicode.ToLower(r)
+		}
+		return -1
+	}, key)
+	if normalized == "sign" || normalized == "signature" {
+		return true
+	}
+	for _, marker := range []string{"secret", "token", "password", "authorization", "cookie", "credential", "auth", "appkey", "apikey", "accesskey", "privatekey"} {
+		if strings.Contains(normalized, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func sanitizeDiagnosticText(value string) string {
+	value = boundDiagnosticText(value)
+	if containsSensitiveDiagnosticMarker(value) {
+		return "[REDACTED]"
+	}
+	return value
+}
+
+func boundDiagnosticText(value string) string {
+	value = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, strings.TrimSpace(value))
+	if utf8.RuneCountInString(value) <= maxBusinessDiagnosticLength {
+		return value
+	}
+	runes := []rune(value)
+	return string(runes[:maxBusinessDiagnosticLength]) + "...(truncated)"
+}
+
+func containsSensitiveDiagnosticMarker(value string) bool {
+	normalized := strings.ToLower(value)
+	for _, marker := range []string{
+		"app_secret", "appsecret", "app_key", "app-key", "appkey", "access_token", "accesstoken",
+		"refresh_token", "refreshtoken", "authorization:", "authorization=", "password:",
+		"password=", "cookie:", "cookie=", "secret:", "secret=", "token:", "token=",
+		"sign:", "sign=", "access%5ftoken", "app%5fsecret", "token%3d", "secret%3d",
+		`"token"`, `"cookie"`, `"sign"`, `"authorization"`, `"password"`, `"secret"`,
+	} {
+		if strings.Contains(normalized, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+// SanitizeDiagnosticText keeps report errors useful without allowing upstream
+// messages to persist credentials or unbounded response text.
+func SanitizeDiagnosticText(value string) string { return sanitizeDiagnosticText(value) }
+
+// SanitizeDiagnosticJSON returns a bounded, redacted representation of a JSON
+// diagnostic object. Unparseable input is represented only as redacted.
+func SanitizeDiagnosticJSON(raw json.RawMessage) string { return sanitizeErrorDetails(raw) }
 
 // FetchWithShape 拉取一页，并按 endpoint 声明的响应形态解析 data。
 // responseShape 为空时按 list 处理；object 仅用于 data 是单个业务对象的接口。
@@ -330,7 +460,7 @@ func (c *Client) fetchOnce(ctx context.Context, method, path string, params map[
 	// 6. 发送
 	resp, err := c.http.Do(req)
 	if err != nil {
-		fetchErr := NewFetchError(0, 0, fmt.Sprintf("http do %s %s: %v", method, path, err), 0, transportMayHaveReachedUpstream(err))
+		fetchErr := NewFetchError(0, 0, fmt.Sprintf("http do %s %s: %s", method, path, sanitizeDiagnosticText(err.Error())), 0, transportMayHaveReachedUpstream(err))
 		fetchErr.Cause = err
 		return nil, 0, 0, fetchErr
 	}
@@ -345,8 +475,19 @@ func (c *Client) fetchOnce(ctx context.Context, method, path string, params map[
 
 	// 7. HTTP 非 200 → error（fail-loud）
 	if resp.StatusCode != http.StatusOK {
+		message := fmt.Sprintf("http status %d for %s %s", resp.StatusCode, method, path)
+		var envelope apiResponse
+		if json.Unmarshal(raw, &envelope) == nil {
+			businessMessage := envelope.Message
+			if businessMessage == "" {
+				businessMessage = envelope.Msg
+			}
+			if envelope.RequestID != "" || businessMessage != "" || len(envelope.ErrorDetails) > 0 {
+				message += "; " + formatBusinessError(path, envelope, businessMessage)
+			}
+		}
 		return nil, resp.StatusCode, 0, NewFetchError(resp.StatusCode, 0,
-			fmt.Sprintf("http status %d for %s %s, body=%s", resp.StatusCode, method, path, truncateForLog(raw)),
+			message,
 			parseRetryAfterHeader(resp), true)
 	}
 
@@ -364,13 +505,13 @@ func (c *Client) fetchOnce(ctx context.Context, method, path string, params map[
 		}
 		// token 过期类错误（40001 或 message 含 token/expire）：返回 sentinel，让上层重试
 		if isTokenExpiredCode(ar.Code.asInt(), msg) {
-			fetchErr := NewFetchError(resp.StatusCode, ar.Code.asInt(), msg, parseRetryAfterHeader(resp), true)
+			fetchErr := NewFetchError(resp.StatusCode, ar.Code.asInt(), sanitizeDiagnosticText(msg), parseRetryAfterHeader(resp), true)
 			fetchErr.Cause = errTokenExpired
 			return nil, resp.StatusCode, ar.Code.asInt(), fetchErr
 		}
 		// 其他失败：fail-loud 带 code/msg
 		return nil, resp.StatusCode, ar.Code.asInt(), NewFetchError(resp.StatusCode, ar.Code.asInt(),
-			fmt.Sprintf("api error code=%s msg=%q path=%s", ar.Code, msg, path), parseRetryAfterHeader(resp), true)
+			formatBusinessError(path, ar, msg), parseRetryAfterHeader(resp), true)
 	}
 
 	// 9b. 软失败闸（fail-loud，宪法 §5）：
@@ -385,7 +526,7 @@ func (c *Client) fetchOnce(ctx context.Context, method, path string, params map[
 		}
 		if softMsg != "" && !isSuccessMessage(softMsg) {
 			return nil, resp.StatusCode, ar.Code.asInt(), NewFetchError(resp.StatusCode, ar.Code.asInt(),
-				fmt.Sprintf("api soft-error code=%s msg=%q path=%s", ar.Code, softMsg, path), parseRetryAfterHeader(resp), true)
+				fmt.Sprintf("api soft-error code=%s msg=%q path=%s", ar.Code, sanitizeDiagnosticText(softMsg), path), parseRetryAfterHeader(resp), true)
 		}
 	}
 
@@ -648,8 +789,8 @@ func readBool(obj map[string]json.RawMessage, keys ...string) bool {
 // truncateForLog 把响应体截断到 512 字节，避免日志爆炸（落 sync_task_logs 证据时用）。
 func truncateForLog(b []byte) string {
 	const max = 512
-	if len(b) <= max {
-		return string(b)
+	if len(b) > max {
+		b = append(append([]byte(nil), b[:max]...), []byte("...(truncated)")...)
 	}
-	return string(b[:max]) + "...(truncated)"
+	return sanitizeDiagnosticText(string(b))
 }

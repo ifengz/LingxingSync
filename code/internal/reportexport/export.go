@@ -736,7 +736,7 @@ func reportRateLimitRetry(err error, httpStatus, apiCode, attempt int) (time.Dur
 			apiCode = fetchErr.APICode
 		}
 	}
-	if httpStatus != http.StatusTooManyRequests && apiCode != http.StatusTooManyRequests && apiCode != 3001008 {
+	if httpStatus != http.StatusTooManyRequests && apiCode != 3001008 {
 		return 0, false
 	}
 	if attempt >= len(reportRateLimitDelays) {
@@ -844,7 +844,7 @@ func decodeEnvelope(raw []byte, target any) error {
 		if message == "" {
 			message = envelope.Msg
 		}
-		return fmt.Errorf("report export: upstream code=%d message=%q", code, message)
+		return fmt.Errorf("report export: upstream code=%d message=%q", code, api.SanitizeDiagnosticText(message))
 	}
 	if len(envelope.Data) == 0 || string(envelope.Data) == "null" {
 		return fmt.Errorf("report export: response data is null")
@@ -865,19 +865,21 @@ func responseDiagnostics(raw []byte) string {
 	if err := json.Unmarshal(raw, &envelope); err != nil {
 		return "response diagnostics unavailable"
 	}
-	message := strings.TrimSpace(envelope.Message)
+	message := api.SanitizeDiagnosticText(envelope.Message)
 	if message == "" {
-		message = strings.TrimSpace(envelope.Msg)
+		message = api.SanitizeDiagnosticText(envelope.Msg)
 	}
 	parts := make([]string, 0, 3)
 	if envelope.RequestID != "" {
-		parts = append(parts, "request_id="+envelope.RequestID)
+		parts = append(parts, "request_id="+api.SanitizeDiagnosticText(envelope.RequestID))
 	}
 	if message != "" {
 		parts = append(parts, "message="+strconv.Quote(message))
 	}
 	if len(envelope.ErrorDetails) > 0 && string(envelope.ErrorDetails) != "null" && string(envelope.ErrorDetails) != "[]" {
-		parts = append(parts, "error_details="+string(envelope.ErrorDetails))
+		if details := api.SanitizeDiagnosticJSON(envelope.ErrorDetails); details != "" {
+			parts = append(parts, "error_details="+details)
+		}
 	}
 	if len(parts) == 0 {
 		return "response diagnostics unavailable"
