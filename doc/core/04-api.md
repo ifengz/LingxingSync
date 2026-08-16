@@ -441,22 +441,39 @@ POST /api/v1/datasets/{dataset_id}/changes
 - 无 ASIN/SKU 的 HSA 只可返回店铺级记录，或返回带明确 `allocated` 标识的分摊记录。
 - PO 等不同粒度域不从这两个 listing 端点返回。
 
-## 数据集字段 allowlist 管理（已实现）
+## 数据表与下游项目管理（已实现）
 
-管理员可在“新增项目”切卡创建 `listing-daily-v1` 的读取凭证：`POST /api/datasources/datasets/listing-daily-v1/projects`，请求只需 `project_id` 和非空 `store_scopes`。系统独立生成稳定的 `token_id`，并自动给新项目绑定该数据表的全部已登记业务字段。响应只返回一次随机明文 `token`，配置文件仅保存其 SHA-256 `token_hash`，并返回 `need_restart: true`；明文不进入日志或后续 GET。没有已验证字段时创建会明确失败。
+管理员可在“新增下游项目”切卡创建读取凭证：`POST /api/datasources/datasets/projects`，请求包含 `project_id`、非空 `dataset_scopes` 和非空 `store_scopes`。系统独立生成不可预测且与项目名解耦的长随机 `token_id`，响应只返回一次随机明文 `token`；配置文件仅保存其 SHA-256 `token_hash`。创建返回 `need_restart: true`，明文不进入日志或后续 GET。
+
+创建下游项目不会补全或改动任何数据表字段；选中的数据表尚未发布字段时返回 409，管理员必须先在“数据表配置”完成发布。
+
+删除下游项目使用 `DELETE /api/datasources/datasets/projects/{token_id}`。删除只移除该 Token 配置，不删除数据表、原始数据或发布数据；返回 `need_restart: true`，重启后旧 Bearer 正式失效。不存在的 Token ID 返回 404，不得静默成功。
 
 独立 `/dataset-fields` 页面使用以下固定管理端点，仍受 `X-Sync-Secret` 中间件保护：
 
 ```text
-GET /api/datasources/datasets/listing-daily-v1/fields
+GET /api/datasources/datasets/catalog
+GET /api/datasources/datasets/{dataset_id}/fields/config
+PUT /api/datasources/datasets/{dataset_id}/fields/config
 ```
 
 字段管理属于现有管理面，继续受 `X-Sync-Secret` 中间件保护，不使用消费者 Bearer token：
 
-- 无查询参数的 `GET` 返回数据表 `dataset_id`、`dataset_name`、不可删除的 `fixed_fields`、全部 `available_fields`，以及项目/Token/店铺范围列表；没有任何项目时固定返回 `projects: []`，不能省略字段。
+- `GET fields/config` 返回数据表 `dataset_id`、`dataset_name`、不可删除的 `fixed_fields`、全部 `available_fields`、当前 `configured_fields`，以及项目/Token/店铺范围列表；没有任何项目时固定返回 `projects: []`，不能省略字段。
+- 数据表版本发布后完全不可变。已经保存的字段不能增加、删除、改名或改变类型/语义；任何变化都必须注册新的数据表版本，例如从 `*-v1` 发布为 `*-v2`。旧版本继续按原结构提供，不能覆盖旧项目的数据库表。
 - 数据表字段不随项目变化。项目只标识读取方、Token 与可读取店铺范围，不能修改表字段、表名、SQL、路径或 token hash。
+- 消费方应显式传 `fields`，并按管理页“接入说明”中的固定 SQL 类型建表。服务端不自动修改下游数据库，也不按字段名推断 SQL 类型；新版本由下游新建对应版本表并切换读取路径，旧版本数据和页面不受影响。
+- `store_scopes` 是行级读取权限：Bearer 只能请求其中的店铺 SID。它不影响本机同步，也不会为每个店铺创建独立数据表；旧 Token 不会因后来新增店铺而自动扩大权限。
 
-该设置只描述 `listing-daily-v1` 已映射的指标字段，绝不能创建、修改、删除 MySQL 表或列，也不能接受表名、SQL 或动态 path。
+下游项目接入说明：
+
+```text
+GET /api/datasources/datasets/projects/{token_id}/guide
+```
+
+该管理端点返回当前项目已授权的数据表、店铺 SID、固定 `CREATE TABLE` SQL、字段类型、快照/变更示例和版本规则；只返回 `<BEARER_TOKEN>` 占位符，不返回明文或 hash。下载 Markdown 后交给下游项目，服务端不连接下游数据库。
+
+该设置只描述系统已注册数据表的发布字段，绝不能接受任意表名、SQL 或动态 path，也不能动态创建、修改、删除物理表结构。
 
 ## 正式报表检验管理（已实现）
 
