@@ -14,6 +14,20 @@ var fbaStorageFeeChargesHeader = []string{
 	"total_incentive_fee_amount", "breakdown_incentive_fee_amount", "average_quantity_customer_orders",
 }
 
+var fbaStorageFeeChargesProductionHeader = []string{
+	"sku", "fnsku", "product_name", "fulfillment_center", "country_code", "longest_side", "median_side", "shortest_side",
+	"measurement_units", "weight", "weight_units", "item_volume", "volume_units", "product_size_tier", "average_quantity_on_hand",
+	"average_quantity_pending_removal", "estimated_total_item_volume", "month_of_charge", "storage_utilization_ratio",
+	"storage_utilization_ratio_units", "base_rate", "utilization_surcharge_rate", "avg_qty_for_sus", "est_vol_for_sus",
+	"est_base_msf", "est_sus", "currency", "estimated_monthly_storage_fee", "dangerous_goods_storage_type",
+	"eligible_for_inventory_discount", "qualifies_for_inventory_discount", "total_incentive_fee_amount",
+	"breakdown_incentive_fee_amount", "average_quantity_customer_orders",
+}
+
+var fbaStorageFeeChargesCanonicalHeader = append(append([]string(nil), fbaStorageFeeChargesHeader...),
+	"sku", "storage_utilization_ratio", "storage_utilization_ratio_units", "base_rate", "utilization_surcharge_rate",
+	"avg_qty_for_sus", "est_vol_for_sus", "est_base_msf", "est_sus")
+
 var fbaOverageFeeChargesHeader = []string{
 	"charged_date", "country_code", "storage_type", "charge_rate", "storage_usage_volume", "storage_limit_volume", "overage_volume", "volume_unit", "charged_fee_amount", "currency_code",
 }
@@ -27,7 +41,23 @@ type FBAOverageFeeCharges struct{ Values []string }
 type FBALongtermStorageFeeCharges struct{ Values []string }
 
 func ParseFBAStorageFeeCharges(downloaded []byte, compressionAlgorithm, contentType string) ([]FBAStorageFeeCharges, error) {
-	return parseFixedReportRows(downloaded, compressionAlgorithm, contentType, "FBA storage fee charges", fbaStorageFeeChargesHeader, func(values []string) FBAStorageFeeCharges { return FBAStorageFeeCharges{Values: values} })
+	records, header, err := readExactTSVVariants(downloaded, compressionAlgorithm, contentType, "FBA storage fee charges", [][]string{fbaStorageFeeChargesHeader, fbaStorageFeeChargesProductionHeader})
+	if err != nil {
+		return nil, err
+	}
+	canonicalIndex := make(map[string]int, len(fbaStorageFeeChargesCanonicalHeader))
+	for i, name := range fbaStorageFeeChargesCanonicalHeader {
+		canonicalIndex[name] = i
+	}
+	rows := make([]FBAStorageFeeCharges, 0, len(records))
+	for _, record := range records {
+		values := make([]string, len(fbaStorageFeeChargesCanonicalHeader))
+		for i, name := range header {
+			values[canonicalIndex[name]] = record[i]
+		}
+		rows = append(rows, FBAStorageFeeCharges{Values: values})
+	}
+	return rows, nil
 }
 
 func ParseFBAOverageFeeCharges(downloaded []byte, compressionAlgorithm, contentType string) ([]FBAOverageFeeCharges, error) {

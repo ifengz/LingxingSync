@@ -302,7 +302,9 @@ func formalReportSchemaRequirements(reportType string) map[string][]string {
 		"measurement_units", "weight", "weight_units", "item_volume", "volume_units", "product_size_tier", "average_quantity_on_hand",
 		"average_quantity_pending_removal", "estimated_total_item_volume", "month_of_charge", "storage_rate", "currency",
 		"estimated_monthly_storage_fee", "dangerous_goods_storage_type", "eligible_for_inventory_discount", "qualifies_for_inventory_discount",
-		"total_incentive_fee_amount", "breakdown_incentive_fee_amount", "average_quantity_customer_orders",
+		"total_incentive_fee_amount", "breakdown_incentive_fee_amount", "average_quantity_customer_orders", "sku",
+		"storage_utilization_ratio", "storage_utilization_ratio_units", "base_rate", "utilization_surcharge_rate",
+		"avg_qty_for_sus", "est_vol_for_sus", "est_base_msf", "est_sus",
 	}
 	fbaOverageFeeChargesSchemaColumns := []string{
 		"charged_date", "country_code", "storage_type", "charge_rate", "storage_usage_volume", "storage_limit_volume", "overage_volume", "volume_unit", "charged_fee_amount", "currency_code",

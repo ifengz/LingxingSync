@@ -64,6 +64,14 @@ func TestSaveFulfilledShipmentsAcceptsOfficialFortyEightColumnRow(t *testing.T) 
 	}
 }
 
+func TestSaveFBAStorageFeeChargesAcceptsCanonicalThirtySixColumnRow(t *testing.T) {
+	store := &DBReportStore{}
+	err := store.SaveFBAStorageFeeCharges(context.Background(), 1, []reportexport.FBAStorageFeeCharges{{Values: make([]string, 36)}}, "sha", "doc")
+	if err == nil || !strings.Contains(err.Error(), "nil database") {
+		t.Fatalf("error = %v, want 36-column placeholder validation to pass before nil database", err)
+	}
+}
+
 func TestMarkReportProgressRejectsUnknownStatusBeforeDatabase(t *testing.T) {
 	store := &DBReportStore{}
 	if err := store.MarkReportProgress(context.Background(), 1, "new_status", "", "", ""); err == nil || !strings.Contains(err.Error(), "invalid progress status") {

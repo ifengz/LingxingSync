@@ -155,6 +155,28 @@ func TestFeeReportMigrationsAreIndependent(t *testing.T) {
 	}
 }
 
+func TestStorageFeeProductionColumnsMigrationIsGuardedAndNonDestructive(t *testing.T) {
+	raw, err := os.ReadFile("../../migrations/060_add_fba_storage_fee_charges_production_columns.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sql := strings.ToUpper(string(raw))
+	for _, want := range []string{
+		"INFORMATION_SCHEMA.COLUMNS", "LS_FBA_STORAGE_FEE_CHARGES", "ALTER TABLE", "SKU",
+		"STORAGE_UTILIZATION_RATIO", "STORAGE_UTILIZATION_RATIO_UNITS", "BASE_RATE", "UTILIZATION_SURCHARGE_RATE",
+		"AVG_QTY_FOR_SUS", "EST_VOL_FOR_SUS", "EST_BASE_MSF", "EST_SUS",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("storage fee migration missing %q", want)
+		}
+	}
+	for _, forbidden := range []string{"DROP TABLE", "DROP COLUMN", "DELETE FROM", "TRUNCATE", "UPDATE "} {
+		if strings.Contains(sql, forbidden) {
+			t.Fatalf("storage fee migration contains destructive %s", forbidden)
+		}
+	}
+}
+
 func TestAllOrdersVariantMigrationIsGuardedAndNonDestructive(t *testing.T) {
 	raw, err := os.ReadFile("../../migrations/055_add_amazon_all_orders_variant_columns.sql")
 	if err != nil {

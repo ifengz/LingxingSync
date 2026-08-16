@@ -172,6 +172,22 @@ func TestAmazonAllOrdersSchemaRequiresProductionThirtyFourColumns(t *testing.T) 
 	}
 }
 
+func TestStorageFeeChargesSchemaRequiresProductionUnionAndStaysRawOnly(t *testing.T) {
+	requirements := formalReportSchemaRequirements(reportexport.FBAStorageFeeChargesReportType)
+	columns := requirements["ls_fba_storage_fee_charges"]
+	if len(columns) != 42 {
+		t.Fatalf("storage fee schema columns=%d, want 42 including six audit columns", len(columns))
+	}
+	for _, column := range []string{"asin", "storage_rate", "sku", "storage_utilization_ratio", "utilization_surcharge_rate", "est_sus"} {
+		if !slices.Contains(columns, column) {
+			t.Fatalf("storage fee schema missing %q: %#v", column, columns)
+		}
+	}
+	if reportRequiresDailyProjection(reportexport.FBAStorageFeeChargesReportType) {
+		t.Fatal("storage fee charges must remain raw-only")
+	}
+}
+
 func TestAdditionalFBAReportsHaveIndependentRawSchemas(t *testing.T) {
 	tests := map[string]string{
 		reportexport.FBAStrandedInventoryReportType:         "ls_fba_stranded_inventory",
