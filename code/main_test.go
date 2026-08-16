@@ -228,6 +228,18 @@ func TestRemovalReportsHaveIndependentRawSchemas(t *testing.T) {
 	}
 }
 
+func TestRemovalOrderSchemaPreservesLegacyServiceSpeedAndRequiresProductionOrderSource(t *testing.T) {
+	columns := formalReportSchemaRequirements(reportexport.FBARemovalOrderReportType)["ls_fba_removal_order_details"]
+	if len(columns) != 23 {
+		t.Fatalf("Removal Order schema columns=%d, want 23 including six audit and seventeen raw columns", len(columns))
+	}
+	for _, column := range []string{"order-source", "order-type", "service-speed"} {
+		if !slices.Contains(columns, column) {
+			t.Fatalf("Removal Order schema missing %q: %#v", column, columns)
+		}
+	}
+}
+
 func TestEstimatedFeesSchemaRequiresCanonicalFortyFieldsAndStaysRawOnly(t *testing.T) {
 	requirements := formalReportSchemaRequirements(reportexport.FBAEstimatedFeesReportType)
 	columns := requirements["ls_fba_estimated_fees"]

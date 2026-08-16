@@ -249,6 +249,41 @@ func TestEstimatedFeesProductionColumnsMigrationIsGuardedAndNonDestructive(t *te
 	}
 }
 
+func TestRemovalOrderProductionColumnMigrationIsGuardedAndNonDestructive(t *testing.T) {
+	legacyRaw, err := os.ReadFile("../../migrations/052_add_fba_removal_order_report.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacySQL := strings.ToUpper(string(legacyRaw))
+	if !strings.Contains(legacySQL, "`SERVICE-SPEED`") || strings.Contains(legacySQL, "`ORDER-SOURCE`") {
+		t.Fatal("migration 052 must preserve service-speed without backporting order-source")
+	}
+
+	raw, err := os.ReadFile("../../migrations/062_add_fba_removal_order_source.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sql := strings.ToUpper(string(raw))
+	for _, want := range []string{
+		"INFORMATION_SCHEMA.COLUMNS",
+		"TABLE_NAME = 'LS_FBA_REMOVAL_ORDER_DETAILS'",
+		"COLUMN_NAME = 'ORDER-SOURCE'",
+		"ADD COLUMN `ORDER-SOURCE` VARCHAR(64) NULL AFTER `ORDER-ID`",
+		"DO 0",
+		"PREPARE REMOVAL_ORDER_SOURCE_STMT",
+		"EXECUTE REMOVAL_ORDER_SOURCE_STMT",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("Removal Order migration missing %q", want)
+		}
+	}
+	for _, forbidden := range []string{"DROP TABLE", "DROP COLUMN", "DELETE FROM", "TRUNCATE", "UPDATE "} {
+		if strings.Contains(sql, forbidden) {
+			t.Fatalf("Removal Order migration contains destructive %s", forbidden)
+		}
+	}
+}
+
 func TestCustomerReturnsReportMigrationIsRepeatableAgainstLocalMySQL(t *testing.T) {
 	dsn := os.Getenv("LINGXING_MIGRATION_TEST_DSN")
 	if dsn == "" {

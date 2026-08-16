@@ -11,7 +11,7 @@ var fbaRecommendedRemovalHeader = []string{
 }
 
 var fbaRemovalOrderHeader = []string{
-	"request-date", "order-id", "order-type", "service-speed", "order-status", "last-updated-date", "sku", "fnsku", "disposition", "requested-quantity", "cancelled-quantity", "disposed-quantity", "shipped-quantity", "in-process-quantity", "removal-fee", "currency",
+	"request-date", "order-id", "order-source", "order-type", "order-status", "last-updated-date", "sku", "fnsku", "disposition", "requested-quantity", "cancelled-quantity", "disposed-quantity", "shipped-quantity", "in-process-quantity", "removal-fee", "currency",
 }
 
 var fbaRemovalShipmentHeader = []string{

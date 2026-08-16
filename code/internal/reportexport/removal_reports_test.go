@@ -16,7 +16,7 @@ func TestParseRemovalReportsRequireExactOfficialHeaders(t *testing.T) {
 			rows, err := ParseFBARecommendedRemoval(data, "", "")
 			return len(rows), err
 		}},
-		{"order", fbaRemovalOrderHeader, "request-date\torder-id\torder-type\tservice-speed\torder-status\tlast-updated-date\tsku\tfnsku\tdisposition\trequested-quantity\tcancelled-quantity\tdisposed-quantity\tshipped-quantity\tin-process-quantity\tremoval-fee\tcurrency", func(data []byte) (int, error) { rows, err := ParseFBARemovalOrder(data, "", ""); return len(rows), err }},
+		{"order", fbaRemovalOrderHeader, "request-date\torder-id\torder-source\torder-type\torder-status\tlast-updated-date\tsku\tfnsku\tdisposition\trequested-quantity\tcancelled-quantity\tdisposed-quantity\tshipped-quantity\tin-process-quantity\tremoval-fee\tcurrency", func(data []byte) (int, error) { rows, err := ParseFBARemovalOrder(data, "", ""); return len(rows), err }},
 		{"shipment", fbaRemovalShipmentHeader, "request-date\torder-id\tshipment-date\tsku\tfnsku\tdisposition\tshipped-quantity\tcarrier\ttracking-number\tremoval-order-type", func(data []byte) (int, error) {
 			rows, err := ParseFBARemovalShipment(data, "", "")
 			return len(rows), err
@@ -37,5 +37,22 @@ func TestParseRemovalReportsRequireExactOfficialHeaders(t *testing.T) {
 				t.Fatal("expected unknown-column failure")
 			}
 		})
+	}
+}
+
+func TestParseFBARemovalOrderUsesObservedColumnOrderAndRejectsLegacyHeader(t *testing.T) {
+	const observed = "request-date\torder-id\torder-source\torder-type\torder-status\tlast-updated-date\tsku\tfnsku\tdisposition\trequested-quantity\tcancelled-quantity\tdisposed-quantity\tshipped-quantity\tin-process-quantity\tremoval-fee\tcurrency"
+	row := "request\torder\tsource\ttype\tstatus\tupdated\tsku\tfnsku\tdisposition\trequested\tcancelled\tdisposed\tshipped\tin-process\tfee\tUSD"
+	rows, err := ParseFBARemovalOrder([]byte(observed+"\n"+row+"\n"), "", "")
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("observed Removal Order rows=%d err=%v", len(rows), err)
+	}
+	if rows[0].Values[2] != "source" || rows[0].Values[3] != "type" {
+		t.Fatalf("observed source/type values=%q/%q", rows[0].Values[2], rows[0].Values[3])
+	}
+
+	legacy := strings.Replace(observed, "order-source\torder-type", "order-type\tservice-speed", 1)
+	if _, err := ParseFBARemovalOrder([]byte(legacy+"\n"+row+"\n"), "", ""); err == nil {
+		t.Fatal("legacy order-type/service-speed header was accepted")
 	}
 }

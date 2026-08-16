@@ -2,9 +2,13 @@ package db
 
 import (
 	"context"
+	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"fmt"
+	"io"
 	"os"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -79,6 +83,115 @@ func TestSaveFBAStorageFeeChargesAcceptsCanonicalThirtySixColumnRow(t *testing.T
 		t.Fatalf("error = %v, want 36-column placeholder validation to pass before nil database", err)
 	}
 }
+
+func TestSaveFBARemovalOrderMapsObservedColumnsThroughPublicEntry(t *testing.T) {
+	log := &removalOrderSaveLog{}
+	driverName := fmt.Sprintf("removal_order_save_%d", time.Now().UnixNano())
+	sql.Register(driverName, removalOrderSaveDriver{log: log})
+	db, err := sqlx.Open(driverName, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	values := []string{"request", "order", "source", "type", "status", "updated", "sku", "fnsku", "disposition", "requested", "cancelled", "disposed", "shipped", "in-process", "fee", "USD"}
+	err = NewReportStore(db).SaveFBARemovalOrder(context.Background(), 1, []reportexport.FBARemovalOrder{{Values: values}}, "sha", "doc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(log.query, "`order-id`, `order-source`, `order-type`, `order-status`") {
+		t.Fatalf("Removal Order INSERT does not map observed columns in order: %s", log.query)
+	}
+	if strings.Contains(log.query, "service-speed") {
+		t.Fatalf("Removal Order INSERT still writes historical service-speed: %s", log.query)
+	}
+	if strings.Count(log.query, "`order-source`") != 3 {
+		t.Fatalf("Removal Order INSERT/upsert order-source occurrences=%d, want 3", strings.Count(log.query, "`order-source`"))
+	}
+	if got, want := log.args[8:10], []driver.Value{"source", "type"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("Removal Order source/type args=%v, want %v", got, want)
+	}
+}
+
+type removalOrderSaveLog struct {
+	query string
+	args  []driver.Value
+}
+
+type removalOrderSaveDriver struct{ log *removalOrderSaveLog }
+
+func (d removalOrderSaveDriver) Open(string) (driver.Conn, error) {
+	return &removalOrderSaveConn{log: d.log}, nil
+}
+
+type removalOrderSaveConn struct{ log *removalOrderSaveLog }
+
+func (c *removalOrderSaveConn) Prepare(query string) (driver.Stmt, error) {
+	if strings.Contains(query, "INSERT INTO ls_fba_removal_order_details") {
+		c.log.query = query
+	}
+	return removalOrderSaveStmt{query: query, log: c.log}, nil
+}
+
+func (*removalOrderSaveConn) Close() error              { return nil }
+func (*removalOrderSaveConn) Begin() (driver.Tx, error) { return removalOrderSaveTx{}, nil }
+
+func (*removalOrderSaveConn) BeginTx(context.Context, driver.TxOptions) (driver.Tx, error) {
+	return removalOrderSaveTx{}, nil
+}
+
+func (*removalOrderSaveConn) QueryContext(context.Context, string, []driver.NamedValue) (driver.Rows, error) {
+	return &removalOrderSaveRows{values: []driver.Value{"acct", "seller", "store", "task"}}, nil
+}
+
+func (*removalOrderSaveConn) ExecContext(context.Context, string, []driver.NamedValue) (driver.Result, error) {
+	return removalOrderSaveResult{}, nil
+}
+
+type removalOrderSaveStmt struct {
+	query string
+	log   *removalOrderSaveLog
+}
+
+func (removalOrderSaveStmt) Close() error  { return nil }
+func (removalOrderSaveStmt) NumInput() int { return -1 }
+func (s removalOrderSaveStmt) Exec(args []driver.Value) (driver.Result, error) {
+	if strings.Contains(s.query, "INSERT INTO ls_fba_removal_order_details") {
+		s.log.args = append([]driver.Value(nil), args...)
+	}
+	return removalOrderSaveResult{}, nil
+}
+func (removalOrderSaveStmt) Query([]driver.Value) (driver.Rows, error) {
+	return nil, driver.ErrSkip
+}
+
+type removalOrderSaveRows struct {
+	values []driver.Value
+	done   bool
+}
+
+func (*removalOrderSaveRows) Columns() []string {
+	return []string{"account_id", "seller_id", "store_id", "report_task_id"}
+}
+func (*removalOrderSaveRows) Close() error { return nil }
+func (r *removalOrderSaveRows) Next(dest []driver.Value) error {
+	if r.done {
+		return io.EOF
+	}
+	copy(dest, r.values)
+	r.done = true
+	return nil
+}
+
+type removalOrderSaveTx struct{}
+
+func (removalOrderSaveTx) Commit() error   { return nil }
+func (removalOrderSaveTx) Rollback() error { return nil }
+
+type removalOrderSaveResult struct{}
+
+func (removalOrderSaveResult) LastInsertId() (int64, error) { return 1, nil }
+func (removalOrderSaveResult) RowsAffected() (int64, error) { return 1, nil }
 
 func TestMarkReportProgressRejectsUnknownStatusBeforeDatabase(t *testing.T) {
 	store := &DBReportStore{}
