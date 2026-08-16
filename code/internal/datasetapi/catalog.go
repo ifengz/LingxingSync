@@ -49,7 +49,7 @@ var definitions = map[string]Definition{
 		Source: "ls_sc_fba_order_addresses", Grain: "store + shipment_id + shipment_item_id",
 		InitialCursor: "0|0|0|0",
 		FixedFields:   []string{"store", "record_date", "stable_key", "updated_at"},
-		Fields:        []string{"amazon_order_id", "amazon_order_item_id", "purchase_date", "payments_date", "shipment_date", "reporting_date", "estimated_arrival_date", "sku", "product_name", "quantity_shipped", "currency", "item_price", "item_tax", "shipping_price", "shipping_tax", "gift_wrap_price", "gift_wrap_tax", "ship_service_level", "item_promotion_discount", "ship_promotion_discount", "carrier", "tracking_number", "fulfillment_channel", "points_granted", "hide_time", "ship_city", "ship_state", "ship_postal_code", "ship_country"},
+		Fields:        []string{"shipment_id", "shipment_item_id", "amazon_order_id", "amazon_order_item_id", "purchase_date", "payments_date", "shipment_date", "reporting_date", "estimated_arrival_date", "sku", "product_name", "quantity_shipped", "currency", "item_price", "item_tax", "shipping_price", "shipping_tax", "gift_wrap_price", "gift_wrap_tax", "ship_service_level", "item_promotion_discount", "ship_promotion_discount", "carrier", "tracking_number", "fulfillment_channel", "points_granted", "hide_time", "ship_city", "ship_state", "ship_postal_code", "ship_country"},
 	},
 }
 

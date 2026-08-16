@@ -1347,9 +1347,15 @@ window.dataSources = function () {
     tableFieldsSaving: false,
     tableFieldsSaveError: '',
     tableFieldsNeedRestart: false,
+    datasetGuideOpen: false,
+    datasetGuideLoading: false,
+    datasetGuideError: '',
+    datasetGuideProject: null,
+    datasetGuideMarkdown: '',
     selectedFields: [],
     savedFields: [],
     datasetProjects: [],
+    datasetProjectsNeedRestart: false,
     datasetStores: [],
     datasetStoresLoading: false,
     datasetStoresError: '',
@@ -1385,6 +1391,9 @@ window.dataSources = function () {
     },
     get tableFieldDirty() {
       return JSON.stringify(this.tableSelectedFields) !== JSON.stringify(this.tableSavedFields);
+    },
+    get tableFieldsLocked() {
+      return this.tableSavedFields.length > 0;
     },
     get catalogFieldCount() {
       return this.fieldGroups.reduce((count, group) => count + this.displayFields(group).length, 0);
@@ -1580,6 +1589,54 @@ window.dataSources = function () {
         this.datasetCreating = false;
       }
     },
+    async deleteDatasetProject(project) {
+      if (!project || !project.token_id) return;
+      const accepted = await window.syncConfirm('删除下游项目“' + (project.project_id || project.token_id) + '”？\n\n只会撤销该项目的读取凭证，不会删除数据表或业务数据。', '删除下游项目');
+      if (!accepted) return;
+      try {
+        const result = await window.apiDelete('/api/datasources/datasets/projects/' + encodeURIComponent(project.token_id));
+        this.datasetProjects = this.datasetProjects.filter((item) => item.token_id !== project.token_id);
+        this.datasetProjectsNeedRestart = Boolean(result && result.need_restart);
+        window.toast('success', '下游项目已删除');
+      } catch (error) {
+        window.toast('error', errorMessage(error, '删除下游项目失败'));
+      }
+    },
+    async loadDatasetProjectGuide(project) {
+      if (!project || !project.token_id || this.datasetGuideLoading) return;
+      this.datasetGuideOpen = true;
+      this.datasetGuideLoading = true;
+      this.datasetGuideError = '';
+      this.datasetGuideProject = project;
+      this.datasetGuideMarkdown = '';
+      try {
+        const data = await window.apiGet('/api/datasources/datasets/projects/' + encodeURIComponent(project.token_id) + '/guide');
+        if (!data || typeof data.markdown !== 'string') throw new Error('接入说明响应格式错误');
+        this.datasetGuideMarkdown = data.markdown;
+        this.datasetGuideProject = { ...project, guide_filename: data.filename || project.project_id + '-integration.md' };
+      } catch (error) {
+        this.datasetGuideError = errorMessage(error, '读取接入说明失败');
+      } finally {
+        this.datasetGuideLoading = false;
+      }
+    },
+    downloadDatasetGuide() {
+      if (!this.datasetGuideMarkdown) return;
+      const filename = (this.datasetGuideProject && this.datasetGuideProject.guide_filename) || 'downstream-integration.md';
+      const blob = new Blob([this.datasetGuideMarkdown], { type: 'text/markdown;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      link.click();
+      URL.revokeObjectURL(url);
+    },
+    closeDatasetGuide() {
+      this.datasetGuideOpen = false;
+      this.datasetGuideProject = null;
+      this.datasetGuideMarkdown = '';
+      this.datasetGuideError = '';
+    },
     async exportDatasetCSV() {
       if (this.datasetExporting) return;
       this.datasetExportError = '';
@@ -1643,14 +1700,20 @@ window.dataSources = function () {
       return sources[source] || '来源：未登记';
     },
     addTableField(name) {
+      if (this.tableFieldsLocked) return;
       if (!this.isTableFieldSelected(name) && this.fieldMeta(name)) {
         this.tableSelectedFields = [...this.tableSelectedFields, name];
       }
     },
+    canRemoveTableField(name) {
+      return !this.tableFieldsLocked && !this.tableSavedFields.includes(name);
+    },
     removeTableField(name) {
+      if (!this.canRemoveTableField(name)) return;
       this.tableSelectedFields = this.tableSelectedFields.filter((field) => field !== name);
     },
     toggleTableField(name) {
+      if (this.tableFieldsLocked) return;
       if (!this.fieldMeta(name)) return;
       this.tableSelectedFields = this.isTableFieldSelected(name)
         ? this.tableSelectedFields.filter((field) => field !== name)

@@ -70,6 +70,9 @@ assert.equal(entryManage.advancedAdd, false);
   assert.match(template, /createDatasetProjectToken\(\)/);
   assert.match(template, /addTableField\(field\.name\)/);
   assert.match(template, /removeTableField\(field\.name\)/);
+  assert.match(template, /loadDatasetProjectGuide\(project\)/);
+  assert.match(template, /downloadDatasetGuide\(\)/);
+  assert.match(template, /接入说明/);
   assert.match(template, /h-\[720px\] overflow-y-auto/);
   assert.match(template, /saveDatasetFieldAllowlist\(\)/);
   assert.match(template, /暂无可添加字段/);
@@ -275,26 +278,17 @@ void (async () => {
     assert.equal(JSON.stringify(catalog.tableSelectedFields), JSON.stringify(['sales_units', 'sessions_total']));
     assert.equal(catalog.tableFieldDirty, false);
     catalog.addTableField('inventory_sellable');
-    assert.equal(JSON.stringify(catalog.tableSelectedFields), JSON.stringify(['sales_units', 'sessions_total', 'inventory_sellable']));
-    assert.equal(catalog.availableTableFieldCount, 0);
-    assert.equal(JSON.stringify(catalog.publishedTableFields.map((field) => field.name)), JSON.stringify(['sales_units', 'sessions_total', 'inventory_sellable']));
-    catalog.removeTableField('sessions_total');
-    assert.equal(JSON.stringify(catalog.publishedTableFields.map((field) => field.name)), JSON.stringify(['sales_units', 'inventory_sellable']));
+    assert.equal(JSON.stringify(catalog.tableSelectedFields), JSON.stringify(['sales_units', 'sessions_total']), '已发布版本不能在原表追加字段');
     assert.equal(catalog.availableTableFieldCount, 1);
-    catalog.addTableField('sessions_total');
-    assert.equal(catalog.tableFieldDirty, true);
-    let tableFieldRequest = null;
-    sandbox.window.apiPut = async (url, body) => {
-      tableFieldRequest = { url, body };
-      return { fields: body.fields, need_restart: true };
-    };
-    await catalog.saveDatasetFieldAllowlist();
-    assert.equal(JSON.stringify(tableFieldRequest), JSON.stringify({
-      url: '/api/datasources/datasets/listing-daily-v1/fields/config',
-      body: { fields: ['sales_units', 'inventory_sellable', 'sessions_total'] },
-    }));
-    assert.equal(catalog.tableFieldDirty, false);
-    assert.equal(catalog.tableFieldsNeedRestart, true);
+    assert.equal(JSON.stringify(catalog.publishedTableFields.map((field) => field.name)), JSON.stringify(['sales_units', 'sessions_total']));
+    assert.equal(catalog.canRemoveTableField('sessions_total'), false, '同一 v1 已发布字段必须锁定，避免下游删列崩溃');
+    assert.equal(catalog.canRemoveTableField('inventory_sellable'), false, '已发布版本不能删除字段');
+    catalog.removeTableField('sessions_total');
+    assert.equal(JSON.stringify(catalog.publishedTableFields.map((field) => field.name)), JSON.stringify(['sales_units', 'sessions_total']));
+    catalog.removeTableField('inventory_sellable');
+    assert.equal(JSON.stringify(catalog.publishedTableFields.map((field) => field.name)), JSON.stringify(['sales_units', 'sessions_total']));
+    assert.equal(catalog.availableTableFieldCount, 1);
+    assert.equal(catalog.tableFieldsLocked, true);
     assert.equal(catalog.datasetProjects[0].token_id, 'tok_reader');
     assert.equal(JSON.stringify(catalog.datasetProjects[0].store_scopes), JSON.stringify(['12534']));
 
@@ -331,6 +325,17 @@ void (async () => {
       url: '/api/datasources/datasets/projects',
       body: { project_id: 'reader', dataset_scopes: ['listing-daily-v1', 'return-reason-detail-v1'], store_scopes: ['12534', '12536'] },
     }));
+
+    let deleteURL = '';
+    sandbox.window.syncConfirm = async () => true;
+    sandbox.window.apiDelete = async (url) => {
+      deleteURL = url;
+      return { project_id: 'polabel2', token_id: 'tok_reader', need_restart: true };
+    };
+    await catalog.deleteDatasetProject(catalog.datasetProjects[0]);
+    assert.equal(deleteURL, '/api/datasources/datasets/projects/tok_reader');
+    assert.equal(catalog.datasetProjects.some((project) => project.token_id === 'tok_reader'), false);
+    assert.equal(catalog.datasetProjectsNeedRestart, true);
 
     let exportURL = '';
     sandbox.window.apiDownload = async (url) => {

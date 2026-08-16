@@ -52,6 +52,8 @@ func (s *Server) registerConfigRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/datasources/{table}/columns", s.apiDatasourceColumns)
 	mux.HandleFunc("POST /api/datasources/datasets/listing-daily-v1/projects", s.apiCreateDatasetProjectToken)
 	mux.HandleFunc("POST /api/datasources/datasets/projects", s.apiCreateDatasetProjectToken)
+	mux.HandleFunc("DELETE /api/datasources/datasets/projects/{token_id}", s.apiDeleteDatasetProjectToken)
+	mux.HandleFunc("GET /api/datasources/datasets/projects/{token_id}/guide", s.apiDownstreamProjectGuide)
 	mux.HandleFunc("POST /api/datasources/datasets/listing-daily-v1/fields/complete", s.apiCompleteDatasetFields)
 	mux.HandleFunc("GET /api/datasources/datasets/catalog", s.apiDatasetCatalog)
 	mux.HandleFunc("GET /api/datasources/datasets/{id}/export", s.apiExportDatasetCSV)
@@ -117,6 +119,13 @@ func (s *Server) apiCreateDatasetProjectToken(w http.ResponseWriter, r *http.Req
 			return
 		}
 	}
+	for _, datasetID := range datasetScopes {
+		definition, _ := datasetapi.DefinitionFor(datasetID)
+		if len(configuredDatasetFields(current.DatasetAPI, definition)) == 0 {
+			errJSON(w, http.StatusConflict, "数据表尚未发布字段: "+datasetID)
+			return
+		}
+	}
 	tokenID, err := newDatasetTokenID(current.DatasetAPI.Tokens)
 	if err != nil {
 		errJSON(w, http.StatusInternalServerError, "生成 Token ID 失败: "+err.Error())
@@ -129,7 +138,6 @@ func (s *Server) apiCreateDatasetProjectToken(w http.ResponseWriter, r *http.Req
 	}
 	old := current
 	snap := s.store.Snapshot()
-	snap.DatasetAPI.FieldAllowlist = completeDatasetFieldAllowlist(snap.DatasetAPI.FieldAllowlist)
 	if snap.DatasetAPI.CursorSecret == "" {
 		snap.DatasetAPI.CursorSecret, err = newDatasetBearerToken()
 		if err != nil {
@@ -143,7 +151,7 @@ func (s *Server) apiCreateDatasetProjectToken(w http.ResponseWriter, r *http.Req
 		TokenHash:     datasetapi.HashToken(rawToken),
 		DatasetScopes: datasetScopes,
 		StoreScopes:   storeScopes,
-		Fields:        append([]string(nil), availableDatasetFields...),
+		Fields:        append([]string(nil), current.DatasetAPI.FieldAllowlist...),
 	})
 	s.applyConfigWrite(w, old, snap, "下游项目 Token 已创建，请保存明文 Token 并重启同步机", map[string]any{
 		"project_id":   in.ProjectID,
@@ -153,9 +161,38 @@ func (s *Server) apiCreateDatasetProjectToken(w http.ResponseWriter, r *http.Req
 	})
 }
 
+func (s *Server) apiDeleteDatasetProjectToken(w http.ResponseWriter, r *http.Request) {
+	if s.store == nil {
+		errJSON(w, http.StatusInternalServerError, "配置存储未初始化")
+		return
+	}
+	tokenID := strings.TrimSpace(r.PathValue("token_id"))
+	current := s.store.Current()
+	index := -1
+	var removed config.DatasetToken
+	for i, token := range current.DatasetAPI.Tokens {
+		if token.ID == tokenID {
+			index = i
+			removed = token
+			break
+		}
+	}
+	if index < 0 {
+		errJSON(w, http.StatusNotFound, "下游项目不存在")
+		return
+	}
+	snap := s.store.Snapshot()
+	snap.DatasetAPI.Tokens = append(snap.DatasetAPI.Tokens[:index], snap.DatasetAPI.Tokens[index+1:]...)
+	s.applyConfigWrite(w, current, snap, "下游项目已删除，请重启同步机使 Token 失效", map[string]any{
+		"project_id":   removed.ProjectID,
+		"token_id":     removed.ID,
+		"need_restart": true,
+	})
+}
+
 func normalizeDatasetScopes(values []string) ([]string, error) {
 	if len(values) == 0 {
-		return []string{datasetapi.DatasetID}, nil
+		return nil, fmt.Errorf("数据表范围不能为空")
 	}
 	seen := make(map[string]struct{}, len(values))
 	scopes := make([]string, 0, len(values))
@@ -210,6 +247,11 @@ func (s *Server) apiSaveDatasetFieldAllowlist(w http.ResponseWriter, r *http.Req
 		return
 	}
 	old := s.store.Current()
+	existing := configuredDatasetFields(old.DatasetAPI, definition)
+	if len(existing) > 0 && !sameDatasetFields(existing, fields) {
+		errJSON(w, http.StatusConflict, "数据表版本已发布，字段不能增删改，请注册新的数据表版本")
+		return
+	}
 	snap := s.store.Snapshot()
 	if definition.ID == datasetapi.DatasetID {
 		snap.DatasetAPI.FieldAllowlist = fields
@@ -364,6 +406,22 @@ func normalizeDatasetFieldAllowlistFor(definition datasetapi.Definition, values 
 	return fields, nil
 }
 
+func sameDatasetFields(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	seen := make(map[string]struct{}, len(left))
+	for _, field := range left {
+		seen[field] = struct{}{}
+	}
+	for _, field := range right {
+		if _, ok := seen[field]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
 func normalizeDatasetTokenValues(values []string, label string) ([]string, error) {
 	if len(values) == 0 {
 		return nil, fmt.Errorf("%s不能为空", label)
@@ -398,7 +456,7 @@ func newDatasetTokenID(tokens []config.DatasetToken) (string, error) {
 		existing[token.ID] = struct{}{}
 	}
 	for range 3 {
-		b := make([]byte, 12)
+		b := make([]byte, 24)
 		if _, err := rand.Read(b); err != nil {
 			return "", err
 		}
