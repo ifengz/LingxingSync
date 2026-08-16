@@ -570,15 +570,15 @@ func TestRunnerTerminalDiagnosticsAreSanitizedForAllNonDoneStatuses(t *testing.T
 }
 
 func TestRunnerDefaultPollingBoundaryIsTwentyFourHours(t *testing.T) {
-	if defaultPollInterval != time.Minute {
-		t.Fatalf("default polling interval=%s, want one minute", defaultPollInterval)
+	if defaultPollInterval != 2*time.Minute {
+		t.Fatalf("default polling interval=%s, want two minutes", defaultPollInterval)
 	}
 	if defaultPollTimeout != 24*time.Hour {
 		t.Fatalf("default polling boundary=%s, want official 24h task timeout", defaultPollTimeout)
 	}
 }
 
-func TestRunnerUsesOneMinuteWhenPollIntervalIsUnconfigured(t *testing.T) {
+func TestRunnerDefaultPollingDoesNotRetryWithinSixSeconds(t *testing.T) {
 	queries := 0
 	runner := Runner{
 		Client: signedClientFunc(func(_ context.Context, _ string, path string, _ map[string]any) ([]byte, int, int, error) {
@@ -598,7 +598,7 @@ func TestRunnerUsesOneMinuteWhenPollIntervalIsUnconfigured(t *testing.T) {
 		t.Fatalf("waitForDone error=%v, want context deadline", err)
 	}
 	if queries != 1 {
-		t.Fatalf("queries=%d before one minute default interval, want 1", queries)
+		t.Fatalf("queries=%d within six seconds, want 1", queries)
 	}
 }
 
