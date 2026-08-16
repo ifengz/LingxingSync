@@ -228,6 +228,22 @@ func TestRemovalReportsHaveIndependentRawSchemas(t *testing.T) {
 	}
 }
 
+func TestEstimatedFeesSchemaRequiresCanonicalFortyFieldsAndStaysRawOnly(t *testing.T) {
+	requirements := formalReportSchemaRequirements(reportexport.FBAEstimatedFeesReportType)
+	columns := requirements["ls_fba_estimated_fees"]
+	if len(columns) != 46 {
+		t.Fatalf("Estimated Fees schema columns=%d, want 46 including six audit columns", len(columns))
+	}
+	for _, column := range []string{"amazon-store", "product-size-tier", "estimated-order-handling-fee-per-order", "estimated-future-fee", "expected-future-fulfillment-fee-per-unit"} {
+		if !slices.Contains(columns, column) {
+			t.Fatalf("Estimated Fees schema missing %q: %#v", column, columns)
+		}
+	}
+	if reportRequiresDailyProjection(reportexport.FBAEstimatedFeesReportType) {
+		t.Fatal("Estimated Fees must remain raw-only")
+	}
+}
+
 func TestValidateFormalReportSchemaRejectsUnsupportedType(t *testing.T) {
 	err := validateFormalReportSchema("GET_UNSUPPORTED_REPORT", func(string) ([]string, error) {
 		t.Fatal("unsupported report type must fail before schema reads")

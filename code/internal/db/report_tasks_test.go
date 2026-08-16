@@ -56,6 +56,14 @@ func TestSaveFBAAllInventoryAcceptsProductionTwentyFourColumnRow(t *testing.T) {
 	}
 }
 
+func TestSaveFBAEstimatedFeesAcceptsCanonicalFortyColumnRow(t *testing.T) {
+	store := &DBReportStore{}
+	err := store.SaveFBAEstimatedFees(context.Background(), 1, []reportexport.FBAEstimatedFees{{Values: make([]string, 40)}}, "sha", "doc")
+	if err == nil || !strings.Contains(err.Error(), "nil database") {
+		t.Fatalf("error = %v, want 40-column placeholder validation to pass before nil database", err)
+	}
+}
+
 func TestSaveFulfilledShipmentsAcceptsOfficialFortyEightColumnRow(t *testing.T) {
 	store := &DBReportStore{}
 	err := store.SaveFulfilledShipments(context.Background(), 1, []reportexport.FulfilledShipment{{Values: make([]string, 48)}}, "sha", "doc")

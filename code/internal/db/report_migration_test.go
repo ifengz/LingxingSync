@@ -231,6 +231,24 @@ func TestMYIProductionColumnsMigrationIsGuardedAndNonDestructive(t *testing.T) {
 	}
 }
 
+func TestEstimatedFeesProductionColumnsMigrationIsGuardedAndNonDestructive(t *testing.T) {
+	raw, err := os.ReadFile("../../migrations/061_add_fba_estimated_fees_production_columns.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sql := strings.ToUpper(string(raw))
+	for _, want := range []string{"INFORMATION_SCHEMA.COLUMNS", "LS_FBA_ESTIMATED_FEES", "ALTER TABLE", "AMAZON-STORE", "PRODUCT-SIZE-TIER", "ESTIMATED-FUTURE-FEE", "EXPECTED-FUTURE-FULFILLMENT-FEE-PER-UNIT"} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("Estimated Fees migration missing %q", want)
+		}
+	}
+	for _, forbidden := range []string{"DROP TABLE", "DROP COLUMN", "DELETE FROM", "TRUNCATE", "UPDATE "} {
+		if strings.Contains(sql, forbidden) {
+			t.Fatalf("Estimated Fees migration contains destructive %s", forbidden)
+		}
+	}
+}
+
 func TestCustomerReturnsReportMigrationIsRepeatableAgainstLocalMySQL(t *testing.T) {
 	dsn := os.Getenv("LINGXING_MIGRATION_TEST_DSN")
 	if dsn == "" {

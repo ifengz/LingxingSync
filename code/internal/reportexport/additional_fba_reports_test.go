@@ -1,9 +1,17 @@
 package reportexport
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
+
+var productionFBAEstimatedFeesHeader31 = []string{
+	"sku", "fnsku", "asin", "product-name", "brand", "fulfilled-by", "amazon-store", "has-local-inventory", "your-price", "sales-price", "longest-side", "median-side", "shortest-side", "length-and-girth", "unit-of-dimension", "item-package-weight", "unit-of-weight", "product-size-tier", "currency", "estimated-fee-total", "estimated-referral-fee-per-unit", "estimated-variable-closing-fee", "estimated-order-handling-fee-per-order", "estimated-pick-pack-fee-per-unit", "estimated-weight-handling-fee-per-unit", "expected-fulfillment-fee-per-unit", "estimated-future-fee (Current Selling on Amazon + Future Fulfillment fees)", "estimated-future-order-handling-fee-per-order", "estimated-future-pick-pack-fee-per-unit", "estimated-future-weight-handling-fee-per-unit", "expected-future-fulfillment-fee-per-unit",
+}
+
+var expectedFBAEstimatedFeesCanonicalHeader40 = append(append([]string(nil), fbaEstimatedFeesHeader...),
+	"amazon-store", "product-size-tier", "estimated-order-handling-fee-per-order", "estimated-pick-pack-fee-per-unit", "estimated-weight-handling-fee-per-unit", "expected-fulfillment-fee-per-unit", "estimated-future-fee", "estimated-future-order-handling-fee-per-order", "estimated-future-pick-pack-fee-per-unit", "estimated-future-weight-handling-fee-per-unit", "expected-future-fulfillment-fee-per-unit")
 
 func TestParseAdditionalFBAReportsRequireOfficialHeaders(t *testing.T) {
 	tests := []struct {
@@ -37,4 +45,62 @@ func TestParseAdditionalFBAReportsRequireOfficialHeaders(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestParseFBAEstimatedFeesAcceptsProductionNAHeaderAndMapsLongField(t *testing.T) {
+	data := []byte(strings.Join(productionFBAEstimatedFeesHeader31, "\t") + "\n" + strings.Join(markerValues(productionFBAEstimatedFeesHeader31), "\t") + "\n")
+	rows, err := ParseFBAEstimatedFees(data, "", "")
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("rows=%d err=%v", len(rows), err)
+	}
+	if len(rows[0].Values) != len(expectedFBAEstimatedFeesCanonicalHeader40) {
+		t.Fatalf("canonical values=%d, want %d", len(rows[0].Values), len(expectedFBAEstimatedFeesCanonicalHeader40))
+	}
+	for _, field := range []string{"product-size-tier", "estimated-future-fee"} {
+		index := slices.Index(expectedFBAEstimatedFeesCanonicalHeader40, field)
+		want := "marker-" + field
+		if field == "estimated-future-fee" {
+			want = "marker-estimated-future-fee (Current Selling on Amazon + Future Fulfillment fees)"
+		}
+		if got := rows[0].Values[index]; got != want {
+			t.Fatalf("field %q = %q, want %q", field, got, want)
+		}
+	}
+	for _, oldOnly := range []string{"product-size-weight-band", "expected-domestic-fulfilment-fee-per-unit", "expected-efn-fulfilment-fee-per-unit-uk"} {
+		if got := rows[0].Values[slices.Index(expectedFBAEstimatedFeesCanonicalHeader40, oldOnly)]; got != "" {
+			t.Fatalf("old-only field %q was merged: %q", oldOnly, got)
+		}
+	}
+}
+
+func TestParseFBAEstimatedFeesKeepsOldHeaderAndFillsNewFieldsEmpty(t *testing.T) {
+	data := []byte(strings.Join(fbaEstimatedFeesHeader, "\t") + "\n" + strings.Join(markerValues(fbaEstimatedFeesHeader), "\t") + "\n")
+	rows, err := ParseFBAEstimatedFees(data, "", "")
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("rows=%d err=%v", len(rows), err)
+	}
+	if len(rows[0].Values) != len(expectedFBAEstimatedFeesCanonicalHeader40) {
+		t.Fatalf("canonical values=%d, want %d", len(rows[0].Values), len(expectedFBAEstimatedFeesCanonicalHeader40))
+	}
+	for _, field := range expectedFBAEstimatedFeesCanonicalHeader40[len(fbaEstimatedFeesHeader):] {
+		if got := rows[0].Values[slices.Index(expectedFBAEstimatedFeesCanonicalHeader40, field)]; got != "" {
+			t.Fatalf("missing old-header field %q = %q", field, got)
+		}
+	}
+}
+
+func TestParseFBAEstimatedFeesRejectsUnknownProductionHeader(t *testing.T) {
+	header := append([]string(nil), productionFBAEstimatedFeesHeader31...)
+	header[len(header)-1] = "unknown-production-field"
+	if _, err := ParseFBAEstimatedFees([]byte(strings.Join(header, "\t")+"\n"), "", ""); err == nil {
+		t.Fatal("unknown estimated fees header was accepted")
+	}
+}
+
+func markerValues(header []string) []string {
+	values := make([]string, len(header))
+	for i, name := range header {
+		values[i] = "marker-" + name
+	}
+	return values
 }
