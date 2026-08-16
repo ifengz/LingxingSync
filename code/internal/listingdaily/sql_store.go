@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/jmoiron/sqlx"
@@ -46,6 +47,7 @@ func (s SQLStore) persistBatch(ctx context.Context, rows []Metric, audits []Reco
 	if len(rows) == 0 && len(audits) == 0 {
 		return nil
 	}
+	rows = metricsForPersistence(rows)
 	tx, err := s.DB.BeginTxx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("listing daily: begin publish transaction: %w", err)
@@ -63,6 +65,14 @@ func (s SQLStore) persistBatch(ctx context.Context, rows []Metric, audits []Reco
 		return fmt.Errorf("listing daily: commit publish transaction: %w", err)
 	}
 	return nil
+}
+
+func metricsForPersistence(rows []Metric) []Metric {
+	ordered := append([]Metric(nil), rows...)
+	sort.SliceStable(ordered, func(i, j int) bool {
+		return keyID(ordered[i].Key, ordered[i].Scope) < keyID(ordered[j].Key, ordered[j].Scope)
+	})
+	return ordered
 }
 
 func persistMetrics(ctx context.Context, tx *sqlx.Tx, rows []Metric) error {
