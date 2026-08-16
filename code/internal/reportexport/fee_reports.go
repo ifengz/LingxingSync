@@ -15,7 +15,7 @@ var fbaStorageFeeChargesHeader = []string{
 }
 
 var fbaStorageFeeChargesProductionHeader = []string{
-	"sku", "fnsku", "product_name", "fulfillment_center", "country_code", "longest_side", "median_side", "shortest_side",
+	"asin", "fnsku", "product_name", "fulfillment_center", "country_code", "longest_side", "median_side", "shortest_side",
 	"measurement_units", "weight", "weight_units", "item_volume", "volume_units", "product_size_tier", "average_quantity_on_hand",
 	"average_quantity_pending_removal", "estimated_total_item_volume", "month_of_charge", "storage_utilization_ratio",
 	"storage_utilization_ratio_units", "base_rate", "utilization_surcharge_rate", "avg_qty_for_sus", "est_vol_for_sus",

@@ -7,7 +7,7 @@ import (
 )
 
 var productionFBAStorageFeeChargesHeader34 = []string{
-	"sku", "fnsku", "product_name", "fulfillment_center", "country_code", "longest_side", "median_side", "shortest_side",
+	"asin", "fnsku", "product_name", "fulfillment_center", "country_code", "longest_side", "median_side", "shortest_side",
 	"measurement_units", "weight", "weight_units", "item_volume", "volume_units", "product_size_tier", "average_quantity_on_hand",
 	"average_quantity_pending_removal", "estimated_total_item_volume", "month_of_charge", "storage_utilization_ratio",
 	"storage_utilization_ratio_units", "base_rate", "utilization_surcharge_rate", "avg_qty_for_sus", "est_vol_for_sus",
@@ -66,12 +66,12 @@ func TestParseFBAStorageFeeChargesAcceptsProductionThirtyFourColumnHeader(t *tes
 	if len(values) != 36 {
 		t.Fatalf("canonical values=%d, want 36", len(values))
 	}
-	for _, field := range []string{"sku", "storage_utilization_ratio", "est_sus"} {
+	for _, field := range []string{"asin", "storage_utilization_ratio", "est_sus"} {
 		if got := values[slices.Index(expectedFBAStorageFeeChargesCanonicalHeader36, field)]; got != "marker-"+field {
 			t.Fatalf("production field %q = %q", field, got)
 		}
 	}
-	for _, oldOnly := range []string{"asin", "storage_rate"} {
+	for _, oldOnly := range []string{"storage_rate", "sku"} {
 		if got := values[slices.Index(expectedFBAStorageFeeChargesCanonicalHeader36, oldOnly)]; got != "" {
 			t.Fatalf("old-only field %q was inferred: %q", oldOnly, got)
 		}
