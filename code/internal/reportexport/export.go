@@ -27,7 +27,7 @@ const (
 	maxDateRange           = 31 * 24 * time.Hour
 	defaultDownloadTimeout = 60 * time.Second
 	defaultSharedTaskWait  = 10 * time.Second
-	defaultPollInterval    = 2 * time.Minute
+	defaultPollInterval    = 3 * time.Minute
 	defaultPollTimeout     = 24 * time.Hour
 )
 

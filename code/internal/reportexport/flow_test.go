@@ -569,9 +569,9 @@ func TestRunnerTerminalDiagnosticsAreSanitizedForAllNonDoneStatuses(t *testing.T
 	}
 }
 
-func TestRunnerDefaultPollingBoundaryIsTwentyFourHours(t *testing.T) {
-	if defaultPollInterval != 2*time.Minute {
-		t.Fatalf("default polling interval=%s, want two minutes", defaultPollInterval)
+func TestRunnerDefaultPollingUsesObservedSellerSafeIntervalAndOfficialBoundary(t *testing.T) {
+	if defaultPollInterval != 3*time.Minute {
+		t.Fatalf("default polling interval=%s, want three minutes", defaultPollInterval)
 	}
 	if defaultPollTimeout != 24*time.Hour {
 		t.Fatalf("default polling boundary=%s, want official 24h task timeout", defaultPollTimeout)
