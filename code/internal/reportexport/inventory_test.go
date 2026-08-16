@@ -153,3 +153,42 @@ func TestParseFBAAllInventoryUsesArchivedReportTypeContract(t *testing.T) {
 		t.Fatalf("rows = %#v", rows)
 	}
 }
+
+func TestParseFBAAllInventoryAcceptsBlankMFNFulfillableQuantity(t *testing.T) {
+	data := strings.Join([]string{
+		strings.Join(fbaInventoryProductionHeader, "\t"),
+		"SKU-ARCHIVED\tFNSKU-ARCHIVED\tASIN-ARCHIVED\tArchived Widget\tNew\t9.99\tyes\t\tyes\t2\t3\t4\t5\t14\t0.25\t6\t7\t8\t0\t1\tyes\t11\t12\tSTORE-1",
+	}, "\n") + "\n"
+	rows, err := ParseFBAAllInventory([]byte(data), "", "")
+	if err != nil {
+		t.Fatalf("ParseFBAAllInventory returned error: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("rows = %#v", rows)
+	}
+	if rows[0].MFNFulfillableQuantity != nil || rows[0].MFNFulfillableQuantityRaw != "" {
+		t.Fatalf("blank MFN quantity = %#v", rows[0])
+	}
+}
+
+func TestParseFBAAllInventoryRejectsInvalidMFNFulfillableQuantity(t *testing.T) {
+	data := strings.Join([]string{
+		strings.Join(fbaInventoryProductionHeader, "\t"),
+		"SKU-ARCHIVED\tFNSKU-ARCHIVED\tASIN-ARCHIVED\tArchived Widget\tNew\t9.99\tyes\tn/a\tyes\t2\t3\t4\t5\t14\t0.25\t6\t7\t8\t0\t1\tyes\t11\t12\tSTORE-1",
+	}, "\n") + "\n"
+	_, err := ParseFBAAllInventory([]byte(data), "", "")
+	if err == nil || !strings.Contains(err.Error(), `column "mfn-fulfillable-quantity" value "n/a"`) {
+		t.Fatalf("invalid MFN quantity error = %v", err)
+	}
+}
+
+func TestParseFBAAllInventoryRejectsBlankProjectedQuantity(t *testing.T) {
+	data := strings.Join([]string{
+		strings.Join(fbaInventoryProductionHeader, "\t"),
+		"SKU-ARCHIVED\tFNSKU-ARCHIVED\tASIN-ARCHIVED\tArchived Widget\tNew\t9.99\tyes\t\tyes\t\t3\t4\t5\t14\t0.25\t6\t7\t8\t0\t1\tyes\t11\t12\tSTORE-1",
+	}, "\n") + "\n"
+	_, err := ParseFBAAllInventory([]byte(data), "", "")
+	if err == nil || !strings.Contains(err.Error(), `column "afn-warehouse-quantity" value ""`) {
+		t.Fatalf("blank projected quantity error = %v", err)
+	}
+}

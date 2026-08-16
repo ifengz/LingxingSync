@@ -46,7 +46,7 @@ type FBAInventory struct {
 	Condition                    string
 	YourPrice                    string
 	MFNListingExists             string
-	MFNFulfillableQuantity       int64
+	MFNFulfillableQuantity       *int64
 	MFNFulfillableQuantityRaw    string
 	AFNListingExists             string
 	AFNWarehouseQuantity         int64
@@ -118,19 +118,23 @@ func ParseFBAInventory(downloaded []byte, compressionAlgorithm, contentType stri
 	}
 	rows := make([]FBAInventory, 0, len(records))
 	for i, record := range records {
-		quantities, err := parseIntegerColumns("FBA inventory", i+2, record, 7, 9, 10, 11, 12, 13, 15, 16, 17, 18, 19)
+		requiredQuantities, err := parseIntegerColumns("FBA inventory", i+2, record, 9, 10, 11, 12, 13, 15, 16, 17, 18, 19)
+		if err != nil {
+			return nil, err
+		}
+		mfnQuantity, err := parseOptionalIntegerColumn("FBA inventory", i+2, record, 7)
 		if err != nil {
 			return nil, err
 		}
 		row := FBAInventory{
 			SKU: record[0], FNSKU: record[1], ASIN: record[2], ProductName: record[3], Condition: record[4], YourPrice: record[5], MFNListingExists: record[6],
-			MFNFulfillableQuantity: quantities[7], MFNFulfillableQuantityRaw: record[7], AFNListingExists: record[8],
-			AFNWarehouseQuantity: quantities[9], AFNWarehouseQuantityRaw: record[9], AFNFulfillableQuantity: quantities[10], AFNFulfillableQuantityRaw: record[10],
-			AFNUnsellableQuantity: quantities[11], AFNUnsellableQuantityRaw: record[11], AFNReservedQuantity: quantities[12], AFNReservedQuantityRaw: record[12],
-			AFNTotalQuantity: quantities[13], AFNTotalQuantityRaw: record[13], PerUnitVolume: record[14],
-			AFNInboundWorkingQuantity: quantities[15], AFNInboundWorkingRaw: record[15], AFNInboundShippedQuantity: quantities[16], AFNInboundShippedRaw: record[16],
-			AFNInboundReceivingQuantity: quantities[17], AFNInboundReceivingRaw: record[17], AFNResearchingQuantity: quantities[18], AFNResearchingQuantityRaw: record[18],
-			AFNReservedFutureSupply: quantities[19], AFNReservedFutureSupplyRaw: record[19], AFNFutureSupplyBuyable: record[20],
+			MFNFulfillableQuantity: mfnQuantity, MFNFulfillableQuantityRaw: record[7], AFNListingExists: record[8],
+			AFNWarehouseQuantity: requiredQuantities[9], AFNWarehouseQuantityRaw: record[9], AFNFulfillableQuantity: requiredQuantities[10], AFNFulfillableQuantityRaw: record[10],
+			AFNUnsellableQuantity: requiredQuantities[11], AFNUnsellableQuantityRaw: record[11], AFNReservedQuantity: requiredQuantities[12], AFNReservedQuantityRaw: record[12],
+			AFNTotalQuantity: requiredQuantities[13], AFNTotalQuantityRaw: record[13], PerUnitVolume: record[14],
+			AFNInboundWorkingQuantity: requiredQuantities[15], AFNInboundWorkingRaw: record[15], AFNInboundShippedQuantity: requiredQuantities[16], AFNInboundShippedRaw: record[16],
+			AFNInboundReceivingQuantity: requiredQuantities[17], AFNInboundReceivingRaw: record[17], AFNResearchingQuantity: requiredQuantities[18], AFNResearchingQuantityRaw: record[18],
+			AFNReservedFutureSupply: requiredQuantities[19], AFNReservedFutureSupplyRaw: record[19], AFNFutureSupplyBuyable: record[20],
 		}
 		switch len(header) {
 		case len(fbaInventoryEUHeader):
@@ -309,6 +313,17 @@ func parseIntegerColumns(name string, line int, record []string, columns ...int)
 		values[column] = value
 	}
 	return values, nil
+}
+
+func parseOptionalIntegerColumn(name string, line int, record []string, column int) (*int64, error) {
+	if record[column] == "" {
+		return nil, nil
+	}
+	value, err := strconv.ParseInt(record[column], 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("%s TSV row %d column %q value %q: %w", name, line, recordHeader(name, column), record[column], err)
+	}
+	return &value, nil
 }
 
 func recordHeader(name string, column int) string {
