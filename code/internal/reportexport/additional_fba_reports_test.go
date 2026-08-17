@@ -106,6 +106,16 @@ func TestParseFBAEstimatedFeesReportsFirstSameWidthHeaderDifference(t *testing.T
 	}
 }
 
+func TestParseFBAEstimatedFeesReportsEntireUnknownHeaderForContractDiscovery(t *testing.T) {
+	header := append([]string(nil), productionFBAEstimatedFeesHeader31...)
+	header[3] = "amazon-store"
+	header[len(header)-1] = "production-tail-field"
+	_, err := ParseFBAEstimatedFees([]byte(strings.Join(header, "\t")+"\n"), "", "")
+	if err == nil || !strings.Contains(err.Error(), "actual header=") || !strings.Contains(err.Error(), "production-tail-field") {
+		t.Fatalf("error=%v, want complete actual header for contract discovery", err)
+	}
+}
+
 func markerValues(header []string) []string {
 	values := make([]string, len(header))
 	for i, name := range header {
