@@ -850,6 +850,10 @@ func validateRequest(request Request) error {
 	default:
 		return fmt.Errorf("report export: unsupported report type %q", normalizedReportType(request))
 	}
+	return validateReportRequestFields(request)
+}
+
+func validateReportRequestFields(request Request) error {
 	if !validIdentifier(request.AccountID, 32) {
 		return fmt.Errorf("report export: invalid account_id")
 	}

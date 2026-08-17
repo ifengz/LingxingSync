@@ -77,9 +77,16 @@ func TestPrepareDatabaseKeepsMigrationsForNormalServer(t *testing.T) {
 }
 
 func TestFormalReportModeRejectsNegativeResumeAudit(t *testing.T) {
-	_, err := formalReportMode(false, false, -1)
+	_, err := formalReportMode(false, false, false, -1)
 	if err == nil || !strings.Contains(err.Error(), "must be positive") {
 		t.Fatalf("error=%v, want negative resume audit rejection", err)
+	}
+}
+
+func TestFormalReportModeRejectsInventoryPlanningProbeWithExport(t *testing.T) {
+	_, err := formalReportMode(false, true, true, 0)
+	if err == nil || !strings.Contains(err.Error(), "probe") {
+		t.Fatalf("error=%v, want probe/export conflict", err)
 	}
 }
 

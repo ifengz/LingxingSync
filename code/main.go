@@ -52,6 +52,7 @@ func main() {
 	baseURL := flag.String("base-url", "https://openapi.lingxing.com", "领星 OpenAPI 根地址")
 	reportReturns := flag.Bool("export-fba-customer-returns", false, "显式导出一份 Amazon FBA Customer Returns 正式报告后退出")
 	reportExport := flag.Bool("export-amazon-report", false, "显式导出一份已支持的 Amazon 正式报告后退出；配合 -report-type")
+	probeInventoryPlanning := flag.Bool("probe-fba-inventory-planning", false, "只创建/下载一份真实 FBA Inventory Planning 合同，不连接或写入本地数据库")
 	resumeReportAudit := flag.Int64("resume-amazon-report-audit", 0, "复用已有正式报告 audit 的同一上游任务，不创建新任务")
 	reportType := flag.String("report-type", reportexport.CustomerReturnsReportType, "Amazon report_type；默认 FBA Customer Returns")
 	reportAccount := flag.String("report-account", "", "报告导出使用的本地 account id")
@@ -64,7 +65,7 @@ func main() {
 	// The explicit CLI lane remains available for manual backfills; configured
 	// report_exports are registered with the existing in-process scheduler.
 	flag.Parse()
-	reportMode, modeErr := formalReportMode(*reportReturns, *reportExport, *resumeReportAudit)
+	reportMode, modeErr := formalReportMode(*reportReturns, *reportExport, *probeInventoryPlanning, *resumeReportAudit)
 	if modeErr != nil {
 		log.Fatalf("[main] %v", modeErr)
 	}
@@ -73,6 +74,9 @@ func main() {
 	}
 	if *resumeReportAudit > 0 && (*reportReturns || *reportExport) {
 		log.Fatalf("[main] -resume-amazon-report-audit 不能与创建报告参数同时使用")
+	}
+	if *probeInventoryPlanning && *reportType != reportexport.CustomerReturnsReportType {
+		log.Fatalf("[main] -probe-fba-inventory-planning 不接受 -report-type")
 	}
 
 	// 1. 加载配置（启动断言式校验，缺字段直接 FATAL）
@@ -83,6 +87,30 @@ func main() {
 	log.Printf("[main] 配置加载完成：%d 账号，%d 接口", len(cfg.Accounts), len(cfg.Endpoints))
 	if *validateConfig {
 		log.Printf("[main] 配置校验通过：%s", *configPath)
+		return
+	}
+	if *probeInventoryPlanning {
+		request := reportexport.Request{
+			ReportType:     reportexport.FBAInventoryPlanningReportType,
+			AccountID:      *reportAccount,
+			SellerID:       *reportSeller,
+			StoreID:        *reportStore,
+			Region:         *reportRegion,
+			MarketplaceIDs: splitNonEmpty(*reportMarketplaces),
+			DateFrom:       *reportDateFrom,
+			DateTo:         *reportDateTo,
+		}
+		account := cfg.FindAccount(request.AccountID)
+		if account == nil {
+			log.Fatalf("[main] Inventory Planning 合同探针账号不存在: %q", request.AccountID)
+		}
+		request.AccountID = account.ID
+		result, err := reportexport.ProbeFBAInventoryPlanning(context.Background(), api.NewClient(account, *baseURL), request)
+		if err != nil {
+			log.Fatalf("[main] Inventory Planning 合同探针失败: %v", err)
+		}
+		log.Printf("[main] Inventory Planning 合同探针完成：task=%s document=%s rows=%d sha256=%s content_type=%q compression=%q header=%q",
+			result.ReportTaskID, result.ReportDocumentID, result.Rows, result.DownloadSHA256, result.ContentType, result.CompressionAlgorithm, strings.Join(result.Header, "\t"))
 		return
 	}
 
@@ -297,9 +325,12 @@ func main() {
 	log.Printf("[main] 已退出")
 }
 
-func formalReportMode(reportReturns, reportExport bool, resumeAudit int64) (bool, error) {
+func formalReportMode(reportReturns, reportExport, probeInventoryPlanning bool, resumeAudit int64) (bool, error) {
 	if resumeAudit < 0 {
 		return false, fmt.Errorf("-resume-amazon-report-audit must be positive")
+	}
+	if probeInventoryPlanning && (reportReturns || reportExport || resumeAudit > 0) {
+		return false, fmt.Errorf("-probe-fba-inventory-planning cannot be combined with report export or resume")
 	}
 	return reportReturns || reportExport || resumeAudit > 0, nil
 }
