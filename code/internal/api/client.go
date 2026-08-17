@@ -342,6 +342,7 @@ func containsSensitiveDiagnosticMarker(value string) bool {
 		"app_secret", "appsecret", "app_key", "app-key", "appkey", "access_token", "accesstoken",
 		"refresh_token", "refreshtoken", "authorization:", "authorization=", "password:",
 		"password=", "cookie:", "cookie=", "secret:", "secret=", "token:", "token=",
+		"x-amz-",
 		"sign:", "sign=", "access%5ftoken", "app%5fsecret", "token%3d", "secret%3d",
 		`"token"`, `"cookie"`, `"sign"`, `"authorization"`, `"password"`, `"secret"`,
 	} {

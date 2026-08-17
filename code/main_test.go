@@ -90,6 +90,25 @@ func TestFormalReportModeRejectsInventoryPlanningProbeWithExport(t *testing.T) {
 	}
 }
 
+func TestInventoryPlanningProbeFailureKeepsEvidenceWithoutSignedURL(t *testing.T) {
+	result := reportexport.ContractProbeResult{
+		ReportTaskID:     "planning-task",
+		ReportDocumentID: "planning-document",
+		DownloadSHA256:   "planning-sha",
+		DownloadedBytes:  17,
+		Rows:             0,
+	}
+	message := formatInventoryPlanningProbeFailure(result, fmt.Errorf("download X-Amz-Signature=probe-signature-must-not-leak"))
+	for _, marker := range []string{"task=planning-task", "document=planning-document", "sha256=planning-sha", "bytes=17", "rows=0"} {
+		if !strings.Contains(message, marker) {
+			t.Fatalf("message=%q, missing %s", message, marker)
+		}
+	}
+	if strings.Contains(message, "probe-signature-must-not-leak") {
+		t.Fatal("failure message exposed signed URL")
+	}
+}
+
 func TestValidateCustomerReturnsSchemaFailsBeforeRunOnMissingColumn(t *testing.T) {
 	requirements := customerReturnsSchemaRequirements()
 	loadColumns := func(table string) ([]string, error) {

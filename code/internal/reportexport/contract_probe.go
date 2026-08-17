@@ -27,9 +27,12 @@ type ContractProbeResult struct {
 // ProbeFBAInventoryPlanning creates one formal Inventory Planning report and
 // returns only its transport metadata and TSV contract. It never connects to
 // or writes the local database.
-func ProbeFBAInventoryPlanning(ctx context.Context, client SignedJSONClient, request Request) (ContractProbeResult, error) {
+func ProbeFBAInventoryPlanning(ctx context.Context, client SignedJSONClient, limiter Limiter, request Request) (ContractProbeResult, error) {
 	if client == nil {
 		return ContractProbeResult{}, fmt.Errorf("report contract probe: client is required")
+	}
+	if limiter == nil {
+		return ContractProbeResult{}, fmt.Errorf("report contract probe: limiter is required")
 	}
 	if normalizedReportType(request) != FBAInventoryPlanningReportType {
 		return ContractProbeResult{}, fmt.Errorf("report contract probe: expected %s", FBAInventoryPlanningReportType)
@@ -38,7 +41,7 @@ func ProbeFBAInventoryPlanning(ctx context.Context, client SignedJSONClient, req
 		return ContractProbeResult{}, err
 	}
 
-	runner := Runner{Client: client, Store: contractProbeStore{}}
+	runner := Runner{Client: client, Store: contractProbeStore{}, Limiter: limiter}
 	raw, err := runner.call(ctx, createPath, createBody(request))
 	if err != nil {
 		return ContractProbeResult{}, err
@@ -62,7 +65,7 @@ func ProbeFBAInventoryPlanning(ctx context.Context, client SignedJSONClient, req
 	}
 	body, hash, contentType, err := runner.download(ctx, request, data)
 	if err != nil {
-		return ContractProbeResult{ReportTaskID: created.TaskID, ReportDocumentID: data.ReportDocumentID}, err
+		return ContractProbeResult{ReportTaskID: created.TaskID, ReportDocumentID: data.ReportDocumentID}, fmt.Errorf("report contract probe: download failed")
 	}
 	header, rows, err := readProbeTSV(body, data.CompressionAlgorithm, contentType)
 	if err != nil {
@@ -100,15 +103,22 @@ func readProbeTSV(downloaded []byte, compressionAlgorithm, contentType string) (
 		return nil, 0, fmt.Errorf("report contract probe: TSV header is empty")
 	}
 	rows := 0
+	physicalRow := 1
 	for {
-		_, err := reader.Read()
+		row, err := reader.Read()
 		if err == io.EOF {
+			if rows == 0 {
+				return nil, 0, fmt.Errorf("report contract probe: TSV has no business rows")
+			}
 			return header, rows, nil
 		}
 		if err != nil {
-			return nil, 0, fmt.Errorf("report contract probe: read TSV row %d: %w", rows+2, err)
+			return nil, 0, fmt.Errorf("report contract probe: read TSV row %d: %w", physicalRow+1, err)
 		}
-		rows++
+		physicalRow++
+		if strings.TrimSpace(strings.Join(row, "")) != "" {
+			rows++
+		}
 	}
 }
 

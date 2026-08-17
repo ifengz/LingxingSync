@@ -105,9 +105,9 @@ func main() {
 			log.Fatalf("[main] Inventory Planning 合同探针账号不存在: %q", request.AccountID)
 		}
 		request.AccountID = account.ID
-		result, err := reportexport.ProbeFBAInventoryPlanning(context.Background(), api.NewClient(account, *baseURL), request)
+		result, err := reportexport.ProbeFBAInventoryPlanning(context.Background(), api.NewClient(account, *baseURL), worker.NewLimiter(1, 1000), request)
 		if err != nil {
-			log.Fatalf("[main] Inventory Planning 合同探针失败: %v", err)
+			log.Fatalf("[main] %s", formatInventoryPlanningProbeFailure(result, err))
 		}
 		log.Printf("[main] Inventory Planning 合同探针完成：task=%s document=%s rows=%d sha256=%s content_type=%q compression=%q header=%q",
 			result.ReportTaskID, result.ReportDocumentID, result.Rows, result.DownloadSHA256, result.ContentType, result.CompressionAlgorithm, strings.Join(result.Header, "\t"))
@@ -333,6 +333,17 @@ func formalReportMode(reportReturns, reportExport, probeInventoryPlanning bool, 
 		return false, fmt.Errorf("-probe-fba-inventory-planning cannot be combined with report export or resume")
 	}
 	return reportReturns || reportExport || resumeAudit > 0, nil
+}
+
+func formatInventoryPlanningProbeFailure(result reportexport.ContractProbeResult, err error) string {
+	return fmt.Sprintf("Inventory Planning 合同探针失败: task=%s document=%s rows=%d bytes=%d sha256=%s: %s",
+		result.ReportTaskID,
+		result.ReportDocumentID,
+		result.Rows,
+		result.DownloadedBytes,
+		result.DownloadSHA256,
+		api.SanitizeDiagnosticText(err.Error()),
+	)
 }
 
 func customerReturnsRun(cfg *config.Config, clients *api.ClientRegistry, store reportexport.Store, limiter reportexport.Limiter, dailyReader listingdaily.SourceReader, dailyStore listingdaily.ReconciliationStore) func(context.Context, reportexport.Request) (reportexport.Result, error) {
