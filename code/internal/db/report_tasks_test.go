@@ -52,6 +52,14 @@ func TestSaveFBAInventoryAcceptsProductionTwentyFourColumnRow(t *testing.T) {
 	}
 }
 
+func TestSaveFBAStrandedInventoryAcceptsProductionNineteenColumnRow(t *testing.T) {
+	store := &DBReportStore{}
+	err := store.SaveFBAStrandedInventory(context.Background(), 1, []reportexport.FBAStrandedInventory{{Values: make([]string, 19)}}, "sha", "doc")
+	if err == nil || !strings.Contains(err.Error(), "nil database") {
+		t.Fatalf("error = %v, want 19-column placeholder validation to pass before nil database", err)
+	}
+}
+
 func TestSaveFBAAllInventoryAcceptsProductionTwentyFourColumnRow(t *testing.T) {
 	store := &DBReportStore{}
 	err := store.SaveFBAAllInventory(context.Background(), 1, []reportexport.FBAAllInventory{{AFNFCTransferQuantity: "1", AFNOnhandBuyableQuantity: "2", Store: "store", AFNFulfillableQuantityRaw: "3"}}, "sha", "doc")

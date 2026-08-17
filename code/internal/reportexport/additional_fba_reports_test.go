@@ -47,6 +47,20 @@ func TestParseAdditionalFBAReportsRequireOfficialHeaders(t *testing.T) {
 	}
 }
 
+func TestParseFBAStrandedInventoryAcceptsProductionProgramColumn(t *testing.T) {
+	data := []byte(strings.Join(fbaStrandedInventoryProductionHeader, "\t") + "\n" + strings.Join(markerValues(fbaStrandedInventoryProductionHeader), "\t") + "\n")
+	rows, err := ParseFBAStrandedInventory(data, "", "")
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("rows=%d err=%v", len(rows), err)
+	}
+	if len(rows[0].Values) != len(fbaStrandedInventoryProductionHeader) {
+		t.Fatalf("values=%d, want %d", len(rows[0].Values), len(fbaStrandedInventoryProductionHeader))
+	}
+	if got := rows[0].Values[len(fbaStrandedInventoryProductionHeader)-1]; got != "marker-program" {
+		t.Fatalf("program=%q, want marker-program", got)
+	}
+}
+
 func TestParseFBAEstimatedFeesAcceptsProductionNAHeaderAndMapsLongField(t *testing.T) {
 	data := []byte(strings.Join(productionFBAEstimatedFeesHeader31, "\t") + "\n" + strings.Join(markerValues(productionFBAEstimatedFeesHeader31), "\t") + "\n")
 	rows, err := ParseFBAEstimatedFees(data, "", "")

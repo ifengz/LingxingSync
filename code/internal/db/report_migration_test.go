@@ -284,6 +284,32 @@ func TestRemovalOrderProductionColumnMigrationIsGuardedAndNonDestructive(t *test
 	}
 }
 
+func TestStrandedInventoryProgramMigrationIsGuardedAndNonDestructive(t *testing.T) {
+	raw, err := os.ReadFile("../../migrations/064_add_fba_stranded_inventory_program.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sql := strings.ToUpper(string(raw))
+	for _, want := range []string{
+		"INFORMATION_SCHEMA.COLUMNS",
+		"TABLE_NAME = 'LS_FBA_STRANDED_INVENTORY'",
+		"COLUMN_NAME = 'PROGRAM'",
+		"ADD COLUMN `PROGRAM` VARCHAR(128) NULL",
+		"DO 0",
+		"PREPARE STRANDED_PROGRAM_STMT",
+		"EXECUTE STRANDED_PROGRAM_STMT",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("Stranded Inventory migration missing %q", want)
+		}
+	}
+	for _, forbidden := range []string{"DROP TABLE", "DROP COLUMN", "DELETE FROM", "TRUNCATE", "UPDATE "} {
+		if strings.Contains(sql, forbidden) {
+			t.Fatalf("Stranded Inventory migration contains destructive %s", forbidden)
+		}
+	}
+}
+
 func TestCustomerReturnsReportMigrationIsRepeatableAgainstLocalMySQL(t *testing.T) {
 	dsn := os.Getenv("LINGXING_MIGRATION_TEST_DSN")
 	if dsn == "" {

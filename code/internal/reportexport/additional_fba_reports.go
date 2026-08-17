@@ -12,6 +12,8 @@ var fbaStrandedInventoryHeader = []string{
 	"primary-action", "date-stranded", "Date-to-take-auto-removal", "status-primary", "status-secondary", "error-message", "stranded-reason", "asin", "sku", "fnsku", "product-name", "condition", "fulfilled-by", "fulfillable-qty", "your-price", "unfulfillable-qty", "reserved-quantity", "inbound-shipped-qty",
 }
 
+var fbaStrandedInventoryProductionHeader = append(append([]string(nil), fbaStrandedInventoryHeader...), "program")
+
 var fbaEstimatedFeesHeader = []string{
 	"sku", "fnsku", "asin", "product-name", "product-group", "brand", "fulfilled-by", "has-local-inventory", "your-price", "sales-price", "longest-side", "median-side", "shortest-side", "length-and-girth", "unit-of-dimension", "item-package-weight", "unit-of-weight", "product-size-weight-band", "currency", "estimated-fee-total", "estimated-referral-fee-per-unit", "estimated-variable-closing-fee", "expected-domestic-fulfilment-fee-per-unit", "expected-efn-fulfilment-fee-per-unit-uk", "expected-efn-fulfilment-fee-per-unit-de", "expected-efn-fulfilment-fee-per-unit-fr", "expected-efn-fulfilment-fee-per-unit-it", "expected-efn-fulfilment-fee-per-unit-es", "expected-efn-fulfilment-fee-per-unit-se",
 }
@@ -37,7 +39,23 @@ type FBAEstimatedFees struct{ Values []string }
 type FBAInboundNoncompliance struct{ Values []string }
 
 func ParseFBAStrandedInventory(downloaded []byte, compressionAlgorithm, contentType string) ([]FBAStrandedInventory, error) {
-	return parseFixedReportRows(downloaded, compressionAlgorithm, contentType, "FBA stranded inventory", fbaStrandedInventoryHeader, func(values []string) FBAStrandedInventory { return FBAStrandedInventory{Values: values} })
+	records, header, err := readExactTSVVariants(downloaded, compressionAlgorithm, contentType, "FBA stranded inventory", [][]string{fbaStrandedInventoryHeader, fbaStrandedInventoryProductionHeader})
+	if err != nil {
+		return nil, err
+	}
+	canonicalIndex := make(map[string]int, len(fbaStrandedInventoryProductionHeader))
+	for i, name := range fbaStrandedInventoryProductionHeader {
+		canonicalIndex[name] = i
+	}
+	rows := make([]FBAStrandedInventory, 0, len(records))
+	for _, record := range records {
+		values := make([]string, len(fbaStrandedInventoryProductionHeader))
+		for i, name := range header {
+			values[canonicalIndex[name]] = record[i]
+		}
+		rows = append(rows, FBAStrandedInventory{Values: values})
+	}
+	return rows, nil
 }
 
 func ParseFBAEstimatedFees(downloaded []byte, compressionAlgorithm, contentType string) ([]FBAEstimatedFees, error) {
