@@ -7,7 +7,7 @@ import (
 )
 
 var productionFBAEstimatedFeesHeader31 = []string{
-	"sku", "fnsku", "asin", "product-name", "brand", "fulfilled-by", "amazon-store", "has-local-inventory", "your-price", "sales-price", "longest-side", "median-side", "shortest-side", "length-and-girth", "unit-of-dimension", "item-package-weight", "unit-of-weight", "product-size-tier", "currency", "estimated-fee-total", "estimated-referral-fee-per-unit", "estimated-variable-closing-fee", "estimated-order-handling-fee-per-order", "estimated-pick-pack-fee-per-unit", "estimated-weight-handling-fee-per-unit", "expected-fulfillment-fee-per-unit", "estimated-future-fee (Current Selling on Amazon + Future Fulfillment fees)", "estimated-future-order-handling-fee-per-order", "estimated-future-pick-pack-fee-per-unit", "estimated-future-weight-handling-fee-per-unit", "expected-future-fulfillment-fee-per-unit",
+	"sku", "fnsku", "asin", "amazon-store", "product-name", "product-group", "brand", "fulfilled-by", "your-price", "sales-price", "longest-side", "median-side", "shortest-side", "length-and-girth", "unit-of-dimension", "item-package-weight", "unit-of-weight", "product-size-tier", "currency", "estimated-fee-total", "estimated-referral-fee-per-unit", "estimated-variable-closing-fee", "estimated-order-handling-fee-per-order", "estimated-pick-pack-fee-per-unit", "estimated-weight-handling-fee-per-unit", "expected-fulfillment-fee-per-unit", "estimated-future-fee (Current Selling on Amazon + Future Fulfillment fees)", "estimated-future-order-handling-fee-per-order", "estimated-future-pick-pack-fee-per-unit", "estimated-future-weight-handling-fee-per-unit", "expected-future-fulfillment-fee-per-unit",
 }
 
 var expectedFBAEstimatedFeesCanonicalHeader40 = append(append([]string(nil), fbaEstimatedFeesHeader...),
@@ -56,7 +56,7 @@ func TestParseFBAEstimatedFeesAcceptsProductionNAHeaderAndMapsLongField(t *testi
 	if len(rows[0].Values) != len(expectedFBAEstimatedFeesCanonicalHeader40) {
 		t.Fatalf("canonical values=%d, want %d", len(rows[0].Values), len(expectedFBAEstimatedFeesCanonicalHeader40))
 	}
-	for _, field := range []string{"product-size-tier", "estimated-future-fee"} {
+	for _, field := range []string{"amazon-store", "product-name", "product-group", "brand", "fulfilled-by", "product-size-tier", "estimated-order-handling-fee-per-order", "estimated-future-fee"} {
 		index := slices.Index(expectedFBAEstimatedFeesCanonicalHeader40, field)
 		want := "marker-" + field
 		if field == "estimated-future-fee" {
@@ -66,7 +66,7 @@ func TestParseFBAEstimatedFeesAcceptsProductionNAHeaderAndMapsLongField(t *testi
 			t.Fatalf("field %q = %q, want %q", field, got, want)
 		}
 	}
-	for _, oldOnly := range []string{"product-size-weight-band", "expected-domestic-fulfilment-fee-per-unit", "expected-efn-fulfilment-fee-per-unit-uk"} {
+	for _, oldOnly := range []string{"has-local-inventory", "product-size-weight-band", "expected-domestic-fulfilment-fee-per-unit", "expected-efn-fulfilment-fee-per-unit-uk"} {
 		if got := rows[0].Values[slices.Index(expectedFBAEstimatedFeesCanonicalHeader40, oldOnly)]; got != "" {
 			t.Fatalf("old-only field %q was merged: %q", oldOnly, got)
 		}

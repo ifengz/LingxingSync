@@ -22,7 +22,7 @@ const (
 )
 
 var fbaEstimatedFeesProductionHeader = []string{
-	"sku", "fnsku", "asin", "product-name", "brand", "fulfilled-by", "amazon-store", "has-local-inventory", "your-price", "sales-price", "longest-side", "median-side", "shortest-side", "length-and-girth", "unit-of-dimension", "item-package-weight", "unit-of-weight", "product-size-tier", "currency", "estimated-fee-total", "estimated-referral-fee-per-unit", "estimated-variable-closing-fee", "estimated-order-handling-fee-per-order", "estimated-pick-pack-fee-per-unit", "estimated-weight-handling-fee-per-unit", "expected-fulfillment-fee-per-unit", fbaEstimatedFeesFutureFeeHeader, "estimated-future-order-handling-fee-per-order", "estimated-future-pick-pack-fee-per-unit", "estimated-future-weight-handling-fee-per-unit", "expected-future-fulfillment-fee-per-unit",
+	"sku", "fnsku", "asin", "amazon-store", "product-name", "product-group", "brand", "fulfilled-by", "your-price", "sales-price", "longest-side", "median-side", "shortest-side", "length-and-girth", "unit-of-dimension", "item-package-weight", "unit-of-weight", "product-size-tier", "currency", "estimated-fee-total", "estimated-referral-fee-per-unit", "estimated-variable-closing-fee", "estimated-order-handling-fee-per-order", "estimated-pick-pack-fee-per-unit", "estimated-weight-handling-fee-per-unit", "expected-fulfillment-fee-per-unit", fbaEstimatedFeesFutureFeeHeader, "estimated-future-order-handling-fee-per-order", "estimated-future-pick-pack-fee-per-unit", "estimated-future-weight-handling-fee-per-unit", "expected-future-fulfillment-fee-per-unit",
 }
 
 var fbaEstimatedFeesCanonicalHeader = append(append([]string(nil), fbaEstimatedFeesHeader...),
