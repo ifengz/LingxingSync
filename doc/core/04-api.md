@@ -443,9 +443,11 @@ POST /api/v1/datasets/{dataset_id}/changes
 
 ## 数据表与下游项目管理（已实现）
 
-管理员可在“新增下游项目”切卡创建读取凭证：`POST /api/datasources/datasets/projects`，请求包含 `project_id`、非空 `dataset_scopes` 和非空 `store_scopes`。系统独立生成不可预测且与项目名解耦的长随机 `token_id`，响应只返回一次随机明文 `token`；配置文件仅保存其 SHA-256 `token_hash`。创建返回 `need_restart: true`，明文不进入日志或后续 GET。
+管理员可在“新增下游项目”切卡创建读取凭证：`POST /api/datasources/datasets/projects`，请求包含 `project_id`、非空 `dataset_scopes` 和非空 `store_scopes`。系统独立生成不可预测且与项目名解耦的长随机 `token_id`，同时保存随机明文 `token` 及其 SHA-256 `token_hash`；运行时鉴权仍只比较 hash。配置文件及备份必须以 `0600` 写入，明文不进入日志。创建返回 `need_restart: true`。
 
 创建下游项目不会补全或改动任何数据表字段；选中的数据表尚未发布字段时返回 409，管理员必须先在“数据表配置”完成发布。
+
+修改读取范围使用 `PUT /api/datasources/datasets/projects/{token_id}`，请求只包含非空 `dataset_scopes` 和非空 `store_scopes`。它只改变该 Token 可读取的数据表和店铺，项目名、Token ID、Bearer Token、本机数据表、原始数据和同步范围均保持不变；返回 `need_restart: true`，重启后新权限生效。不存在的 Token ID 返回 404。
 
 删除下游项目使用 `DELETE /api/datasources/datasets/projects/{token_id}`。删除只移除该 Token 配置，不删除数据表、原始数据或发布数据；返回 `need_restart: true`，重启后旧 Bearer 正式失效。不存在的 Token ID 返回 404，不得静默成功。
 
@@ -455,11 +457,15 @@ POST /api/v1/datasets/{dataset_id}/changes
 GET /api/datasources/datasets/catalog
 GET /api/datasources/datasets/{dataset_id}/fields/config
 PUT /api/datasources/datasets/{dataset_id}/fields/config
+POST /api/datasources/datasets/projects
+PUT /api/datasources/datasets/projects/{token_id}
+DELETE /api/datasources/datasets/projects/{token_id}
+GET /api/datasources/datasets/projects/{token_id}/guide
 ```
 
 字段管理属于现有管理面，继续受 `X-Sync-Secret` 中间件保护，不使用消费者 Bearer token：
 
-- `GET fields/config` 返回数据表 `dataset_id`、`dataset_name`、不可删除的 `fixed_fields`、全部 `available_fields`、当前 `configured_fields`，以及项目/Token/店铺范围列表；没有任何项目时固定返回 `projects: []`，不能省略字段。
+- `GET fields/config` 返回数据表 `dataset_id`、`dataset_name`、不可删除的 `fixed_fields`、全部 `available_fields`、当前 `configured_fields`，以及项目/Token/店铺范围列表；新建项目同时返回可长期查看的明文 `token`。历史 hash-only 项目保留鉴权兼容，但 `token` 为空且界面必须明确提示无法恢复；没有任何项目时固定返回 `projects: []`，不能省略字段。
 - 数据表版本发布后完全不可变。已经保存的字段不能增加、删除、改名或改变类型/语义；任何变化都必须注册新的数据表版本，例如从 `*-v1` 发布为 `*-v2`。旧版本继续按原结构提供，不能覆盖旧项目的数据库表。
 - 数据表字段不随项目变化。项目只标识读取方、Token 与可读取店铺范围，不能修改表字段、表名、SQL、路径或 token hash。
 - 消费方应显式传 `fields`，并按管理页“接入说明”中的固定 SQL 类型建表。服务端不自动修改下游数据库，也不按字段名推断 SQL 类型；新版本由下游新建对应版本表并切换读取路径，旧版本数据和页面不受影响。
@@ -471,7 +477,7 @@ PUT /api/datasources/datasets/{dataset_id}/fields/config
 GET /api/datasources/datasets/projects/{token_id}/guide
 ```
 
-该管理端点返回当前项目已授权的数据表、店铺 SID、固定 `CREATE TABLE` SQL、字段类型、快照/变更示例和版本规则；只返回 `<BEARER_TOKEN>` 占位符，不返回明文或 hash。下载 Markdown 后交给下游项目，服务端不连接下游数据库。
+该管理端点返回当前项目已授权的数据表、店铺 SID、当前明文 Bearer Token、固定 `CREATE TABLE` SQL、字段类型、快照/变更示例和版本规则。历史 hash-only 项目无法反推明文，说明中必须提示重新创建下游项目。下载 Markdown 后交给下游项目，服务端不连接下游数据库。
 
 该设置只描述系统已注册数据表的发布字段，绝不能接受任意表名、SQL 或动态 path，也不能动态创建、修改、删除物理表结构。
 
