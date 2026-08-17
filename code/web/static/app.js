@@ -1232,6 +1232,7 @@ function normalizeDatasetProjects(data) {
     return {
       project_id: projectId,
       token_id: tokenId,
+      token: typeof item.token === 'string' ? item.token : '',
       store_scopes: Array.isArray(item.store_scopes) ? item.store_scopes.filter((scope) => typeof scope === 'string' && scope.trim()) : [],
       dataset_scopes: Array.isArray(item.dataset_scopes) ? item.dataset_scopes.filter((scope) => typeof scope === 'string' && scope.trim()) : [],
       key,
@@ -1371,6 +1372,7 @@ window.dataSources = function () {
     fieldsRequestVersion: 0,
     datasetCreateOpen: false,
     datasetCreating: false,
+    datasetEditingTokenId: '',
     fieldsCompleting: false,
     datasetCreateError: '',
     datasetCreateResult: null,
@@ -1575,6 +1577,7 @@ window.dataSources = function () {
         this.datasetProjects.push({
           project_id: this.datasetCreateResult.project_id,
           token_id: this.datasetCreateResult.token_id,
+          token: this.datasetCreateResult.token || '',
           dataset_scopes: [...body.dataset_scopes],
           store_scopes: [...body.store_scopes],
           key: datasetProjectKey(this.datasetCreateResult.project_id, this.datasetCreateResult.token_id),
@@ -1582,9 +1585,61 @@ window.dataSources = function () {
         });
         this.datasetCreateForm = { project_id: '' };
         this.datasetStoreSelection = {};
-        window.toast('success', '下游项目 Token 已创建，请先复制明文 Token');
+        window.toast('success', '下游项目 Token 已创建');
       } catch (error) {
         this.datasetCreateError = errorMessage(error, '创建下游项目 Token 失败');
+      } finally {
+        this.datasetCreating = false;
+      }
+    },
+    editDatasetProject(project) {
+      if (!project || !project.token_id) return;
+      this.datasetEditingTokenId = project.token_id;
+      this.datasetCreateForm = { project_id: project.project_id || '' };
+      this.datasetScopeSelection = Object.fromEntries((project.dataset_scopes || []).map((scope) => [scope, true]));
+      const storeScopes = new Set(project.store_scopes || []);
+      this.datasetStoreSelection = Object.fromEntries(this.datasetStores
+        .filter((store) => storeScopes.has(store.sid))
+        .map((store) => [this.datasetStoreKey(store), true]));
+      this.datasetCreateError = '';
+      this.datasetCreateResult = null;
+      this.datasetTab = 'projects';
+    },
+    cancelDatasetProjectEdit() {
+      this.datasetEditingTokenId = '';
+      this.datasetCreateForm = { project_id: '' };
+      this.datasetScopeSelection = { 'listing-daily-v1': true };
+      this.datasetStoreSelection = {};
+      this.datasetCreateError = '';
+    },
+    async saveDatasetProjectScopes() {
+      if (!this.datasetEditingTokenId || this.datasetCreating) return;
+      this.datasetCreateError = '';
+      const storeScopes = this.datasetStoreScopes();
+      if (storeScopes.length === 0) {
+        this.datasetCreateError = '请至少选择一个可读取店铺';
+        return;
+      }
+      if (this.selectedDatasetScopes.length === 0) {
+        this.datasetCreateError = '请至少选择一张可读取数据表';
+        return;
+      }
+      const tokenId = this.datasetEditingTokenId;
+      const body = { dataset_scopes: this.selectedDatasetScopes, store_scopes: storeScopes };
+      this.datasetCreating = true;
+      try {
+        const result = await window.apiPut('/api/datasources/datasets/projects/' + encodeURIComponent(tokenId), body);
+        this.datasetProjects = this.datasetProjects.map((project) => project.token_id === tokenId ? {
+          ...project,
+          token: typeof result.token === 'string' ? result.token : project.token,
+          dataset_scopes: [...body.dataset_scopes],
+          store_scopes: [...body.store_scopes],
+        } : project);
+        this.datasetProjectsNeedRestart = Boolean(result && result.need_restart);
+        this.datasetEditingTokenId = '';
+        window.toast('success', '下游项目读取范围已保存');
+      } catch (error) {
+        this.datasetCreateError = errorMessage(error, '保存下游项目读取范围失败');
       } finally {
         this.datasetCreating = false;
       }

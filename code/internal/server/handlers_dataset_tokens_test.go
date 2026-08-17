@@ -153,7 +153,7 @@ func TestSaveDatasetFieldAllowlistRejectsUnknownDuplicateOrEmptyFields(t *testin
 	}
 }
 
-func TestCreateDatasetProjectTokenReturnsPlaintextOnceAndPersistsOnlyHash(t *testing.T) {
+func TestCreateDatasetProjectTokenPersistsPlaintextForInternalProjects(t *testing.T) {
 	cfg := validDatasetProjectTestConfig()
 	store := config.NewStore(t.TempDir()+"/config.yaml", cfg)
 	s := New(cfg, nil, nil, nil, "", Assets{FS: renderTestFS, TemplateFS: "testdata", StaticFS: "testdata"}, store, nil, nil, "")
@@ -190,11 +190,33 @@ func TestCreateDatasetProjectTokenReturnsPlaintextOnceAndPersistsOnlyHash(t *tes
 	if saved[0].TokenHash != datasetapi.HashToken(response.Data.Token) {
 		t.Fatalf("saved token hash does not match returned plaintext")
 	}
-	if strings.Contains(saved[0].TokenHash, response.Data.Token) || saved[0].TokenHash == response.Data.Token {
-		t.Fatal("plaintext token must not be persisted")
+	if saved[0].Token != response.Data.Token {
+		t.Fatalf("saved plaintext token=%q, want returned token", saved[0].Token)
 	}
 	if saved[0].ID != response.Data.TokenID || strings.Join(saved[0].Fields, ",") != "sales_units,returns_qty" {
 		t.Fatalf("saved token id/fields=%q/%v", saved[0].ID, saved[0].Fields)
+	}
+}
+
+func TestUpdateDownstreamProjectScopesKeepsPlaintextToken(t *testing.T) {
+	rawToken := "internal-reader-token"
+	cfg := validDatasetProjectTestConfig()
+	cfg.DatasetAPI.Tokens = []config.DatasetToken{{
+		ID: "tok_reader", ProjectID: "reader", Token: rawToken, TokenHash: datasetapi.HashToken(rawToken),
+		DatasetScopes: []string{datasetapi.DatasetID}, StoreScopes: []string{"12534"}, Fields: []string{"sales_units", "returns_qty"},
+	}}
+	store := config.NewStore(t.TempDir()+"/config.yaml", cfg)
+	s := New(cfg, nil, nil, nil, "", Assets{FS: renderTestFS, TemplateFS: "testdata", StaticFS: "testdata"}, store, nil, nil, "")
+	req := httptest.NewRequest(http.MethodPut, "/api/datasources/datasets/projects/tok_reader", strings.NewReader(`{"dataset_scopes":["listing-daily-v1","return-reason-detail-v1"],"store_scopes":["12536"]}`))
+	rec := httptest.NewRecorder()
+	s.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"need_restart":true`) || !strings.Contains(rec.Body.String(), rawToken) {
+		t.Fatalf("update status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	saved := store.Current().DatasetAPI.Tokens[0]
+	if saved.Token != rawToken || saved.TokenHash != datasetapi.HashToken(rawToken) || strings.Join(saved.DatasetScopes, ",") != "listing-daily-v1,return-reason-detail-v1" || strings.Join(saved.StoreScopes, ",") != "12536" {
+		t.Fatalf("updated token=%+v", saved)
 	}
 }
 
@@ -227,7 +249,7 @@ func TestDeleteDownstreamProjectRemovesOnlyMatchingToken(t *testing.T) {
 func TestDownstreamProjectGuideContainsAuthorizedSchemaAndExamples(t *testing.T) {
 	cfg := validDatasetProjectTestConfig()
 	cfg.DatasetAPI.Tokens = []config.DatasetToken{{
-		ID: "tok_reader", ProjectID: "reader", TokenHash: strings.Repeat("a", 64),
+		ID: "tok_reader", ProjectID: "reader", Token: "visible-internal-token", TokenHash: datasetapi.HashToken("visible-internal-token"),
 		DatasetScopes: []string{datasetapi.DatasetID, "return-reason-detail-v1"}, StoreScopes: []string{"12534"},
 		Fields: []string{"sales_units", "returns_qty"},
 	}}
@@ -240,7 +262,7 @@ func TestDownstreamProjectGuideContainsAuthorizedSchemaAndExamples(t *testing.T)
 		t.Fatalf("guide status=%d body=%s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	for _, want := range []string{"接入说明", "listing-daily-v1", "return-reason-detail-v1", "CREATE TABLE", "/snapshot", "/changes", "12534", "BEARER_TOKEN"} {
+	for _, want := range []string{"接入说明", "listing-daily-v1", "return-reason-detail-v1", "CREATE TABLE", "/snapshot", "/changes", "12534", "visible-internal-token"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("guide missing %q: %s", want, body)
 		}

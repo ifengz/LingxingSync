@@ -52,6 +52,7 @@ func (s *Server) registerConfigRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/datasources/{table}/columns", s.apiDatasourceColumns)
 	mux.HandleFunc("POST /api/datasources/datasets/listing-daily-v1/projects", s.apiCreateDatasetProjectToken)
 	mux.HandleFunc("POST /api/datasources/datasets/projects", s.apiCreateDatasetProjectToken)
+	mux.HandleFunc("PUT /api/datasources/datasets/projects/{token_id}", s.apiUpdateDatasetProjectScopes)
 	mux.HandleFunc("DELETE /api/datasources/datasets/projects/{token_id}", s.apiDeleteDatasetProjectToken)
 	mux.HandleFunc("GET /api/datasources/datasets/projects/{token_id}/guide", s.apiDownstreamProjectGuide)
 	mux.HandleFunc("POST /api/datasources/datasets/listing-daily-v1/fields/complete", s.apiCompleteDatasetFields)
@@ -65,6 +66,11 @@ func (s *Server) registerConfigRoutes(mux *http.ServeMux) {
 
 type createDatasetProjectTokenRequest struct {
 	ProjectID     string   `json:"project_id"`
+	DatasetScopes []string `json:"dataset_scopes"`
+	StoreScopes   []string `json:"store_scopes"`
+}
+
+type updateDatasetProjectScopesRequest struct {
 	DatasetScopes []string `json:"dataset_scopes"`
 	StoreScopes   []string `json:"store_scopes"`
 }
@@ -84,9 +90,9 @@ var availableDatasetFields = []string{
 	"sp_spend", "sp_sales", "sp_orders", "sd_spend", "sd_sales", "sd_orders", "hsa_spend", "hsa_sales", "hsa_orders", "sb_spend", "sb_sales", "sb_orders",
 }
 
-// apiCreateDatasetProjectToken creates one downstream reader credential. Only
-// the SHA-256 hash is written to config; the bearer value is returned once so
-// the caller can put it in the consuming project's secret store.
+// apiCreateDatasetProjectToken creates one downstream reader credential. The
+// internal management surface stores and displays the bearer while runtime
+// authentication continues to use its SHA-256 hash.
 func (s *Server) apiCreateDatasetProjectToken(w http.ResponseWriter, r *http.Request) {
 	if s.store == nil {
 		errJSON(w, http.StatusInternalServerError, "配置存储未初始化")
@@ -148,16 +154,73 @@ func (s *Server) apiCreateDatasetProjectToken(w http.ResponseWriter, r *http.Req
 	snap.DatasetAPI.Tokens = append(snap.DatasetAPI.Tokens, config.DatasetToken{
 		ID:            tokenID,
 		ProjectID:     in.ProjectID,
+		Token:         rawToken,
 		TokenHash:     datasetapi.HashToken(rawToken),
 		DatasetScopes: datasetScopes,
 		StoreScopes:   storeScopes,
 		Fields:        append([]string(nil), current.DatasetAPI.FieldAllowlist...),
 	})
-	s.applyConfigWrite(w, old, snap, "下游项目 Token 已创建，请保存明文 Token 并重启同步机", map[string]any{
-		"project_id":   in.ProjectID,
-		"token_id":     tokenID,
-		"token":        rawToken,
-		"need_restart": true,
+	s.applyConfigWrite(w, old, snap, "下游项目 Token 已创建，请重启同步机", map[string]any{
+		"project_id":     in.ProjectID,
+		"token_id":       tokenID,
+		"token":          rawToken,
+		"dataset_scopes": datasetScopes,
+		"store_scopes":   storeScopes,
+		"need_restart":   true,
+	})
+}
+
+func (s *Server) apiUpdateDatasetProjectScopes(w http.ResponseWriter, r *http.Request) {
+	if s.store == nil {
+		errJSON(w, http.StatusInternalServerError, "配置存储未初始化")
+		return
+	}
+	var in updateDatasetProjectScopesRequest
+	if err := decodeJSON(r, &in); err != nil {
+		errJSON(w, http.StatusBadRequest, "请求体格式错误: "+err.Error())
+		return
+	}
+	datasetScopes, err := normalizeDatasetScopes(in.DatasetScopes)
+	if err != nil {
+		errJSON(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	storeScopes, err := normalizeDatasetTokenValues(in.StoreScopes, "店铺范围")
+	if err != nil {
+		errJSON(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	tokenID := strings.TrimSpace(r.PathValue("token_id"))
+	current := s.store.Current()
+	index := -1
+	for i := range current.DatasetAPI.Tokens {
+		if current.DatasetAPI.Tokens[i].ID == tokenID {
+			index = i
+			break
+		}
+	}
+	if index < 0 {
+		errJSON(w, http.StatusNotFound, "下游项目不存在")
+		return
+	}
+	for _, datasetID := range datasetScopes {
+		definition, _ := datasetapi.DefinitionFor(datasetID)
+		if len(configuredDatasetFields(current.DatasetAPI, definition)) == 0 {
+			errJSON(w, http.StatusConflict, "数据表尚未发布字段: "+datasetID)
+			return
+		}
+	}
+	snap := s.store.Snapshot()
+	token := &snap.DatasetAPI.Tokens[index]
+	token.DatasetScopes = datasetScopes
+	token.StoreScopes = storeScopes
+	s.applyConfigWrite(w, current, snap, "下游项目读取范围已更新，请重启同步机", map[string]any{
+		"project_id":     token.ProjectID,
+		"token_id":       token.ID,
+		"token":          token.Token,
+		"dataset_scopes": token.DatasetScopes,
+		"store_scopes":   token.StoreScopes,
+		"need_restart":   true,
 	})
 }
 
@@ -289,7 +352,7 @@ func (s *Server) apiGetDatasetFieldAllowlist(w http.ResponseWriter, r *http.Requ
 			continue
 		}
 		projects = append(projects, datasetapi.ProjectFields{
-			ProjectID: token.ProjectID, TokenID: token.ID, DatasetScopes: append([]string(nil), token.DatasetScopes...), StoreScopes: append([]string(nil), token.StoreScopes...),
+			ProjectID: token.ProjectID, TokenID: token.ID, Token: token.Token, DatasetScopes: append([]string(nil), token.DatasetScopes...), StoreScopes: append([]string(nil), token.StoreScopes...),
 		})
 	}
 	okJSON(w, map[string]any{

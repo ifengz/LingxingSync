@@ -37,8 +37,12 @@ func (s *Server) apiDownstreamProjectGuide(w http.ResponseWriter, r *http.Reques
 
 func downstreamProjectGuide(token config.DatasetToken, apiConfig config.DatasetAPIConfig) (string, error) {
 	var out strings.Builder
-	fmt.Fprintf(&out, "# 下游项目接入说明\n\n项目：`%s`\nToken ID：`%s`\n\n", token.ProjectID, token.ID)
-	out.WriteString("本说明只描述本项目已授权的数据表和店铺。Bearer 明文只在创建时显示一次，请放入下游项目自己的密钥配置。\n\n")
+	bearer := token.Token
+	if bearer == "" {
+		bearer = "<历史 Token 明文不可恢复，请重新创建下游项目>"
+	}
+	fmt.Fprintf(&out, "# 下游项目接入说明\n\n项目：`%s`\nToken ID：`%s`\nBearer Token：`%s`\n\n", token.ProjectID, token.ID, bearer)
+	out.WriteString("本说明只描述本项目已授权的数据表和店铺。Bearer 保存在本项目中，可随时从管理页查看。\n\n")
 	out.WriteString("## 授权范围\n\n数据表：\n")
 	for _, datasetID := range token.DatasetScopes {
 		definition, ok := datasetapi.DefinitionFor(datasetID)
@@ -75,7 +79,7 @@ func downstreamProjectGuide(token config.DatasetToken, apiConfig config.DatasetA
 		}
 	}
 	out.WriteString("## API 示例\n\n")
-	out.WriteString("```http\nAuthorization: Bearer <BEARER_TOKEN>\nContent-Type: application/json\n```\n\n")
+	fmt.Fprintf(&out, "```http\nAuthorization: Bearer %s\nContent-Type: application/json\n```\n\n", bearer)
 	for _, datasetID := range token.DatasetScopes {
 		definition, _ := datasetapi.DefinitionFor(datasetID)
 		fields := configuredDatasetFields(apiConfig, definition)
@@ -83,8 +87,8 @@ func downstreamProjectGuide(token config.DatasetToken, apiConfig config.DatasetA
 		if len(token.StoreScopes) > 0 {
 			store = token.StoreScopes[0]
 		}
-		fmt.Fprintf(&out, "### `%s` 快照\n\n```bash\ncurl -X POST https://<LINGXING_SYNC_HOST>/api/v1/datasets/%s/snapshot \\\n  -H 'Authorization: Bearer <BEARER_TOKEN>' \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"store\":\"%s\",\"date_from\":\"YYYY-MM-DD\",\"date_to\":\"YYYY-MM-DD\",\"fields\":%q,\"page_size\":1000}'\n```\n\n", datasetID, datasetID, store, fields)
-		fmt.Fprintf(&out, "快照最后一页返回 `changes_cursor` 后：\n\n```bash\ncurl -X POST https://<LINGXING_SYNC_HOST>/api/v1/datasets/%s/changes \\\n  -H 'Authorization: Bearer <BEARER_TOKEN>' \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"store\":\"%s\",\"cursor\":\"<CHANGES_CURSOR>\",\"fields\":%q,\"page_size\":1000}'\n```\n\n", datasetID, store, fields)
+		fmt.Fprintf(&out, "### `%s` 快照\n\n```bash\ncurl -X POST https://<LINGXING_SYNC_HOST>/api/v1/datasets/%s/snapshot \\\n  -H 'Authorization: Bearer %s' \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"store\":\"%s\",\"date_from\":\"YYYY-MM-DD\",\"date_to\":\"YYYY-MM-DD\",\"fields\":%q,\"page_size\":1000}'\n```\n\n", datasetID, datasetID, bearer, store, fields)
+		fmt.Fprintf(&out, "快照最后一页返回 `changes_cursor` 后：\n\n```bash\ncurl -X POST https://<LINGXING_SYNC_HOST>/api/v1/datasets/%s/changes \\\n  -H 'Authorization: Bearer %s' \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"store\":\"%s\",\"cursor\":\"<CHANGES_CURSOR>\",\"fields\":%q,\"page_size\":1000}'\n```\n\n", datasetID, bearer, store, fields)
 	}
 	return strings.ReplaceAll(out.String(), "\" \"", "\",\""), nil
 }

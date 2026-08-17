@@ -71,6 +71,8 @@ assert.equal(entryManage.advancedAdd, false);
   assert.match(template, /addTableField\(field\.name\)/);
   assert.match(template, /removeTableField\(field\.name\)/);
   assert.match(template, /loadDatasetProjectGuide\(project\)/);
+  assert.match(template, /editDatasetProject\(project\)/);
+  assert.match(template, /project\.token/);
   assert.match(template, /downloadDatasetGuide\(\)/);
   assert.match(template, /接入说明/);
   assert.match(template, /h-\[720px\] overflow-y-auto/);
@@ -265,7 +267,7 @@ void (async () => {
         fixed_fields: ['store', 'channel', 'asin', 'sku', 'business_date', 'updated_at', 'is_provisional', 'verification_status'],
         available_fields: ['sales_units', 'inventory_sellable', 'sessions_total'],
         configured_fields: ['sales_units', 'sessions_total'],
-        projects: [{ project_id: 'polabel2', token_id: 'tok_reader', store_scopes: ['12534'] }],
+        projects: [{ project_id: 'polabel2', token_id: 'tok_reader', token: 'visible-token', dataset_scopes: ['listing-daily-v1'], store_scopes: ['12534'] }],
       };
     };
     await catalog.loadDatasetCatalog();
@@ -290,6 +292,7 @@ void (async () => {
     assert.equal(catalog.availableTableFieldCount, 1);
     assert.equal(catalog.tableFieldsLocked, true);
     assert.equal(catalog.datasetProjects[0].token_id, 'tok_reader');
+    assert.equal(catalog.datasetProjects[0].token, 'visible-token');
     assert.equal(JSON.stringify(catalog.datasetProjects[0].store_scopes), JSON.stringify(['12534']));
 
     const storeCalls = [];
@@ -312,6 +315,24 @@ void (async () => {
     catalog.toggleAllDatasetStores(true);
     assert.equal(JSON.stringify(catalog.datasetStoreScopes()), JSON.stringify(['12534', '12536']));
     assert.equal(catalog.formatDatasetStoreScopes(['12534']), '美国主店（12534）');
+
+    catalog.editDatasetProject(catalog.datasetProjects[0]);
+    assert.equal(catalog.datasetEditingTokenId, 'tok_reader');
+    assert.equal(catalog.datasetCreateForm.project_id, 'polabel2');
+    assert.equal(JSON.stringify(catalog.datasetStoreScopes()), JSON.stringify(['12534']));
+    catalog.toggleDatasetStore(catalog.datasetStores[1]);
+    let updateRequest = null;
+    sandbox.window.apiPut = async (url, body) => {
+      updateRequest = { url, body };
+      return { project_id: 'polabel2', token_id: 'tok_reader', token: 'visible-token', dataset_scopes: body.dataset_scopes, store_scopes: body.store_scopes, need_restart: true };
+    };
+    await catalog.saveDatasetProjectScopes();
+    assert.equal(JSON.stringify(updateRequest), JSON.stringify({
+      url: '/api/datasources/datasets/projects/tok_reader',
+      body: { dataset_scopes: ['listing-daily-v1'], store_scopes: ['12534', '12536'] },
+    }));
+    assert.equal(catalog.datasetProjects[0].token, 'visible-token');
+    assert.equal(catalog.datasetProjectsNeedRestart, true);
 
     let createRequest = null;
     sandbox.window.apiPost = async (url, body) => {

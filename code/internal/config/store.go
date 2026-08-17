@@ -53,8 +53,11 @@ func (s *ConfigStore) Save(newCfg *Config) error {
 
 	// 若磁盘上已有配置文件，先备份一份 .bak（只保留最近一次，覆盖旧的）。
 	if raw, err := os.ReadFile(s.path); err == nil {
-		if err := os.WriteFile(s.path+".bak", raw, 0644); err != nil {
+		if err := os.WriteFile(s.path+".bak", raw, 0600); err != nil {
 			return fmt.Errorf("备份旧配置: %w", err)
+		}
+		if err := os.Chmod(s.path+".bak", 0600); err != nil {
+			return fmt.Errorf("收紧配置备份权限: %w", err)
 		}
 	} else if !os.IsNotExist(err) {
 		return fmt.Errorf("读旧配置用于备份: %w", err)
@@ -66,8 +69,11 @@ func (s *ConfigStore) Save(newCfg *Config) error {
 		return fmt.Errorf("序列化新配置: %w", err)
 	}
 	tmpPath := s.path + ".tmp"
-	if err := os.WriteFile(tmpPath, out, 0644); err != nil {
+	if err := os.WriteFile(tmpPath, out, 0600); err != nil {
 		return fmt.Errorf("写临时配置文件: %w", err)
+	}
+	if err := os.Chmod(tmpPath, 0600); err != nil {
+		return fmt.Errorf("收紧临时配置权限: %w", err)
 	}
 	if err := os.Rename(tmpPath, s.path); err != nil {
 		os.Remove(tmpPath) // 清理临时文件，避免残留
@@ -86,6 +92,11 @@ func (s *ConfigStore) Mask() *Config {
 	c := s.Current()
 	for i := range c.Accounts {
 		c.Accounts[i].AppSecret = maskSecret(c.Accounts[i].AppSecret)
+	}
+	for i := range c.DatasetAPI.Tokens {
+		if c.DatasetAPI.Tokens[i].Token != "" {
+			c.DatasetAPI.Tokens[i].Token = maskSecret(c.DatasetAPI.Tokens[i].Token)
+		}
 	}
 	return c
 }

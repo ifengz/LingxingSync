@@ -218,7 +218,8 @@ report_exports:
 # ===== 对外日维数据集 =====
 # 可选：未配置时 /datasources 显示空态，snapshot/changes 不对外开放。
 # 同一 project_id 可以配置多个 token；id 必须唯一，字段清单按 project_id + id 隔离。
-# token_hash 是 Bearer 明文的 SHA-256；配置和日志中都不保存明文 Token。
+# 内部下游项目同时保存 Bearer 明文 token 和其 SHA-256 token_hash；两者必须匹配。
+# 配置文件由程序以 0600 权限写入；历史 hash-only Token 可继续鉴权，但无法恢复明文。
 dataset_api:
   cursor_secret: "replace_with_at_least_16_random_chars"
   max_date_span_days: 31
@@ -240,7 +241,8 @@ dataset_api:
   tokens:
     - id: "project_a_reader_1"
       project_id: "project_a"
-      token_hash: "a5b0206a12cb76ec413bba7b49dc40a14e66051727cd523c294075f2d270dee7" # 示例明文占位符的 SHA-256；真实使用时替换
+      token: "replace_with_bearer_token_1"
+      token_hash: "35372a6551922e1f3e07fa98def2abf15c01c3e6cc001e1dce15516e8dc3268d"
       dataset_scopes: ["listing-daily-v1"]
       store_scopes: ["replace_with_store_id"]
       fields: ["sales_units", "sales_amount"]
@@ -248,7 +250,8 @@ dataset_api:
       revoked: false
     - id: "project_a_reader_2"
       project_id: "project_a"
-      token_hash: "5847267cd65ddf9d70a148db0f93c02d52b174dfe5c5c02e8a0bb2deed27b022" # 第二个示例占位符的 SHA-256；真实使用时替换
+      token: "replace_with_bearer_token_2"
+      token_hash: "63bd42e2a4421f502bdcf14fc4b374495f226ef60a350f837b97462e634c2bbc"
       dataset_scopes: ["listing-daily-v1"]
       store_scopes: ["replace_with_store_id"]
       fields: ["inventory_sellable"]

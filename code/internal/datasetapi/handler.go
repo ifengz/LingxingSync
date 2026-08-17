@@ -170,6 +170,7 @@ type FieldsResponseData struct {
 type ProjectFields struct {
 	ProjectID     string   `json:"project_id"`
 	TokenID       string   `json:"token_id"`
+	Token         string   `json:"token,omitempty"`
 	DatasetScopes []string `json:"dataset_scopes"`
 	StoreScopes   []string `json:"store_scopes"`
 	Fields        []string `json:"fields"`

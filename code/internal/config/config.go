@@ -8,6 +8,7 @@
 package config
 
 import (
+	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"os"
@@ -90,8 +91,9 @@ type ReportExport struct {
 }
 
 // DatasetAPIConfig stores system-owned data-product publication contracts.
-// Project tokens are supplied as hashes; plaintext bearer tokens never belong
-// in config.yaml.
+// Internal downstream projects keep the bearer alongside its hash so an
+// operator can retrieve the credential later; runtime authentication still
+// compares only the hash.
 type DatasetAPIConfig struct {
 	CursorSecret    string              `yaml:"cursor_secret"`
 	MaxDateSpanDays int                 `yaml:"max_date_span_days"`
@@ -104,6 +106,7 @@ type DatasetAPIConfig struct {
 type DatasetToken struct {
 	ID            string   `yaml:"id"`
 	ProjectID     string   `yaml:"project_id"`
+	Token         string   `yaml:"token,omitempty"`
 	TokenHash     string   `yaml:"token_hash"`
 	DatasetScopes []string `yaml:"dataset_scopes"`
 	StoreScopes   []string `yaml:"store_scopes"`
@@ -372,6 +375,12 @@ func validateDatasetAPI(cfg DatasetAPIConfig) error {
 		}
 		if token.TokenHash != strings.ToLower(token.TokenHash) {
 			return fmt.Errorf("dataset_api token %q token_hash 必须为小写 SHA-256", token.ID)
+		}
+		if token.Token != "" {
+			sum := sha256.Sum256([]byte(token.Token))
+			if hex.EncodeToString(sum[:]) != token.TokenHash {
+				return fmt.Errorf("dataset_api token %q 明文与 hash 不一致", token.ID)
+			}
 		}
 		if _, exists := seenTokens[token.ID]; exists {
 			return fmt.Errorf("dataset_api token id 重复: %s", token.ID)

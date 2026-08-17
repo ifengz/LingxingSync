@@ -1,6 +1,8 @@
 package config
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"strings"
@@ -526,6 +528,17 @@ func TestValidateDatasetAPIRejectsUppercaseTokenHash(t *testing.T) {
 	}
 	if err := validateDatasetAPI(cfg); err == nil {
 		t.Fatal("uppercase token hash was accepted but runtime authentication compares lowercase SHA-256")
+	}
+}
+
+func TestValidateDatasetAPIRejectsPlaintextTokenHashMismatch(t *testing.T) {
+	sum := sha256.Sum256([]byte("plain-token"))
+	cfg := DatasetAPIConfig{
+		CursorSecret: "cursor-secret-for-tests", FieldAllowlist: []string{"sales_units"},
+		Tokens: []DatasetToken{{ID: "token-a", ProjectID: "project-a", Token: "different-token", TokenHash: hex.EncodeToString(sum[:]), Fields: []string{"sales_units"}}},
+	}
+	if err := validateDatasetAPI(cfg); err == nil || !strings.Contains(err.Error(), "明文与 hash 不一致") {
+		t.Fatalf("mismatched plaintext token/hash error=%v", err)
 	}
 }
 
