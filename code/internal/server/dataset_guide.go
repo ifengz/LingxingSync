@@ -75,7 +75,7 @@ func downstreamProjectGuide(token config.DatasetToken, apiConfig config.DatasetA
 		}
 		fmt.Fprintf(&out, "## `%s`\n\n字段：`%s`\n\n```sql\n%s\n```\n\n", datasetID, strings.Join(append(append([]string(nil), definition.FixedFields...), fields...), "`, `"), ddl)
 		if datasetID == "fba-inventory-snapshot-v1" {
-			out.WriteString("注意：当前源表是库存当前状态，不提供历史 snapshot_date；不要把 record_date 当作完整历史库存快照日期。\n\n")
+			out.WriteString("说明：历史从本版本部署后每次成功同步开始累计；部署前没有逐日证据，不补造旧日期。\n\n")
 		}
 	}
 	out.WriteString("## API 示例\n\n")

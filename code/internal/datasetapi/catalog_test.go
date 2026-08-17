@@ -17,8 +17,11 @@ func TestCatalogExposesOnlyRegisteredDataProducts(t *testing.T) {
 	}
 
 	inventory, ok := DefinitionFor("fba-inventory-snapshot-v1")
-	if !ok || inventory.Kind != DatasetKindSnapshot || inventory.Source != "ls_fba_inventory" {
+	if !ok || inventory.Kind != DatasetKindSnapshot || inventory.Source != "fba_inventory_daily_snapshots" {
 		t.Fatalf("inventory snapshot definition=%+v found=%t", inventory, ok)
+	}
+	if inventory.Grain != "store + fnsku + snapshot_date" || inventory.InitialCursor != "0|0|0|1000-01-01" {
+		t.Fatalf("inventory history contract mismatch: %+v", inventory)
 	}
 	if _, ok := DefinitionFor("user_entered_table"); ok {
 		t.Fatal("unregistered dataset must not be exposed")

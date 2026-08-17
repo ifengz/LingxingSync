@@ -305,7 +305,7 @@ flowchart LR
 - 覆盖矩阵里 SC FBA 库存列只能表达“最近一次/某同步日是否有库存快照”，不能表达历史每一天是否可补齐。
 - 对 `channel_type='sc_fba'` 的库存空洞操作只能触发一次当前快照同步；提交 payload 不得携带 `startDate/endDate`，也不得把拖选范围拆成多日任务。
 - 历史日期上没有 SC FBA 库存行时，页面应显示“无历史快照/当前接口不支持回填”，不能显示为可补洞的日维空洞。
-- 如果业务以后需要历史 FBA 库存，必须先确认新的上游历史库存接口并新增独立 workflow；不能复用 `fbaStock/fbaList` 补历史。
+- `fbaStock/fbaList` 不能补造过去日期；migration 063 部署后，可在每次完整成功同步结束时把当天真实返回行写入独立 `fba_inventory_daily_snapshots`，从该日起逐日留存。
 
 ### 领星 VC 菜单接口补充（2026-05-28 官方文档核对）
 

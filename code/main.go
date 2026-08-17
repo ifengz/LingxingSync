@@ -145,6 +145,13 @@ func main() {
 	dailyProject := func(ctx context.Context, accountID string, targets []worker.DailyProjectionTarget, today time.Time) error {
 		return projectDailyBatch(ctx, dailyReader, dailyStore, accountID, targets, today)
 	}
+	inventorySnapshot := func(ctx context.Context, accountID string, targets []worker.DailyProjectionTarget) error {
+		dbTargets := make([]db.FBAInventorySnapshotTarget, 0, len(targets))
+		for _, target := range targets {
+			dbTargets = append(dbTargets, db.FBAInventorySnapshotTarget{Store: target.Store, Date: target.Date, StartedAt: target.StartedAt})
+		}
+		return db.CaptureFBAInventorySnapshots(ctx, dbx, accountID, dbTargets)
+	}
 	var storeSourceWorkers []*worker.EndpointWorker
 	degraded := 0 // 降级为不可同步的接口数（缺表等），仅用于启动摘要日志
 	warned := 0   // 有告警但仍可同步的条目数（缺声明列等），仅用于启动摘要日志
@@ -166,6 +173,9 @@ func main() {
 			continue
 		}
 		w.SetDailyProjector(dailyProject)
+		if ep.Table == "ls_fba_inventory" {
+			w.SetInventorySnapshotter(inventorySnapshot)
+		}
 		registry.Register(w)
 		if ep.IsStoreSource {
 			storeSourceWorkers = append(storeSourceWorkers, w)

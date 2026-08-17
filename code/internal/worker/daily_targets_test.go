@@ -77,3 +77,70 @@ func TestDailyProjectionDatesUseRequestDateAndSnapshotToday(t *testing.T) {
 		t.Fatalf("snapshot targets=%v err=%v", dates, err)
 	}
 }
+
+func TestFBAProjectionTargetKeepsOneTaskStartAcrossDateBoundary(t *testing.T) {
+	startedAt := time.Date(2026, 8, 17, 23, 59, 59, 0, time.UTC)
+	targets := projectionTargets(config.Endpoint{Table: "ls_fba_inventory"}, "store-1", []map[string]any{{}}, startedAt)
+	if len(targets) != 1 || !targets[0].StartedAt.Equal(startedAt) || targets[0].Date.Format("2006-01-02") != "2026-08-17" {
+		t.Fatalf("FBA snapshot targets=%#v", targets)
+	}
+}
+
+func TestFBAProjectionFailsLoudWithoutHistoricalSnapshotPublisher(t *testing.T) {
+	w := &EndpointWorker{Endpoint: config.Endpoint{Table: "ls_fba_inventory"}, Account: config.Account{ID: "account-1"}}
+	w.SetDailyProjector(func(context.Context, string, []DailyProjectionTarget, time.Time) error { return nil })
+	err := w.projectDaily(context.Background(), []DailyProjectionTarget{{
+		Store: "store-1", Channel: "sc_fba", Date: time.Date(2026, 8, 17, 0, 0, 0, 0, time.UTC),
+	}})
+	if err == nil || !strings.Contains(err.Error(), "inventory snapshot publisher is not configured") {
+		t.Fatalf("missing FBA history publisher error = %v", err)
+	}
+}
+
+func TestFBAProjectionPublishesHistoryBeforeListingDaily(t *testing.T) {
+	w := &EndpointWorker{Endpoint: config.Endpoint{Table: "ls_fba_inventory"}, Account: config.Account{ID: "account-1"}}
+	calls := make([]string, 0, 2)
+	startedAt := time.Date(2026, 8, 17, 1, 2, 3, 0, time.UTC)
+	w.SetInventorySnapshotter(func(_ context.Context, accountID string, targets []DailyProjectionTarget) error {
+		calls = append(calls, "snapshot")
+		if accountID != "account-1" || len(targets) != 1 || targets[0].Store != "store-1" || targets[0].Date.Format("2006-01-02") != "2026-08-17" || targets[0].StartedAt.IsZero() {
+			t.Fatalf("snapshot batch account=%q targets=%#v", accountID, targets)
+		}
+		return nil
+	})
+	w.SetDailyProjector(func(context.Context, string, []DailyProjectionTarget, time.Time) error {
+		calls = append(calls, "daily")
+		return nil
+	})
+	err := w.projectDaily(context.Background(), []DailyProjectionTarget{
+		{Store: "store-1", Channel: "sc_fba", Date: time.Date(2026, 8, 17, 0, 0, 0, 0, time.UTC), StartedAt: startedAt},
+		{Store: "store-1", Channel: "sc_fba", Date: time.Date(2026, 8, 17, 0, 0, 0, 0, time.UTC), StartedAt: startedAt},
+	})
+	if err != nil {
+		t.Fatalf("projectDaily: %v", err)
+	}
+	if got := strings.Join(calls, ","); got != "snapshot,daily" {
+		t.Fatalf("publisher order=%q, want snapshot,daily", got)
+	}
+}
+
+func TestFBAProjectionStopsWhenHistoricalSnapshotFails(t *testing.T) {
+	w := &EndpointWorker{Endpoint: config.Endpoint{Table: "ls_fba_inventory"}, Account: config.Account{ID: "account-1"}}
+	w.SetInventorySnapshotter(func(context.Context, string, []DailyProjectionTarget) error {
+		return errors.New("history unavailable")
+	})
+	dailyCalls := 0
+	w.SetDailyProjector(func(context.Context, string, []DailyProjectionTarget, time.Time) error {
+		dailyCalls++
+		return nil
+	})
+	err := w.projectDaily(context.Background(), []DailyProjectionTarget{{
+		Store: "store-1", Channel: "sc_fba", Date: time.Date(2026, 8, 17, 0, 0, 0, 0, time.UTC),
+	}})
+	if err == nil || !strings.Contains(err.Error(), "history unavailable") {
+		t.Fatalf("snapshot failure = %v", err)
+	}
+	if dailyCalls != 0 {
+		t.Fatalf("daily publisher calls=%d after snapshot failure, want 0", dailyCalls)
+	}
+}

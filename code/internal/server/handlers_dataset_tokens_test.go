@@ -250,7 +250,7 @@ func TestDownstreamProjectGuideContainsAuthorizedSchemaAndExamples(t *testing.T)
 	cfg := validDatasetProjectTestConfig()
 	cfg.DatasetAPI.Tokens = []config.DatasetToken{{
 		ID: "tok_reader", ProjectID: "reader", Token: "visible-internal-token", TokenHash: datasetapi.HashToken("visible-internal-token"),
-		DatasetScopes: []string{datasetapi.DatasetID, "return-reason-detail-v1"}, StoreScopes: []string{"12534"},
+		DatasetScopes: []string{datasetapi.DatasetID, "return-reason-detail-v1", "fba-inventory-snapshot-v1"}, StoreScopes: []string{"12534"},
 		Fields: []string{"sales_units", "returns_qty"},
 	}}
 	store := config.NewStore(t.TempDir()+"/config.yaml", cfg)
@@ -262,10 +262,13 @@ func TestDownstreamProjectGuideContainsAuthorizedSchemaAndExamples(t *testing.T)
 		t.Fatalf("guide status=%d body=%s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	for _, want := range []string{"接入说明", "listing-daily-v1", "return-reason-detail-v1", "CREATE TABLE", "/snapshot", "/changes", "12534", "visible-internal-token"} {
+	for _, want := range []string{"接入说明", "listing-daily-v1", "return-reason-detail-v1", "fba-inventory-snapshot-v1", "历史从本版本部署后每次成功同步开始累计", "CREATE TABLE", "/snapshot", "/changes", "12534", "visible-internal-token"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("guide missing %q: %s", want, body)
 		}
+	}
+	if strings.Contains(body, "当前源表是库存当前状态") {
+		t.Fatalf("guide still describes FBA dataset as current-state only: %s", body)
 	}
 }
 

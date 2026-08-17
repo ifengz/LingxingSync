@@ -39,8 +39,8 @@ var definitions = map[string]Definition{
 	},
 	"fba-inventory-snapshot-v1": {
 		ID: "fba-inventory-snapshot-v1", Name: "FBA 库存快照表", Kind: DatasetKindSnapshot,
-		Source: "ls_fba_inventory", Grain: "store + fnsku",
-		InitialCursor: "0|0|0",
+		Source: "fba_inventory_daily_snapshots", Grain: "store + fnsku + snapshot_date",
+		InitialCursor: "0|0|0|1000-01-01",
 		FixedFields:   []string{"store", "record_date", "stable_key", "updated_at"},
 		Fields:        []string{"fnsku", "msku", "asin", "sku", "product_name", "fulfillable_quantity", "unsellable_quantity", "reserved_quantity", "inbound_receiving_quantity", "inbound_shipped_quantity", "inbound_working_quantity", "inv_age_0_to_30_days", "inv_age_31_to_60_days", "inv_age_61_to_90_days", "inv_age_91_to_180_days", "inv_age_181_to_270_days", "inv_age_271_to_365_days", "inv_age_365_plus_days", "stock_cost_total", "sell_through", "historical_days_of_supply", "fba_inventory_level_health_status"},
 	},

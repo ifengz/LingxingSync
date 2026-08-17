@@ -57,7 +57,7 @@ func TestOrderShippingAddressReaderChangesUsesStaticKeyset(t *testing.T) {
 	}
 }
 
-func TestFBAInventorySnapshotReaderUsesCurrentStateDate(t *testing.T) {
+func TestFBAInventorySnapshotReaderUsesHistoricalSnapshotDate(t *testing.T) {
 	updated := time.Date(2026, 8, 15, 3, 4, 5, 0, time.UTC)
 	queryer := &fixedQueryer{rows: &fixedRows{values: []any{
 		"sc-us-1", "store-a", "ASIN1", "SKU1", "2026-08-15", updated, "sc-us-1|store-a|FNSKU1", "FNSKU1", int64(7), int64(3),
@@ -69,11 +69,32 @@ func TestFBAInventorySnapshotReaderUsesCurrentStateDate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Snapshot: %v", err)
 	}
-	if !strings.Contains(queryer.query, "FROM ls_fba_inventory i") || !strings.Contains(queryer.query, "DATE(i.synced_at) BETWEEN ? AND ?") {
-		t.Fatalf("inventory query must expose only the current state snapshot: %s", queryer.query)
+	if !strings.Contains(queryer.query, "FROM fba_inventory_daily_snapshots i") || !strings.Contains(queryer.query, "i.snapshot_date BETWEEN ? AND ?") {
+		t.Fatalf("inventory query must use the historical snapshot date: %s", queryer.query)
+	}
+	if !strings.Contains(queryer.query, "CONCAT_WS('|', i.account_id, i.sid, i.fnsku, i.snapshot_date)") {
+		t.Fatalf("inventory stable key must keep different snapshot dates distinct: %s", queryer.query)
 	}
 	if len(page.Rows) != 1 || page.Rows[0].Values["fulfillable_quantity"] != int64(7) {
 		t.Fatalf("inventory row mismatch: %+v", page)
+	}
+}
+
+func TestFBAInventorySnapshotReaderChangesAcceptsDatedStableKey(t *testing.T) {
+	updated := time.Date(2026, 8, 17, 3, 4, 5, 0, time.UTC)
+	queryer := &fixedQueryer{rows: &fixedRows{values: []any{
+		"sc-us-1", "store-a", "ASIN1", "SKU1", "2026-08-17", updated, "sc-us-1|store-a|FNSKU1|2026-08-17", "FNSKU1",
+	}}}
+	reader := &DetailSQLReader{queryer: queryer, definition: fbaInventorySnapshotDefinition}
+	page, err := reader.Changes(context.Background(), Query{
+		Store: "store-a", Fields: []string{"fnsku"}, PageSize: 10,
+		Cursor: &CursorKey{UpdatedAt: updated.Add(-time.Second), StableKey: "0|0|0|1000-01-01"},
+	})
+	if err != nil {
+		t.Fatalf("Changes: %v", err)
+	}
+	if !strings.Contains(queryer.query, "i.updated_at > ?") || len(page.Rows) != 1 || page.Rows[0].StableKey != "sc-us-1|store-a|FNSKU1|2026-08-17" {
+		t.Fatalf("dated FBA changes query=%s page=%+v", queryer.query, page)
 	}
 }
 

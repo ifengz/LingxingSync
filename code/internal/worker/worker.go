@@ -104,11 +104,16 @@ type EndpointWorker struct {
 
 	// dailyProject runs only after the complete raw endpoint task succeeds.
 	// It is injected before Run starts and remains process-local.
-	dailyProject DailyProjector
+	dailyProject      DailyProjector
+	inventorySnapshot InventorySnapshotter
 }
 
 // DailyProjector validates every target before publishing one atomic batch.
 type DailyProjector func(context.Context, string, []DailyProjectionTarget, time.Time) error
+
+// InventorySnapshotter publishes the dated FBA inventory history only after
+// the complete current-state raw sync succeeds.
+type InventorySnapshotter func(context.Context, string, []DailyProjectionTarget) error
 
 // New 构造一个 EndpointWorker。
 //
@@ -204,6 +209,10 @@ func (w *EndpointWorker) FatalError() error { return w.fatalErr }
 // SetDailyProjector wires the one allowed listing daily fact publisher. Main
 // calls it before worker goroutines start, so no runtime synchronization is needed.
 func (w *EndpointWorker) SetDailyProjector(project DailyProjector) { w.dailyProject = project }
+
+func (w *EndpointWorker) SetInventorySnapshotter(snapshot InventorySnapshotter) {
+	w.inventorySnapshot = snapshot
+}
 
 // missingDeclaredColumns 返回配置声明过、但目标表实际不存在的列名（已排序去重）。
 //
@@ -428,6 +437,7 @@ func (w *EndpointWorker) doSync(ctx context.Context, req triggerReq) {
 	totalRecords := 0
 	totalPages := 0
 	dailyTargets := make([]DailyProjectionTarget, 0)
+	projectionNow := time.Now()
 
 	defer func() {
 		// 收尾：写 task 最终状态 + 更新快照。
@@ -463,6 +473,13 @@ func (w *EndpointWorker) doSync(ctx context.Context, req triggerReq) {
 		}
 		w.finishSnapshot(status, totalRecords, status == "error")
 	}()
+	if w.Endpoint.Table == "ls_fba_inventory" {
+		if err := w.DB.GetContext(syncCtx, &projectionNow, "SELECT CURRENT_TIMESTAMP"); err != nil {
+			status = "error"
+			_ = db.InsertTaskLog(w.DB, taskID, 0, 0, 0, 0, 0, "inventory snapshot clock: "+err.Error())
+			return
+		}
+	}
 
 	// 4. 单店铺 or 多店铺
 	if w.Endpoint.IterateByVCOrders {
@@ -519,7 +536,7 @@ func (w *EndpointWorker) doSync(ctx context.Context, req triggerReq) {
 				status = "error"
 				return
 			}
-			dailyTargets = append(dailyTargets, projectionTargets(w.Endpoint, account.SID, sets, time.Now())...)
+			dailyTargets = append(dailyTargets, projectionTargets(w.Endpoint, account.SID, sets, projectionNow)...)
 			if i < len(accounts)-1 && w.Endpoint.Rate.MultiIntervalMs > 0 {
 				select {
 				case <-syncCtx.Done():
@@ -576,7 +593,7 @@ func (w *EndpointWorker) doSync(ctx context.Context, req triggerReq) {
 				status = "error"
 				return // 任一 sid 失败则 break（宪法 §10）
 			}
-			dailyTargets = append(dailyTargets, projectionTargets(w.Endpoint, sid, sets, time.Now())...)
+			dailyTargets = append(dailyTargets, projectionTargets(w.Endpoint, sid, sets, projectionNow)...)
 			// 多店铺间隔（非最后一个）
 			if i < len(sids)-1 && w.Endpoint.Rate.MultiIntervalMs > 0 {
 				select {
@@ -606,7 +623,7 @@ func (w *EndpointWorker) doSync(ctx context.Context, req triggerReq) {
 		status = "error"
 		return
 	}
-	dailyTargets = append(dailyTargets, projectionTargets(w.Endpoint, stringParam(sets[0], w.Endpoint.StoreParamName), sets, time.Now())...)
+	dailyTargets = append(dailyTargets, projectionTargets(w.Endpoint, stringParam(sets[0], w.Endpoint.StoreParamName), sets, projectionNow)...)
 	if syncCtx.Err() != nil {
 		status = "cancelled"
 		return
@@ -909,9 +926,10 @@ func forEachParamSet(sets []map[string]any, fetch func(map[string]any) (int, int
 }
 
 type DailyProjectionTarget struct {
-	Store   string
-	Channel string
-	Date    time.Time
+	Store     string
+	Channel   string
+	Date      time.Time
+	StartedAt time.Time
 }
 
 func dailyProjectionChannel(table string) (string, bool) {
@@ -971,7 +989,11 @@ func projectionTargets(endpoint config.Endpoint, store string, sets []map[string
 			return []DailyProjectionTarget{{Store: strings.TrimSpace(store), Channel: channel}}
 		}
 		for _, date := range dates {
-			targets = append(targets, DailyProjectionTarget{Store: strings.TrimSpace(store), Channel: channel, Date: date})
+			target := DailyProjectionTarget{Store: strings.TrimSpace(store), Channel: channel, Date: date}
+			if endpoint.Table == "ls_fba_inventory" {
+				target.StartedAt = now
+			}
+			targets = append(targets, target)
 		}
 	}
 	return targets
@@ -997,6 +1019,14 @@ func (w *EndpointWorker) projectDaily(ctx context.Context, targets []DailyProjec
 		}
 		seen[key] = struct{}{}
 		unique = append(unique, target)
+	}
+	if w.Endpoint.Table == "ls_fba_inventory" {
+		if w.inventorySnapshot == nil {
+			return fmt.Errorf("inventory snapshot publisher is not configured")
+		}
+		if err := w.inventorySnapshot(ctx, w.Account.ID, unique); err != nil {
+			return fmt.Errorf("inventory snapshot batch: %w", err)
+		}
 	}
 	if err := w.dailyProject(ctx, w.Account.ID, unique, today); err != nil {
 		return fmt.Errorf("daily projection batch: %w", err)

@@ -42,7 +42,7 @@ var schemas = map[string]Schema{
 		PrimaryKey: []string{"store", "stable_key"},
 	},
 	"fba-inventory-snapshot-v1": {
-		DatasetID: "fba-inventory-snapshot-v1", TableName: "fba_inventory_snapshot_v1", DataNote: "当前库存状态读取；当前源表没有 snapshot_date，不能当作历史库存快照。",
+		DatasetID: "fba-inventory-snapshot-v1", TableName: "fba_inventory_snapshot_v1", DataNote: "FBA 库存每日快照；历史从本版本部署后每次成功同步开始累计，不补造部署前日期。",
 		Columns:    detailSchemaColumns([]Column{{Name: "store", SQLType: "VARCHAR(64)", Nullable: false}, {Name: "record_date", SQLType: "DATE", Nullable: true}, {Name: "stable_key", SQLType: "VARCHAR(255)", Nullable: false}, {Name: "updated_at", SQLType: "DATETIME(6)", Nullable: false}}),
 		PrimaryKey: []string{"store", "stable_key"},
 	},

@@ -23,6 +23,7 @@ type detailReaderDefinition struct {
 	baseColumns     []string
 	dateColumn      string
 	stableKeyColumn string
+	updatedAtColumn string
 	fields          map[string]string
 	stableKeyParts  int
 }
@@ -33,6 +34,7 @@ var returnReasonDetailDefinition = detailReaderDefinition{
 	baseColumns:     []string{"r.account_id", "r.sid", "r.asin", "COALESCE(NULLIF(r.sku, ''), NULLIF(r.local_sku, ''))", "r.return_date_locale", "r.synced_at", "CONCAT_WS('|', r.account_id, r.sid, r.license_plate_number)"},
 	dateColumn:      "r.return_date_locale",
 	stableKeyColumn: "CONCAT_WS('|', r.account_id, r.sid, r.license_plate_number)",
+	updatedAtColumn: "r.synced_at",
 	stableKeyParts:  3,
 	fields: map[string]string{
 		"license_plate_number":  "r.license_plate_number",
@@ -60,6 +62,7 @@ var orderShippingAddressDetailDefinition = detailReaderDefinition{
 	baseColumns:     []string{"a.account_id", "a.sid", "''", "a.sku", "DATE(a.purchase_date)", "a.synced_at", "CONCAT_WS('|', a.account_id, a.sid, a.shipment_id, a.shipment_item_id)"},
 	dateColumn:      "DATE(a.purchase_date)",
 	stableKeyColumn: "CONCAT_WS('|', a.account_id, a.sid, a.shipment_id, a.shipment_item_id)",
+	updatedAtColumn: "a.synced_at",
 	stableKeyParts:  4,
 	fields: map[string]string{
 		"amazon_order_id":         "a.amazon_order_id",
@@ -97,12 +100,13 @@ var orderShippingAddressDetailDefinition = detailReaderDefinition{
 }
 
 var fbaInventorySnapshotDefinition = detailReaderDefinition{
-	sourceTable:     "ls_fba_inventory",
+	sourceTable:     "fba_inventory_daily_snapshots",
 	alias:           "i",
-	baseColumns:     []string{"i.account_id", "i.sid", "i.asin", "i.sku", "DATE(i.synced_at)", "i.synced_at", "CONCAT_WS('|', i.account_id, i.sid, i.fnsku)"},
-	dateColumn:      "DATE(i.synced_at)",
-	stableKeyColumn: "CONCAT_WS('|', i.account_id, i.sid, i.fnsku)",
-	stableKeyParts:  3,
+	baseColumns:     []string{"i.account_id", "i.sid", "i.asin", "i.sku", "i.snapshot_date", "i.updated_at", "CONCAT_WS('|', i.account_id, i.sid, i.fnsku, i.snapshot_date)"},
+	dateColumn:      "i.snapshot_date",
+	stableKeyColumn: "CONCAT_WS('|', i.account_id, i.sid, i.fnsku, i.snapshot_date)",
+	updatedAtColumn: "i.updated_at",
+	stableKeyParts:  4,
 	fields: map[string]string{
 		"fnsku":                             "i.fnsku",
 		"msku":                              "i.msku",
@@ -187,11 +191,11 @@ func (r *DetailSQLReader) read(ctx context.Context, query Query, snapshot bool) 
 		args = append(args, query.DateFrom, query.DateTo)
 	}
 	if query.Cursor != nil {
-		where = append(where, "("+r.definition.alias+".synced_at > ? OR ("+r.definition.alias+".synced_at = ? AND "+r.definition.stableKeyColumn+" > ?))")
+		where = append(where, "("+r.definition.updatedAtColumn+" > ? OR ("+r.definition.updatedAtColumn+" = ? AND "+r.definition.stableKeyColumn+" > ?))")
 		args = append(args, query.Cursor.UpdatedAt, query.Cursor.UpdatedAt, query.Cursor.StableKey)
 	}
 	queryText += " WHERE " + strings.Join(where, " AND ")
-	queryText += " ORDER BY " + r.definition.alias + ".synced_at ASC, " + r.definition.stableKeyColumn + " ASC LIMIT ?"
+	queryText += " ORDER BY " + r.definition.updatedAtColumn + " ASC, " + r.definition.stableKeyColumn + " ASC LIMIT ?"
 	args = append(args, query.PageSize+1)
 	rows, err := r.queryer.Query(ctx, queryText, args...)
 	if err != nil {
