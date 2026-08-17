@@ -307,9 +307,12 @@ func (r *Runner) Resume(ctx context.Context, auditID int64) (result Result, err 
 	if status != "ERROR" && status != "DONE" {
 		return result, fmt.Errorf("report export: resume audit %d status %q is not recoverable", auditID, audit.Status)
 	}
-	if strings.TrimSpace(audit.ReportDocumentID) == "" {
-		return result, fmt.Errorf("report export: resume audit %d has no report document id", auditID)
+	if status == "DONE" && strings.TrimSpace(audit.ReportDocumentID) == "" {
+		return result, fmt.Errorf("report export: resume audit %d DONE status has no report document id", auditID)
 	}
+	// A task may have failed during its first status query before Lingxing
+	// returned a document. Reuse that task as-is; waitForDone still requires a
+	// document when the upstream status reaches DONE.
 	result = Result{AuditID: audit.ID, ReportTaskID: audit.ReportTaskID, ReportDocumentID: audit.ReportDocumentID}
 	fail := func(cause error) (Result, error) {
 		if auditErr := r.Store.MarkReportError(ctx, audit.ID, "ERROR", cause); auditErr != nil {

@@ -152,19 +152,49 @@ func TestRunnerResumesExistingAuditWithoutCreatingAnotherTask(t *testing.T) {
 	}
 }
 
-func TestRunnerResumeRequiresExistingDocumentBeforeQuery(t *testing.T) {
+func TestRunnerResumeAllowsMissingDocumentByQueryingExistingTask(t *testing.T) {
+	data := []byte(strings.Join(productionFBAEstimatedFeesHeader31, "\t") + "\n" + strings.Join(markerValues(productionFBAEstimatedFeesHeader31), "\t") + "\n")
+	download := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(data)
+	}))
+	defer download.Close()
 	request := Request{
 		ReportType: FBAEstimatedFeesReportType, AccountID: "acct", SellerID: "seller", StoreID: "store-1", Region: "na",
 		MarketplaceIDs: []string{"ATVPDKIKX0DER"}, DateFrom: "2026-08-11T00:00:00Z", DateTo: "2026-08-13T23:59:59Z",
 	}
 	store := &fakeStore{audits: []Audit{{ID: 75, ReportTaskID: "task-without-document", Status: "ERROR", Request: request}}}
+	client := signedClientFunc(func(_ context.Context, _ string, path string, body map[string]any) ([]byte, int, int, error) {
+		if path != queryPath {
+			return nil, 0, 0, fmt.Errorf("resume called unexpected signed path %s", path)
+		}
+		if body["task_id"] != "task-without-document" || body["seller_id"] != "seller" || body["region"] != "na" {
+			t.Fatalf("resume query body = %#v", body)
+		}
+		return []byte(fmt.Sprintf(`{"code":0,"data":{"progress_status":"DONE","report_document_id":"recovered-doc","url":"%s/file"}}`, download.URL)), http.StatusOK, 0, nil
+	})
+	runner := Runner{Client: client, Store: store, PollTimeout: time.Second}
+	result, err := runner.Resume(context.Background(), 75)
+	if err != nil || result.Status != "SUCCESS" || result.ReportTaskID != "task-without-document" || result.ReportDocumentID != "recovered-doc" {
+		t.Fatalf("resume result=%#v err=%v, want recovered existing task", result, err)
+	}
+	if len(store.audits) != 1 || store.savedEstimatedFees != 1 {
+		t.Fatalf("audits=%d saved estimated fees=%d, want one existing audit and one save", len(store.audits), store.savedEstimatedFees)
+	}
+}
+
+func TestRunnerResumeRejectsDoneAuditWithoutDocument(t *testing.T) {
+	request := Request{
+		ReportType: FBAEstimatedFeesReportType, AccountID: "acct", SellerID: "seller", StoreID: "store-1", Region: "na",
+		MarketplaceIDs: []string{"ATVPDKIKX0DER"}, DateFrom: "2026-08-11T00:00:00Z", DateTo: "2026-08-13T23:59:59Z",
+	}
+	store := &fakeStore{audits: []Audit{{ID: 79, ReportTaskID: "done-task-without-document", Status: "DONE", Request: request}}}
 	client := signedClientFunc(func(_ context.Context, _ string, path string, _ map[string]any) ([]byte, int, int, error) {
-		t.Fatalf("resume must not query audit without a document, got %s", path)
+		t.Fatalf("resume must not query DONE audit without a document, got %s", path)
 		return nil, 0, 0, nil
 	})
-	_, err := (&Runner{Client: client, Store: store}).Resume(context.Background(), 75)
-	if err == nil || !strings.Contains(err.Error(), "has no report document id") {
-		t.Fatalf("error=%v, want missing document rejection", err)
+	_, err := (&Runner{Client: client, Store: store}).Resume(context.Background(), 79)
+	if err == nil || !strings.Contains(err.Error(), "DONE status has no report document id") {
+		t.Fatalf("error=%v, want DONE missing-document rejection", err)
 	}
 }
 
