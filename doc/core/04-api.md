@@ -470,6 +470,7 @@ GET /api/datasources/datasets/projects/{token_id}/guide
 - 数据表字段不随项目变化。项目只标识读取方、Token 与可读取店铺范围，不能修改表字段、表名、SQL、路径或 token hash。
 - 消费方应显式传 `fields`，并按管理页“接入说明”中的固定 SQL 类型建表。服务端不自动修改下游数据库，也不按字段名推断 SQL 类型；新版本由下游新建对应版本表并切换读取路径，旧版本数据和页面不受影响。
 - `store_scopes` 是行级读取权限：Bearer 只能请求其中的店铺 SID。它不影响本机同步，也不会为每个店铺创建独立数据表；旧 Token 不会因后来新增店铺而自动扩大权限。
+- `fba-inventory-snapshot-v1` 固定读取 `fba_inventory_daily_snapshots`，按 `snapshot_date` 接受日期范围，并以 `account_id + sid + fnsku + snapshot_date` 组成稳定键。历史从本版本部署后成功完成的 FBA 库存同步开始累计，不提供部署前伪造回填。
 
 下游项目接入说明：
 

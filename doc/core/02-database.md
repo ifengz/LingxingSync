@@ -114,26 +114,17 @@ CREATE TABLE ls_sales_orders (
 
 ### ls_fba_inventory（SC FBA 库存）
 
+`ls_fba_inventory` 是 `/erp/sc/routing/fba/fbaStock/fbaList` 的当前状态原始表，真实列合同以 migration 006 为准。唯一键固定为 `(account_id, sid, fnsku)`；本次接口返回行会刷新 `synced_at`，未返回的旧行不会被伪装成当天数据。
+
+它不是历史表。每次完整 FBA 库存同步成功后，系统把本次返回行写入静态数据产品表 `fba_inventory_daily_snapshots`：
+
 ```sql
-CREATE TABLE ls_fba_inventory (
-    fnsku             VARCHAR(32)    NOT NULL,
-    account_id        VARCHAR(32)    NOT NULL,
-    asin              VARCHAR(16)    NULL,
-    sku               VARCHAR(128)   NULL,
-    store_id          VARCHAR(32)    NULL,
-    store_name        VARCHAR(128)   NULL,
-    product_name      VARCHAR(256)   NULL,
-    quantity          INT            NOT NULL DEFAULT 0,
-    reserved_quantity INT            NOT NULL DEFAULT 0,
-    inbound_quantity  INT            NOT NULL DEFAULT 0,
-    warehouse         VARCHAR(64)    NULL,
-    gmt_modified      DATETIME       NULL,
-    synced_at         DATETIME       NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    PRIMARY KEY (account_id, fnsku),
-    INDEX idx_store   (account_id, store_id),
-    INDEX idx_sku     (account_id, sku)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+PRIMARY KEY (account_id, sid, fnsku, snapshot_date)
+INDEX idx_fba_inventory_snapshot_date (sid, snapshot_date, account_id)
+INDEX idx_fba_inventory_snapshot_changes (sid, updated_at, account_id, fnsku, snapshot_date)
 ```
+
+历史表显式镜像 migration 006 的全部业务列，并增加 `snapshot_date`、`source_synced_at`、`updated_at`。同一店铺同一天重复成功同步会在一个事务内重建当日快照；跨日新增记录。历史只能从 migration 063 部署后的成功同步开始累计，禁止把当前状态倒填为部署前历史。
 
 ### ls_ads_daily（广告日报）
 
