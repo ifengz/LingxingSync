@@ -277,7 +277,7 @@ func readExactTSVVariants(downloaded []byte, compressionAlgorithm, contentType, 
 		if sameWidthMismatch != nil {
 			return nil, nil, fmt.Errorf("%w; actual header=%q", sameWidthMismatch, actual)
 		}
-		return nil, nil, fmt.Errorf("%s TSV header has %d columns, want one of %d or %d", name, len(actual), len(headers[0]), len(headers[len(headers)-1]))
+		return nil, nil, fmt.Errorf("%s TSV header has %d columns, want one of %d or %d; actual header=%q", name, len(actual), len(headers[0]), len(headers[len(headers)-1]), actual)
 	}
 	rows := make([][]string, 0)
 	for line := 2; ; line++ {

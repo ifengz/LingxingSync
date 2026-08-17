@@ -5,6 +5,13 @@ import (
 	"testing"
 )
 
+func TestReadExactTSVReportsActualHeaderOnWidthMismatch(t *testing.T) {
+	_, err := readExactTSV([]byte("actual-one\tactual-two\tactual-three\n"), "", "", "contract", []string{"expected-one", "expected-two"})
+	if err == nil || !strings.Contains(err.Error(), `actual header=["actual-one" "actual-two" "actual-three"]`) {
+		t.Fatalf("error=%v, want complete actual header", err)
+	}
+}
+
 func TestParseFBAInventoryRequiresExactOfficialHeaderAndQuantities(t *testing.T) {
 	data := strings.Join([]string{
 		"sku\tfnsku\tasin\tproduct-name\tcondition\tyour-price\tmfn-listing-exists\tmfn-fulfillable-quantity\tafn-listing-exists\tafn-warehouse-quantity\tafn-fulfillable-quantity\tafn-unsellable-quantity\tafn-reserved-quantity\tafn-total-quantity\tper-unit-volume\tafn-inbound-working-quantity\tafn-inbound-shipped-quantity\tafn-inbound-receiving-quantity\tafn-researching-quantity\tafn-reserved-future-supply\tafn-future-supply-buyable",
