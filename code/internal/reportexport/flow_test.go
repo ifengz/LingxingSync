@@ -122,6 +122,110 @@ func TestRunnerMarksSharedDoneParseFailureAsTerminalError(t *testing.T) {
 	}
 }
 
+func TestRunnerResumesExistingAuditWithoutCreatingAnotherTask(t *testing.T) {
+	data := []byte(strings.Join(productionFBAEstimatedFeesHeader31, "\t") + "\n" + strings.Join(markerValues(productionFBAEstimatedFeesHeader31), "\t") + "\n")
+	download := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(data)
+	}))
+	defer download.Close()
+	request := Request{
+		ReportType: FBAEstimatedFeesReportType, AccountID: "acct", SellerID: "seller", StoreID: "store-1", Region: "na",
+		MarketplaceIDs: []string{"ATVPDKIKX0DER"}, DateFrom: "2026-08-11T00:00:00Z", DateTo: "2026-08-13T23:59:59Z",
+	}
+	store := &fakeStore{audits: []Audit{{ID: 74, ReportTaskID: "existing-task", ReportDocumentID: "existing-doc", Status: "ERROR", Request: request}}}
+	client := signedClientFunc(func(_ context.Context, _ string, path string, body map[string]any) ([]byte, int, int, error) {
+		if path != queryPath {
+			return nil, 0, 0, fmt.Errorf("resume called unexpected signed path %s", path)
+		}
+		if body["task_id"] != "existing-task" || body["seller_id"] != "seller" || body["region"] != "na" {
+			t.Fatalf("resume query body = %#v", body)
+		}
+		return []byte(fmt.Sprintf(`{"code":0,"data":{"progress_status":"DONE","report_document_id":"existing-doc","url":"%s/file"}}`, download.URL)), http.StatusOK, 0, nil
+	})
+	runner := Runner{Client: client, Store: store, PollTimeout: time.Second}
+	result, err := runner.Resume(context.Background(), 74)
+	if err != nil || result.Status != "SUCCESS" || result.AuditID != 74 || result.ReportTaskID != "existing-task" || result.ReportDocumentID != "existing-doc" {
+		t.Fatalf("resume result=%#v err=%v", result, err)
+	}
+	if len(store.audits) != 1 || store.savedEstimatedFees != 1 {
+		t.Fatalf("audits=%d saved estimated fees=%d, want one existing audit and one save", len(store.audits), store.savedEstimatedFees)
+	}
+}
+
+func TestRunnerResumeRequiresExistingDocumentBeforeQuery(t *testing.T) {
+	request := Request{
+		ReportType: FBAEstimatedFeesReportType, AccountID: "acct", SellerID: "seller", StoreID: "store-1", Region: "na",
+		MarketplaceIDs: []string{"ATVPDKIKX0DER"}, DateFrom: "2026-08-11T00:00:00Z", DateTo: "2026-08-13T23:59:59Z",
+	}
+	store := &fakeStore{audits: []Audit{{ID: 75, ReportTaskID: "task-without-document", Status: "ERROR", Request: request}}}
+	client := signedClientFunc(func(_ context.Context, _ string, path string, _ map[string]any) ([]byte, int, int, error) {
+		t.Fatalf("resume must not query audit without a document, got %s", path)
+		return nil, 0, 0, nil
+	})
+	_, err := (&Runner{Client: client, Store: store}).Resume(context.Background(), 75)
+	if err == nil || !strings.Contains(err.Error(), "has no report document id") {
+		t.Fatalf("error=%v, want missing document rejection", err)
+	}
+}
+
+func TestRunnerResumeRejectsSuccessfulAuditBeforeQuery(t *testing.T) {
+	request := Request{
+		ReportType: FBAEstimatedFeesReportType, AccountID: "acct", SellerID: "seller", StoreID: "store-1", Region: "na",
+		MarketplaceIDs: []string{"ATVPDKIKX0DER"}, DateFrom: "2026-08-11T00:00:00Z", DateTo: "2026-08-13T23:59:59Z",
+	}
+	store := &fakeStore{audits: []Audit{{ID: 76, ReportTaskID: "completed-task", ReportDocumentID: "completed-doc", Status: "SUCCESS", Request: request}}}
+	client := signedClientFunc(func(_ context.Context, _ string, path string, _ map[string]any) ([]byte, int, int, error) {
+		t.Fatalf("resume must not query successful audit, got %s", path)
+		return nil, 0, 0, nil
+	})
+	_, err := (&Runner{Client: client, Store: store}).Resume(context.Background(), 76)
+	if err == nil || !strings.Contains(err.Error(), "already SUCCESS") {
+		t.Fatalf("error=%v, want successful audit rejection", err)
+	}
+}
+
+func TestRunnerResumeRejectsChangedDocumentBeforeDownload(t *testing.T) {
+	request := Request{
+		ReportType: FBAEstimatedFeesReportType, AccountID: "acct", SellerID: "seller", StoreID: "store-1", Region: "na",
+		MarketplaceIDs: []string{"ATVPDKIKX0DER"}, DateFrom: "2026-08-11T00:00:00Z", DateTo: "2026-08-13T23:59:59Z",
+	}
+	store := &fakeStore{audits: []Audit{{ID: 77, ReportTaskID: "existing-task", ReportDocumentID: "original-doc", Status: "ERROR", Request: request}}}
+	client := signedClientFunc(func(_ context.Context, _ string, path string, _ map[string]any) ([]byte, int, int, error) {
+		if path != queryPath {
+			t.Fatalf("resume called unexpected signed path %s", path)
+		}
+		return []byte(`{"code":0,"data":{"progress_status":"DONE","report_document_id":"different-doc","url":"https://example.invalid/file"}}`), http.StatusOK, 0, nil
+	})
+	_, err := (&Runner{Client: client, Store: store}).Resume(context.Background(), 77)
+	if err == nil || !strings.Contains(err.Error(), "document id changed") {
+		t.Fatalf("error=%v, want changed document rejection", err)
+	}
+	if len(store.progress) != 0 {
+		t.Fatalf("progress=%v, changed document must not update audit progress", store.progress)
+	}
+}
+
+func TestRunnerResumeRejectsMissingDoneDocumentBeforeDownload(t *testing.T) {
+	request := Request{
+		ReportType: FBAEstimatedFeesReportType, AccountID: "acct", SellerID: "seller", StoreID: "store-1", Region: "na",
+		MarketplaceIDs: []string{"ATVPDKIKX0DER"}, DateFrom: "2026-08-11T00:00:00Z", DateTo: "2026-08-13T23:59:59Z",
+	}
+	store := &fakeStore{audits: []Audit{{ID: 78, ReportTaskID: "existing-task", ReportDocumentID: "original-doc", Status: "ERROR", Request: request}}}
+	client := signedClientFunc(func(_ context.Context, _ string, path string, _ map[string]any) ([]byte, int, int, error) {
+		if path != queryPath {
+			t.Fatalf("resume must reject missing DONE document before download, got %s", path)
+		}
+		return []byte(`{"code":0,"data":{"progress_status":"DONE","url":"https://example.invalid/file"}}`), http.StatusOK, 0, nil
+	})
+	_, err := (&Runner{Client: client, Store: store}).Resume(context.Background(), 78)
+	if err == nil || !strings.Contains(err.Error(), "document id") {
+		t.Fatalf("error=%v, want missing DONE document rejection", err)
+	}
+	if len(store.progress) != 0 {
+		t.Fatalf("progress=%v, missing document must not update audit progress", store.progress)
+	}
+}
+
 type countingLimiter struct{ waits int }
 
 func (l *countingLimiter) Wait(context.Context) error { l.waits++; return nil }
@@ -593,7 +697,7 @@ func TestRunnerDefaultPollingDoesNotRetryWithinSixSeconds(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
 	defer cancel()
-	_, err := runner.waitForDone(ctx, Request{SellerID: "seller", Region: "na"}, 1, "task-1")
+	_, err := runner.waitForDone(ctx, Request{SellerID: "seller", Region: "na"}, 1, "task-1", "")
 	if err != context.DeadlineExceeded {
 		t.Fatalf("waitForDone error=%v, want context deadline", err)
 	}

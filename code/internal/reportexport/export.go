@@ -87,6 +87,7 @@ type Audit struct {
 	ReportDocumentID string
 	Status           string
 	CreateClaimed    bool
+	Request          Request
 }
 
 type Store interface {
@@ -259,7 +260,7 @@ func (r *Runner) Run(ctx context.Context, request Request) (result Result, err e
 		}
 	}
 
-	data, pollErr := r.waitForDone(ctx, request, audit.ID, audit.ReportTaskID)
+	data, pollErr := r.waitForDone(ctx, request, audit.ID, audit.ReportTaskID, "")
 	if pollErr != nil {
 		return fail(pollErr)
 	}
@@ -273,6 +274,64 @@ func (r *Runner) Run(ctx context.Context, request Request) (result Result, err e
 		return fail(downloadErr)
 	}
 	rows, saveErr := r.saveDownloadedReport(ctx, audit.ID, request, body, data.CompressionAlgorithm, contentType, hash, data.ReportDocumentID)
+	if saveErr != nil {
+		return fail(saveErr)
+	}
+	result.Status = "SUCCESS"
+	result.DownloadSHA256 = hash
+	result.DownloadedBytes = int64(len(body))
+	result.Rows = rows
+	return result, nil
+}
+
+// Resume reuses an existing formal-report task after a local download or
+// parser failure. It never creates a replacement upstream task.
+func (r *Runner) Resume(ctx context.Context, auditID int64) (result Result, err error) {
+	if r.Client == nil || r.Store == nil {
+		return result, fmt.Errorf("report export: client and store are required")
+	}
+	audit, err := r.Store.LoadReport(ctx, auditID)
+	if err != nil {
+		return result, err
+	}
+	if err := validateRequest(audit.Request); err != nil {
+		return result, fmt.Errorf("report export: resume audit %d request: %w", auditID, err)
+	}
+	if strings.TrimSpace(audit.ReportTaskID) == "" {
+		return result, fmt.Errorf("report export: resume audit %d has no report task id", auditID)
+	}
+	status := strings.ToUpper(strings.TrimSpace(audit.Status))
+	if status == "SUCCESS" {
+		return result, fmt.Errorf("report export: resume audit %d is already SUCCESS", auditID)
+	}
+	if status != "ERROR" && status != "DONE" {
+		return result, fmt.Errorf("report export: resume audit %d status %q is not recoverable", auditID, audit.Status)
+	}
+	if strings.TrimSpace(audit.ReportDocumentID) == "" {
+		return result, fmt.Errorf("report export: resume audit %d has no report document id", auditID)
+	}
+	result = Result{AuditID: audit.ID, ReportTaskID: audit.ReportTaskID, ReportDocumentID: audit.ReportDocumentID}
+	fail := func(cause error) (Result, error) {
+		if auditErr := r.Store.MarkReportError(ctx, audit.ID, "ERROR", cause); auditErr != nil {
+			cause = fmt.Errorf("%w; mark audit error: %v", cause, auditErr)
+		}
+		result.Status = "ERROR"
+		return result, cause
+	}
+
+	data, pollErr := r.waitForDone(ctx, audit.Request, audit.ID, audit.ReportTaskID, audit.ReportDocumentID)
+	if pollErr != nil {
+		return fail(pollErr)
+	}
+	result.ReportDocumentID = data.ReportDocumentID
+	if data.ReportDocumentID == "" || data.URL == "" {
+		return fail(fmt.Errorf("report export: DONE response missing report_document_id or url"))
+	}
+	body, hash, contentType, downloadErr := r.download(ctx, audit.Request, data)
+	if downloadErr != nil {
+		return fail(downloadErr)
+	}
+	rows, saveErr := r.saveDownloadedReport(ctx, audit.ID, audit.Request, body, data.CompressionAlgorithm, contentType, hash, data.ReportDocumentID)
 	if saveErr != nil {
 		return fail(saveErr)
 	}
@@ -587,7 +646,7 @@ type reportStatus struct {
 	URL                  string `json:"url"`
 }
 
-func (r *Runner) waitForDone(ctx context.Context, request Request, auditID int64, taskID string) (reportStatus, error) {
+func (r *Runner) waitForDone(ctx context.Context, request Request, auditID int64, taskID, expectedDocumentID string) (reportStatus, error) {
 	interval := r.pollInterval()
 	timeout := r.PollTimeout
 	if timeout <= 0 {
@@ -605,6 +664,22 @@ func (r *Runner) waitForDone(ctx context.Context, request Request, auditID int64
 		var data reportStatus
 		if err := decodeEnvelope(raw, &data); err != nil {
 			return data, err
+		}
+		if expectedDocumentID != "" {
+			progressStatus := strings.ToUpper(strings.TrimSpace(data.ProgressStatus))
+			if progressStatus == "DONE" {
+				if data.ReportDocumentID == "" {
+					return data, fmt.Errorf("report export: resume audit %d DONE response missing report document id", auditID)
+				}
+				if data.ReportDocumentID != expectedDocumentID {
+					return data, fmt.Errorf("report export: resume audit %d document id changed", auditID)
+				}
+			} else {
+				if data.ReportDocumentID != "" && data.ReportDocumentID != expectedDocumentID {
+					return data, fmt.Errorf("report export: resume audit %d document id changed", auditID)
+				}
+				data.ReportDocumentID = expectedDocumentID
+			}
 		}
 		if err := r.Store.MarkReportProgress(ctx, auditID, data.ProgressStatus, data.ReportDocumentID, data.URL, data.CompressionAlgorithm); err != nil {
 			return data, err

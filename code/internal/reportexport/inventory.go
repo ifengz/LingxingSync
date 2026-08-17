@@ -251,6 +251,7 @@ func readExactTSVVariants(downloaded []byte, compressionAlgorithm, contentType, 
 		return nil, nil, fmt.Errorf("read %s TSV header: %w", name, err)
 	}
 	var matched []string
+	var sameWidthMismatch error
 	for _, candidate := range headers {
 		candidateActual := trimTrailingEmptyField(actual, len(candidate))
 		if len(candidateActual) != len(candidate) {
@@ -259,6 +260,9 @@ func readExactTSVVariants(downloaded []byte, compressionAlgorithm, contentType, 
 		matches := true
 		for i, want := range candidate {
 			if candidateActual[i] != want {
+				if sameWidthMismatch == nil {
+					sameWidthMismatch = fmt.Errorf("%s TSV header column %d = %q, want %q", name, i+1, candidateActual[i], want)
+				}
 				matches = false
 				break
 			}
@@ -270,6 +274,9 @@ func readExactTSVVariants(downloaded []byte, compressionAlgorithm, contentType, 
 		}
 	}
 	if matched == nil {
+		if sameWidthMismatch != nil {
+			return nil, nil, sameWidthMismatch
+		}
 		return nil, nil, fmt.Errorf("%s TSV header has %d columns, want one of %d or %d", name, len(actual), len(headers[0]), len(headers[len(headers)-1]))
 	}
 	rows := make([][]string, 0)

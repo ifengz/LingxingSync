@@ -52,6 +52,7 @@ func main() {
 	baseURL := flag.String("base-url", "https://openapi.lingxing.com", "领星 OpenAPI 根地址")
 	reportReturns := flag.Bool("export-fba-customer-returns", false, "显式导出一份 Amazon FBA Customer Returns 正式报告后退出")
 	reportExport := flag.Bool("export-amazon-report", false, "显式导出一份已支持的 Amazon 正式报告后退出；配合 -report-type")
+	resumeReportAudit := flag.Int64("resume-amazon-report-audit", 0, "复用已有正式报告 audit 的同一上游任务，不创建新任务")
 	reportType := flag.String("report-type", reportexport.CustomerReturnsReportType, "Amazon report_type；默认 FBA Customer Returns")
 	reportAccount := flag.String("report-account", "", "报告导出使用的本地 account id")
 	reportSeller := flag.String("report-seller-id", "", "Amazon seller_id")
@@ -63,9 +64,15 @@ func main() {
 	// The explicit CLI lane remains available for manual backfills; configured
 	// report_exports are registered with the existing in-process scheduler.
 	flag.Parse()
-	reportMode := *reportReturns || *reportExport
+	reportMode, modeErr := formalReportMode(*reportReturns, *reportExport, *resumeReportAudit)
+	if modeErr != nil {
+		log.Fatalf("[main] %v", modeErr)
+	}
 	if *reportReturns && *reportType != reportexport.CustomerReturnsReportType {
 		log.Fatalf("[main] -export-fba-customer-returns 不能与其他 report_type 同时使用")
+	}
+	if *resumeReportAudit > 0 && (*reportReturns || *reportExport) {
+		log.Fatalf("[main] -resume-amazon-report-audit 不能与创建报告参数同时使用")
 	}
 
 	// 1. 加载配置（启动断言式校验，缺字段直接 FATAL）
@@ -85,10 +92,20 @@ func main() {
 		log.Fatalf("[main] 连接 MySQL 失败: %v", err)
 	}
 	defer dbx.Close()
+	reportAuditStore := db.NewReportStore(dbx)
+	var resumeAudit reportexport.Audit
+	effectiveReportType := *reportType
+	if *resumeReportAudit > 0 {
+		resumeAudit, err = reportAuditStore.LoadReport(context.Background(), *resumeReportAudit)
+		if err != nil {
+			log.Fatalf("[main] 读取待恢复 Amazon report audit 失败: %v", err)
+		}
+		effectiveReportType = resumeAudit.Request.ReportType
+	}
 	if err := prepareDatabase(reportMode,
 		func() error { return db.RunMigrations(dbx, "migrations") },
 		func() error {
-			return validateFormalReportSchema(*reportType, func(table string) ([]string, error) {
+			return validateFormalReportSchema(effectiveReportType, func(table string) ([]string, error) {
 				return db.GetTableColumns(dbx, table)
 			})
 		},
@@ -96,43 +113,53 @@ func main() {
 		log.Fatalf("[main] 数据库准备失败: %v", err)
 	}
 	if reportMode {
-		log.Printf("[main] Amazon report 数据库结构只读校验通过 type=%s", *reportType)
+		log.Printf("[main] Amazon report 数据库结构只读校验通过 type=%s", effectiveReportType)
 	} else {
 		log.Printf("[main] 数据库迁移完成")
 	}
 	if reportMode {
-		account := cfg.FindAccount(*reportAccount)
-		if account == nil {
-			log.Fatalf("[main] 报告导出账号不存在: %q", *reportAccount)
+		request := reportexport.Request{
+			ReportType:     *reportType,
+			AccountID:      *reportAccount,
+			SellerID:       *reportSeller,
+			StoreID:        *reportStore,
+			Region:         *reportRegion,
+			MarketplaceIDs: splitNonEmpty(*reportMarketplaces),
+			DateFrom:       *reportDateFrom,
+			DateTo:         *reportDateTo,
 		}
-		marketplaces := splitNonEmpty(*reportMarketplaces)
+		if *resumeReportAudit > 0 {
+			request = resumeAudit.Request
+		}
+		account := cfg.FindAccount(request.AccountID)
+		if account == nil {
+			log.Fatalf("[main] 报告导出账号不存在: %q", request.AccountID)
+		}
+		if *resumeReportAudit == 0 {
+			request.AccountID = account.ID
+		}
 		runner := reportexport.Runner{
 			Client: api.NewClient(account, *baseURL),
-			Store:  db.NewReportStore(dbx),
+			Store:  reportAuditStore,
 			// Each formal report path has quota bucket=1. The explicit CLI lane
 			// shares one serial limiter across create/query/renew calls.
 			Limiter: worker.NewLimiter(1, 1000),
 		}
-		request := reportexport.Request{
-			ReportType:     *reportType,
-			AccountID:      account.ID,
-			SellerID:       *reportSeller,
-			StoreID:        *reportStore,
-			Region:         *reportRegion,
-			MarketplaceIDs: marketplaces,
-			DateFrom:       *reportDateFrom,
-			DateTo:         *reportDateTo,
+		var result reportexport.Result
+		if *resumeReportAudit > 0 {
+			result, err = runner.Resume(context.Background(), *resumeReportAudit)
+		} else {
+			result, err = runner.Run(context.Background(), request)
 		}
-		result, err := runner.Run(context.Background(), request)
 		if err != nil {
-			log.Fatalf("[main] Amazon 正式报告导出失败 type=%s: %v", *reportType, err)
+			log.Fatalf("[main] Amazon 正式报告导出失败 type=%s: %v", request.ReportType, err)
 		}
-		if reportRequiresDailyProjection(*reportType) {
-			if err := projectFormalReport(context.Background(), listingdaily.SQLSourceReader{DB: dbx}, listingdaily.SQLStore{DB: dbx}, request, result, *reportType); err != nil {
-				log.Fatalf("[main] Amazon 正式报告日维纠正失败 type=%s: %v", *reportType, err)
+		if reportRequiresDailyProjection(request.ReportType) {
+			if err := projectFormalReport(context.Background(), listingdaily.SQLSourceReader{DB: dbx}, listingdaily.SQLStore{DB: dbx}, request, result, request.ReportType); err != nil {
+				log.Fatalf("[main] Amazon 正式报告日维纠正失败 type=%s: %v", request.ReportType, err)
 			}
 		}
-		log.Printf("[main] Amazon 正式报告完成：type=%s audit=%d task=%s document=%s rows=%d sha256=%s", *reportType, result.AuditID, result.ReportTaskID, result.ReportDocumentID, result.Rows, result.DownloadSHA256)
+		log.Printf("[main] Amazon 正式报告完成：type=%s audit=%d task=%s document=%s rows=%d sha256=%s", request.ReportType, result.AuditID, result.ReportTaskID, result.ReportDocumentID, result.Rows, result.DownloadSHA256)
 		return
 	}
 
@@ -268,6 +295,13 @@ func main() {
 	cancel()
 	time.Sleep(500 * time.Millisecond) // 给 Worker 一点时间收尾
 	log.Printf("[main] 已退出")
+}
+
+func formalReportMode(reportReturns, reportExport bool, resumeAudit int64) (bool, error) {
+	if resumeAudit < 0 {
+		return false, fmt.Errorf("-resume-amazon-report-audit must be positive")
+	}
+	return reportReturns || reportExport || resumeAudit > 0, nil
 }
 
 func customerReturnsRun(cfg *config.Config, clients *api.ClientRegistry, store reportexport.Store, limiter reportexport.Limiter, dailyReader listingdaily.SourceReader, dailyStore listingdaily.ReconciliationStore) func(context.Context, reportexport.Request) (reportexport.Result, error) {

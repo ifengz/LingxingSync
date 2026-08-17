@@ -97,6 +97,15 @@ func TestParseFBAEstimatedFeesRejectsUnknownProductionHeader(t *testing.T) {
 	}
 }
 
+func TestParseFBAEstimatedFeesReportsFirstSameWidthHeaderDifference(t *testing.T) {
+	header := append([]string(nil), productionFBAEstimatedFeesHeader31...)
+	header[26] = "actual-production-field"
+	_, err := ParseFBAEstimatedFees([]byte(strings.Join(header, "\t")+"\n"), "", "")
+	if err == nil || !strings.Contains(err.Error(), `column 27 = "actual-production-field"`) {
+		t.Fatalf("error=%v, want first same-width field difference", err)
+	}
+}
+
 func markerValues(header []string) []string {
 	values := make([]string, len(header))
 	for i, name := range header {

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -100,14 +101,31 @@ func (d *DBReportStore) LoadReport(ctx context.Context, id int64) (reportexport.
 	}
 	var row struct {
 		ID               int64          `db:"id"`
+		AccountID        string         `db:"account_id"`
+		SellerID         string         `db:"seller_id"`
+		StoreID          string         `db:"store_id"`
+		ReportType       string         `db:"report_type"`
+		Region           string         `db:"region"`
+		MarketplaceIDs   sql.NullString `db:"marketplace_ids"`
+		DateFrom         string         `db:"date_from"`
+		DateTo           string         `db:"date_to"`
 		ReportTaskID     string         `db:"report_task_id"`
 		ReportDocumentID sql.NullString `db:"report_document_id"`
 		Status           string         `db:"status"`
 	}
-	if err := d.db.GetContext(ctx, &row, `SELECT id, report_task_id, report_document_id, status FROM ls_report_export_tasks WHERE id = ?`, id); err != nil {
+	if err := d.db.GetContext(ctx, &row, `SELECT id, account_id, seller_id, store_id, report_type, region, marketplace_ids, date_from, date_to, report_task_id, report_document_id, status FROM ls_report_export_tasks WHERE id = ?`, id); err != nil {
 		return reportexport.Audit{}, fmt.Errorf("db report: load audit id=%d: %w", id, err)
 	}
-	audit := reportexport.Audit{ID: row.ID, ReportTaskID: row.ReportTaskID, Status: row.Status}
+	var marketplaceIDs []string
+	if row.MarketplaceIDs.Valid && strings.TrimSpace(row.MarketplaceIDs.String) != "" {
+		if err := json.Unmarshal([]byte(row.MarketplaceIDs.String), &marketplaceIDs); err != nil {
+			return reportexport.Audit{}, fmt.Errorf("db report: load audit id=%d marketplace_ids: %w", id, err)
+		}
+	}
+	audit := reportexport.Audit{
+		ID: row.ID, ReportTaskID: row.ReportTaskID, Status: row.Status,
+		Request: reportexport.Request{ReportType: row.ReportType, AccountID: row.AccountID, SellerID: row.SellerID, StoreID: row.StoreID, Region: row.Region, MarketplaceIDs: marketplaceIDs, DateFrom: row.DateFrom, DateTo: row.DateTo},
+	}
 	if row.ReportDocumentID.Valid {
 		audit.ReportDocumentID = row.ReportDocumentID.String
 	}

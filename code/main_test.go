@@ -76,6 +76,13 @@ func TestPrepareDatabaseKeepsMigrationsForNormalServer(t *testing.T) {
 	}
 }
 
+func TestFormalReportModeRejectsNegativeResumeAudit(t *testing.T) {
+	_, err := formalReportMode(false, false, -1)
+	if err == nil || !strings.Contains(err.Error(), "must be positive") {
+		t.Fatalf("error=%v, want negative resume audit rejection", err)
+	}
+}
+
 func TestValidateCustomerReturnsSchemaFailsBeforeRunOnMissingColumn(t *testing.T) {
 	requirements := customerReturnsSchemaRequirements()
 	loadColumns := func(table string) ([]string, error) {
