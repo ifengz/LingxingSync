@@ -294,6 +294,23 @@ func TestCreateDownstreamProjectTokenPersistsSelectedDatasetScopes(t *testing.T)
 	}
 }
 
+func TestDatasetCatalogListsProjectsOutsideCurrentDatasetScope(t *testing.T) {
+	cfg := validDatasetProjectTestConfig()
+	cfg.DatasetAPI.Tokens = []config.DatasetToken{
+		{ID: "tok_listing", ProjectID: "listing_reader", Token: "listing-token", TokenHash: datasetapi.HashToken("listing-token"), DatasetScopes: []string{datasetapi.DatasetID}, StoreScopes: []string{"12534"}, Fields: []string{"sales_units"}},
+		{ID: "tok_returns", ProjectID: "returns_reader", Token: "returns-token", TokenHash: datasetapi.HashToken("returns-token"), DatasetScopes: []string{"return-reason-detail-v1"}, StoreScopes: []string{"12536"}, Fields: []string{"sales_units"}},
+	}
+	store := config.NewStore(t.TempDir()+"/config.yaml", cfg)
+	s := New(cfg, nil, nil, nil, "", Assets{FS: renderTestFS, TemplateFS: "testdata", StaticFS: "testdata"}, store, nil, nil, "")
+	rec := httptest.NewRecorder()
+
+	s.Routes().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/datasources/datasets/catalog", nil))
+
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"project_id":"listing_reader"`) || !strings.Contains(rec.Body.String(), `"project_id":"returns_reader"`) || !strings.Contains(rec.Body.String(), `"token":"returns-token"`) {
+		t.Fatalf("catalog must return every downstream project, status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestCreateDatasetProjectTokenRejectsDuplicateAndInvalidScope(t *testing.T) {
 	cfg := validDatasetProjectTestConfig()
 	cfg.DatasetAPI.Tokens = []config.DatasetToken{{ID: "existing", ProjectID: "polabel2", TokenHash: strings.Repeat("a", 64), DatasetScopes: []string{datasetapi.DatasetID}, StoreScopes: []string{"12534"}, Fields: []string{"sales_units"}}}

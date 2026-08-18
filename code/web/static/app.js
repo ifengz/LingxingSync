@@ -1336,7 +1336,7 @@ window.dataSources = function () {
     columns: [],
     colError: '',       // 读字段失败时的提示（不静默空白）
     refreshing: false,  // 刷新主表工作态（只重拉 /api/endpoints，不动整页）
-    datasetTab: 'table',
+    datasetTab: new URLSearchParams(window.location.search).get('tab') === 'projects' ? 'projects' : 'table',
     datasetID: 'listing-daily-v1',
     datasetDefinitions: [],
     datasetScopeSelection: { 'listing-daily-v1': true },
@@ -1437,8 +1437,8 @@ window.dataSources = function () {
       this.fieldsLoading = true;
       this.fieldsError = '';
       try {
-        const definitions = await window.apiGet('/api/datasources/datasets/catalog');
-        this.datasetDefinitions = Array.isArray(definitions && definitions.datasets) ? definitions.datasets : [];
+        const catalogResponse = await window.apiGet('/api/datasources/datasets/catalog');
+        this.datasetDefinitions = Array.isArray(catalogResponse && catalogResponse.datasets) ? catalogResponse.datasets : [];
         if (!this.datasetDefinitions.some((definition) => definition && definition.id === this.datasetID)) throw new Error('当前数据表不在系统目录中');
         const data = await window.apiGet(datasetFieldConfigPath(this.datasetID));
         if (requestVersion !== this.fieldsRequestVersion) return;
@@ -1451,7 +1451,7 @@ window.dataSources = function () {
         this.tableSelectedFields = [...catalog.tableSelectedFields];
         this.tableSavedFields = [...catalog.tableSelectedFields];
         this.tableFieldsSaveError = '';
-        this.datasetProjects = catalog.projects;
+        this.datasetProjects = normalizeDatasetProjects(catalogResponse).projects;
       } catch (error) {
         if (requestVersion === this.fieldsRequestVersion) this.fieldsError = errorMessage(error, '未能读取数据表配置');
       } finally {
@@ -1462,6 +1462,14 @@ window.dataSources = function () {
       if (datasetID === this.datasetID) return;
       this.datasetID = datasetID;
       this.loadDatasetCatalog();
+    },
+    setDatasetTab(tab) {
+      this.datasetTab = tab;
+      const query = new URLSearchParams(window.location.search);
+      if (tab === 'projects') query.set('tab', 'projects');
+      else query.delete('tab');
+      const search = query.toString();
+      window.history.replaceState(null, '', (window.location.pathname || '') + (search ? '?' + search : '') + (window.location.hash || ''));
     },
     toggleDatasetScope(datasetID) {
       const next = { ...this.datasetScopeSelection };
@@ -1539,6 +1547,11 @@ window.dataSources = function () {
     formatDatasetStoreScopes(scopes) {
       return (Array.isArray(scopes) ? scopes : []).map((scope) => this.datasetStoreLabel(scope)).join('、') || '—';
     },
+    datasetStoreScopeSummary(scopes) {
+      const labels = (Array.isArray(scopes) ? scopes : []).map((scope) => this.datasetStoreLabel(scope));
+      if (labels.length <= 2) return labels.join('、') || '—';
+      return labels[0] + ' 等 ' + labels.length + ' 家';
+    },
     isDatasetExportStoreSelected(store) {
       return Array.isArray(this.datasetExport.stores) && this.datasetExport.stores.includes(store.sid);
     },
@@ -1574,15 +1587,8 @@ window.dataSources = function () {
       this.datasetCreating = true;
       try {
         this.datasetCreateResult = await window.apiPost('/api/datasources/datasets/projects', body);
-        this.datasetProjects.push({
-          project_id: this.datasetCreateResult.project_id,
-          token_id: this.datasetCreateResult.token_id,
-          token: this.datasetCreateResult.token || '',
-          dataset_scopes: [...body.dataset_scopes],
-          store_scopes: [...body.store_scopes],
-          key: datasetProjectKey(this.datasetCreateResult.project_id, this.datasetCreateResult.token_id),
-          label: this.datasetCreateResult.project_id + ' / ' + this.datasetCreateResult.token_id,
-        });
+        this.datasetProjectsNeedRestart = Boolean(this.datasetCreateResult && this.datasetCreateResult.need_restart);
+        await this.loadDatasetCatalog();
         this.datasetCreateForm = { project_id: '' };
         this.datasetStoreSelection = {};
         window.toast('success', '下游项目 Token 已创建');
@@ -1603,7 +1609,7 @@ window.dataSources = function () {
         .map((store) => [this.datasetStoreKey(store), true]));
       this.datasetCreateError = '';
       this.datasetCreateResult = null;
-      this.datasetTab = 'projects';
+      this.setDatasetTab('projects');
     },
     cancelDatasetProjectEdit() {
       this.datasetEditingTokenId = '';

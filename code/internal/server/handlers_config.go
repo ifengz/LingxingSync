@@ -381,7 +381,14 @@ func (s *Server) apiDatasetCatalog(w http.ResponseWriter, _ *http.Request) {
 			"fixed_fields": definition.FixedFields, "available_fields": catalogDatasetFields(definition), "configured_fields": configuredDatasetFields(current.DatasetAPI, definition),
 		})
 	}
-	okJSON(w, map[string]any{"datasets": items})
+	projects := make([]datasetapi.ProjectFields, 0, len(current.DatasetAPI.Tokens))
+	for _, token := range current.DatasetAPI.Tokens {
+		projects = append(projects, datasetapi.ProjectFields{
+			ProjectID: token.ProjectID, TokenID: token.ID, Token: token.Token,
+			DatasetScopes: append([]string(nil), token.DatasetScopes...), StoreScopes: append([]string(nil), token.StoreScopes...),
+		})
+	}
+	okJSON(w, map[string]any{"datasets": items, "projects": projects})
 }
 
 func (s *Server) apiExportDatasetCSV(w http.ResponseWriter, r *http.Request) {
@@ -800,7 +807,7 @@ func (s *Server) refreshLimitersFromConfig(cfg *config.Config) {
 // extra 里的键会并入响应 JSON（如建账号回传自动配定的 account_id），供前端读结构化字段
 // 而非解析 message 文案。
 func (s *Server) applyConfigWrite(w http.ResponseWriter, old, snap *config.Config, message string, extra ...map[string]any) {
-	if err := s.store.Save(snap); err != nil {
+	if err := s.store.SaveIfCurrent(old, snap); err != nil {
 		errJSON(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -1493,7 +1500,7 @@ func (s *Server) apiSettingsReload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.store.Save(newCfg); err != nil {
+	if err := s.store.SaveIfCurrent(old, newCfg); err != nil {
 		errJSON(w, http.StatusBadRequest, err.Error())
 		return
 	}

@@ -6,6 +6,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"reflect"
@@ -14,12 +15,15 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+var ErrConfigChanged = errors.New("配置已被其他保存请求更新")
+
 // ConfigStore 是配置的运行期容器：内存持有一份当前生效的 Config，
 // 所有对 cfg 的读写都经 mu 加锁，保证并发安全。
 type ConfigStore struct {
-	path string
-	mu   sync.RWMutex
-	cfg  *Config
+	path   string
+	mu     sync.RWMutex
+	saveMu sync.Mutex
+	cfg    *Config
 }
 
 // NewStore 用给定路径和初始配置构造一个 ConfigStore。
@@ -47,6 +51,27 @@ func (s *ConfigStore) Snapshot() *Config {
 // Save 保存新配置：先校验，再备份旧文件，再原子写盘，最后切换内存中的当前配置。
 // 任一步失败都不影响磁盘上原有的配置文件，也不影响内存中已生效的配置。
 func (s *ConfigStore) Save(newCfg *Config) error {
+	return s.save(nil, newCfg)
+}
+
+// SaveIfCurrent 保存基于 expected 取得的快照。若另一个请求已经写入新配置，
+// 直接拒绝旧快照，避免后提交的整份 YAML 覆盖先提交的变更。
+func (s *ConfigStore) SaveIfCurrent(expected, newCfg *Config) error {
+	return s.save(expected, newCfg)
+}
+
+func (s *ConfigStore) save(expected, newCfg *Config) error {
+	s.saveMu.Lock()
+	defer s.saveMu.Unlock()
+
+	if expected != nil {
+		s.mu.RLock()
+		current := deepCopy(s.cfg)
+		s.mu.RUnlock()
+		if !reflect.DeepEqual(current, deepCopy(expected)) {
+			return fmt.Errorf("%w，请刷新后重试", ErrConfigChanged)
+		}
+	}
 	if err := newCfg.validate(); err != nil {
 		return fmt.Errorf("校验新配置: %w", err)
 	}

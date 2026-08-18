@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 
 const sandbox = {
-  window: { addEventListener() {}, dispatchEvent() {}, location: { search: '?tab=schedule&add=1' } },
+  window: { addEventListener() {}, dispatchEvent() {}, location: { search: '?tab=schedule&add=1', pathname: '/dataset-fields', hash: '' }, history: { replaceState(_state, _title, url) { this.lastURL = url; } } },
   document: { querySelector() { return null; } },
   CustomEvent: class CustomEvent {},
   URLSearchParams,
@@ -67,6 +67,11 @@ assert.equal(entryManage.advancedAdd, false);
   assert.match(template, /availableTableFieldGroups/);
   assert.match(template, /Token ID/);
   assert.match(template, /店铺范围/);
+  assert.match(template, /setDatasetTab\('projects'\)/);
+  assert.match(template, /min-w-\[1360px\] table-fixed/);
+  assert.match(template, /datasetStoreScopeSummary\(project\.store_scopes\)/);
+  assert.match(template, /font-mono text-\[11px\] text-slate-600"><span class="block break-all"/);
+  assert.match(template, /whitespace-nowrap px-4 py-3 text-right/);
   assert.match(template, /createDatasetProjectToken\(\)/);
   assert.match(template, /addTableField\(field\.name\)/);
   assert.match(template, /removeTableField\(field\.name\)/);
@@ -85,6 +90,18 @@ assert.equal(entryManage.advancedAdd, false);
   assert.match(dataSourcesTemplate, /日维数据预览/);
   assert.match(dataSourcesTemplate, /applyDailyPreviewFilters\(\)/);
   assert.match(dataSourcesTemplate, /dailyPreviewValue/);
+}
+
+// 数据表页刷新时保留当前切卡，避免新增下游项目后回到数据表配置页。
+{
+  sandbox.window.location.search = '?tab=projects';
+  const tabs = sandbox.window.dataSources();
+  assert.equal(tabs.datasetTab, 'projects');
+  tabs.setDatasetTab('table');
+  assert.equal(tabs.datasetTab, 'table');
+  assert.equal(sandbox.window.history.lastURL, '/dataset-fields');
+  tabs.setDatasetTab('projects');
+  assert.equal(sandbox.window.history.lastURL, '/dataset-fields?tab=projects');
 }
 
 // 项目 Token 入口必须把逗号分隔的店铺/字段转换为固定数组，并显示一次性明文结果。
@@ -258,6 +275,9 @@ void (async () => {
         return { datasets: [
           { id: 'listing-daily-v1', name: 'Listing 日维指标表', kind: 'daily', source: 'listing_dimensions + listing_daily_metrics', grain: 'store + channel + asin + sku + business_date' },
           { id: 'return-reason-detail-v1', name: '退货原因明细表', kind: 'detail', source: 'ls_sc_refunds', grain: 'store + license_plate_number' },
+        ], projects: [
+          { project_id: 'polabel2', token_id: 'tok_reader', token: 'visible-token', dataset_scopes: ['listing-daily-v1'], store_scopes: ['12534'] },
+          { project_id: 'returns-reader', token_id: 'tok_returns', token: 'returns-token', dataset_scopes: ['return-reason-detail-v1'], store_scopes: ['12536'] },
         ] };
       }
       assert.equal(url, '/api/datasources/datasets/listing-daily-v1/fields/config');
@@ -292,12 +312,34 @@ void (async () => {
     assert.equal(catalog.availableTableFieldCount, 1);
     assert.equal(catalog.tableFieldsLocked, true);
     assert.equal(catalog.datasetProjects[0].token_id, 'tok_reader');
+    assert.equal(catalog.datasetProjects[1].token_id, 'tok_returns', '只授权其他数据表的项目刷新后也必须保留');
     assert.equal(catalog.datasetProjects[0].token, 'visible-token');
     assert.equal(JSON.stringify(catalog.datasetProjects[0].store_scopes), JSON.stringify(['12534']));
+
+    sandbox.window.location.search = '?tab=projects';
+    const refreshedTab = sandbox.window.dataSources();
+    assert.equal(refreshedTab.datasetTab, 'projects', '刷新后应保持新增下游项目切卡');
 
     const storeCalls = [];
     sandbox.window.apiGet = async (url) => {
       storeCalls.push(url);
+      if (url === '/api/datasources/datasets/catalog') return {
+        datasets: [
+          { id: 'listing-daily-v1', name: 'Listing 日维指标表', kind: 'daily', source: 'listing_dimensions + listing_daily_metrics', grain: 'store + channel + asin + sku + business_date' },
+          { id: 'return-reason-detail-v1', name: '退货原因明细表', kind: 'detail', source: 'ls_sc_refunds', grain: 'store + license_plate_number' },
+        ],
+        projects: [
+          { project_id: 'polabel2', token_id: 'tok_reader', token: 'visible-token', dataset_scopes: ['listing-daily-v1'], store_scopes: ['12534'] },
+          { project_id: 'returns-reader', token_id: 'tok_returns', token: 'returns-token', dataset_scopes: ['return-reason-detail-v1'], store_scopes: ['12536'] },
+          { project_id: 'reader', token_id: 'tok_new', token: 'secret', dataset_scopes: ['listing-daily-v1', 'return-reason-detail-v1'], store_scopes: ['12534', '12536'] },
+        ],
+      };
+      if (url === '/api/datasources/datasets/listing-daily-v1/fields/config') return {
+        dataset_id: 'listing-daily-v1', dataset_name: 'Listing 日维指标表',
+        fixed_fields: ['store', 'channel', 'asin', 'sku', 'business_date', 'updated_at', 'is_provisional', 'verification_status'],
+        available_fields: ['sales_units', 'inventory_sellable', 'sessions_total'],
+        configured_fields: ['sales_units', 'sessions_total'],
+      };
       if (url === '/api/config') return { accounts: [{ id: 'sc_us_1', name: '美国自营' }] };
       if (url === '/api/accounts/sc_us_1/stores') return {
         items: [
@@ -337,7 +379,7 @@ void (async () => {
     let createRequest = null;
     sandbox.window.apiPost = async (url, body) => {
       createRequest = { url, body };
-      return { project_id: 'reader', token_id: 'tok_new', token: 'secret' };
+      return { project_id: 'reader', token_id: 'tok_new', token: 'secret', need_restart: true };
     };
     catalog.datasetCreateForm = { project_id: 'reader' };
     catalog.toggleDatasetScope('return-reason-detail-v1');
@@ -346,6 +388,7 @@ void (async () => {
       url: '/api/datasources/datasets/projects',
       body: { project_id: 'reader', dataset_scopes: ['listing-daily-v1', 'return-reason-detail-v1'], store_scopes: ['12534', '12536'] },
     }));
+    assert.equal(catalog.datasetProjectsNeedRestart, true, '创建下游项目后必须提示重启');
 
     let deleteURL = '';
     sandbox.window.syncConfirm = async () => true;
