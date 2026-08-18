@@ -250,6 +250,8 @@ func reportExportType(value string) (string, error) {
 		return reportexport.FBAStrandedInventoryReportType, nil
 	case config.ReportExportFBAEstimatedFees:
 		return reportexport.FBAEstimatedFeesReportType, nil
+	case config.ReportExportFBAInventoryPlanning:
+		return reportexport.FBAInventoryPlanningReportType, nil
 	case config.ReportExportFBAInboundNoncompliance:
 		return reportexport.FBAInboundNoncomplianceReportType, nil
 	case config.ReportExportFBARecommendedRemoval:

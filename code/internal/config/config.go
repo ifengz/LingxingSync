@@ -68,6 +68,7 @@ const (
 	ReportExportFBAReimbursements            = "fba_reimbursements"
 	ReportExportFBAStrandedInventory         = "fba_stranded_inventory"
 	ReportExportFBAEstimatedFees             = "fba_estimated_fees"
+	ReportExportFBAInventoryPlanning         = "fba_inventory_planning"
 	ReportExportFBAInboundNoncompliance      = "fba_inbound_noncompliance"
 	ReportExportFBARecommendedRemoval        = "fba_recommended_removal"
 	ReportExportFBARemovalOrder              = "fba_removal_order"
@@ -457,7 +458,7 @@ func (c *Config) validate() error {
 	}
 	reportScopes := make(map[string]struct{}, len(c.ReportExports))
 	for i, report := range c.ReportExports {
-		if report.Type != ReportExportCustomerReturns && report.Type != ReportExportCustomerShipmentSales && report.Type != ReportExportFBAInventory && report.Type != ReportExportFBAAllInventory && report.Type != ReportExportReservedInventory && report.Type != ReportExportAFNInventory && report.Type != ReportExportAFNInventoryByCountry && report.Type != ReportExportFBAStorageFeeCharges && report.Type != ReportExportFBAOverageFeeCharges && report.Type != ReportExportFBALongtermStorageFeeCharges && report.Type != ReportExportCustomerShipmentReplacements && report.Type != ReportExportFBAReimbursements && report.Type != ReportExportFBAStrandedInventory && report.Type != ReportExportFBAEstimatedFees && report.Type != ReportExportFBAInboundNoncompliance && report.Type != ReportExportFBARecommendedRemoval && report.Type != ReportExportFBARemovalOrder && report.Type != ReportExportFBARemovalShipment && report.Type != ReportExportAllOrders && report.Type != ReportExportFulfilledShipments {
+		if report.Type != ReportExportCustomerReturns && report.Type != ReportExportCustomerShipmentSales && report.Type != ReportExportFBAInventory && report.Type != ReportExportFBAAllInventory && report.Type != ReportExportReservedInventory && report.Type != ReportExportAFNInventory && report.Type != ReportExportAFNInventoryByCountry && report.Type != ReportExportFBAStorageFeeCharges && report.Type != ReportExportFBAOverageFeeCharges && report.Type != ReportExportFBALongtermStorageFeeCharges && report.Type != ReportExportCustomerShipmentReplacements && report.Type != ReportExportFBAReimbursements && report.Type != ReportExportFBAStrandedInventory && report.Type != ReportExportFBAEstimatedFees && report.Type != ReportExportFBAInventoryPlanning && report.Type != ReportExportFBAInboundNoncompliance && report.Type != ReportExportFBARecommendedRemoval && report.Type != ReportExportFBARemovalOrder && report.Type != ReportExportFBARemovalShipment && report.Type != ReportExportAllOrders && report.Type != ReportExportFulfilledShipments {
 			return fmt.Errorf("report_exports[%d].type=%q 非法", i, report.Type)
 		}
 		scope := report.Type + "\x00" + NormID(report.Account) + "\x00" + report.StoreID

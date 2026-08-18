@@ -10,12 +10,22 @@ import (
 	"time"
 
 	"lingxing-sync/internal/config"
+	"lingxing-sync/internal/reportexport"
 )
 
 type fixedDailyPreviewReader struct {
 	query dailyPreviewQuery
 	page  dailyPreviewPage
 	err   error
+}
+
+func TestReportExportConfigSupportsInventoryPlanning(t *testing.T) {
+	if !supportedReportExportType(config.ReportExportFBAInventoryPlanning) {
+		t.Fatal("inventory planning report export is not supported")
+	}
+	if got := reportExportAPIType(config.ReportExportFBAInventoryPlanning); got != reportexport.FBAInventoryPlanningReportType {
+		t.Fatalf("inventory planning API type=%q, want %q", got, reportexport.FBAInventoryPlanningReportType)
+	}
 }
 
 func (r *fixedDailyPreviewReader) Preview(_ context.Context, query dailyPreviewQuery) (dailyPreviewPage, error) {

@@ -105,6 +105,35 @@ report_exports:
 	}
 }
 
+func TestLoadAcceptsInventoryPlanningReportExport(t *testing.T) {
+	raw := `database:
+  host: 127.0.0.1
+  user: test
+  db: lingsync
+accounts:
+  - id: sc_us
+    app_key: key
+    app_secret: secret
+report_exports:
+  - type: fba_inventory_planning
+    enabled: true
+    account: sc_us
+    seller_id: SELLER-1
+    store_id: STORE-1
+    region: na
+    marketplace_ids: [ATVPDKIKX0DER]
+    cron: "0 4 * * *"
+    window_days: 3
+`
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte(raw), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path); err != nil {
+		t.Fatalf("inventory planning report export rejected: %v", err)
+	}
+}
+
 func TestLoadValidatesEnabledCustomerShipmentSalesReport(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	raw := `database:

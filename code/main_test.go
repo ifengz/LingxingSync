@@ -244,6 +244,25 @@ func TestAdditionalFBAReportsHaveIndependentRawSchemas(t *testing.T) {
 	}
 }
 
+func TestInventoryPlanningIsRawOnlyAndRequiresProductionColumns(t *testing.T) {
+	requirements := formalReportSchemaRequirements(reportexport.FBAInventoryPlanningReportType)
+	columns := requirements["ls_fba_inventory_planning"]
+	if len(columns) != 105 {
+		t.Fatalf("inventory planning schema columns=%d, want 105", len(columns))
+	}
+	for _, column := range []string{"snapshot-date", "DEPRECATED healthy-inventory-level", "Exempted from Low-Inventory-Level fee?", "Fulfillment Service and Programs"} {
+		if !slices.Contains(columns, column) {
+			t.Fatalf("inventory planning schema missing %q", column)
+		}
+	}
+	if reportRequiresDailyProjection(reportexport.FBAInventoryPlanningReportType) {
+		t.Fatal("inventory planning must remain raw-only")
+	}
+	if _, coupled := requirements["listing_daily_metrics"]; coupled {
+		t.Fatal("inventory planning must not require listing_daily_metrics")
+	}
+}
+
 func TestRemovalReportsHaveIndependentRawSchemas(t *testing.T) {
 	tests := map[string]string{
 		reportexport.FBARecommendedRemovalReportType: "ls_fba_recommended_removals",

@@ -552,7 +552,7 @@ func (d *DBReportStore) SaveFBALongtermStorageFeeCharges(ctx context.Context, id
 func (d *DBReportStore) saveFixedReportRows(ctx context.Context, id int64, label, insert string, rows [][]string, downloadSHA, documentID string) error {
 	if len(rows) > 0 {
 		want := 6 + len(rows[0])
-		if got := strings.Count(insert, "?"); got != want {
+		if got := countSQLPlaceholders(insert); got != want {
 			return fmt.Errorf("db report: %s insert placeholders=%d, want %d", label, got, want)
 		}
 	}
@@ -587,6 +587,35 @@ func (d *DBReportStore) saveFixedReportRows(ctx context.Context, id int64, label
 	return nil
 }
 
+func countSQLPlaceholders(query string) int {
+	count := 0
+	var quote byte
+	for i := 0; i < len(query); i++ {
+		ch := query[i]
+		if quote != 0 {
+			if ch == '\\' {
+				i++
+				continue
+			}
+			if ch == quote {
+				if i+1 < len(query) && query[i+1] == quote {
+					i++
+					continue
+				}
+				quote = 0
+			}
+			continue
+		}
+		switch ch {
+		case '`', '\'', '"':
+			quote = ch
+		case '?':
+			count++
+		}
+	}
+	return count
+}
+
 func (d *DBReportStore) SaveFBAStrandedInventory(ctx context.Context, id int64, rows []reportexport.FBAStrandedInventory, downloadSHA, documentID string) error {
 	const insert = "INSERT INTO ls_fba_stranded_inventory\n" +
 		"(account_id, seller_id, store_id, report_task_id, `row_number`, row_sha256, `primary-action`, `date-stranded`, `Date-to-take-auto-removal`, `status-primary`, `status-secondary`, `error-message`, `stranded-reason`, asin, sku, fnsku, `product-name`, `condition`, `fulfilled-by`, `fulfillable-qty`, `your-price`, `unfulfillable-qty`, `reserved-quantity`, `inbound-shipped-qty`, `program`)\n" +
@@ -609,6 +638,29 @@ func (d *DBReportStore) SaveFBAEstimatedFees(ctx context.Context, id int64, rows
 		values[i] = row.Values
 	}
 	return d.saveFixedReportRows(ctx, id, "FBA estimated fees", insert, values, downloadSHA, documentID)
+}
+
+func (d *DBReportStore) SaveFBAInventoryPlanning(ctx context.Context, id int64, rows []reportexport.FBAInventoryPlanning, downloadSHA, documentID string) error {
+	values := make([][]string, len(rows))
+	for i, row := range rows {
+		values[i] = row.Values
+	}
+	return d.saveFixedReportRows(ctx, id, "FBA inventory planning", fbaInventoryPlanningInsert(), values, downloadSHA, documentID)
+}
+
+func fbaInventoryPlanningInsert() string {
+	fields := reportexport.FBAInventoryPlanningColumns()
+	columns := append([]string{"account_id", "seller_id", "store_id", "report_task_id", "row_number", "row_sha256"}, fields...)
+	quoted := make([]string, len(columns))
+	for i, column := range columns {
+		quoted[i] = "`" + strings.ReplaceAll(column, "`", "``") + "`"
+	}
+	updates := []string{"`row_sha256`=VALUES(`row_sha256`)"}
+	for _, column := range fields {
+		quotedColumn := "`" + strings.ReplaceAll(column, "`", "``") + "`"
+		updates = append(updates, quotedColumn+"=VALUES("+quotedColumn+")")
+	}
+	return "INSERT INTO ls_fba_inventory_planning\n(" + strings.Join(quoted, ", ") + ")\nVALUES (" + strings.TrimSuffix(strings.Repeat("?, ", len(columns)), ", ") + ")\nON DUPLICATE KEY UPDATE " + strings.Join(updates, ", ")
 }
 
 func (d *DBReportStore) SaveFBAInboundNoncompliance(ctx context.Context, id int64, rows []reportexport.FBAInboundNoncompliance, downloadSHA, documentID string) error {

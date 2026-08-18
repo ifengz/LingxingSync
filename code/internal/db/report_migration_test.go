@@ -155,6 +155,30 @@ func TestFeeReportMigrationsAreIndependent(t *testing.T) {
 	}
 }
 
+func TestFBAInventoryPlanningMigrationMatchesProductionContract(t *testing.T) {
+	raw, err := os.ReadFile("../../migrations/065_add_fba_inventory_planning_report.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sql := strings.ToUpper(string(raw))
+	for _, want := range []string{
+		"CREATE TABLE IF NOT EXISTS LS_FBA_INVENTORY_PLANNING",
+		"PRIMARY KEY (REPORT_TASK_ID, `ROW_NUMBER`)",
+		"`SNAPSHOT-DATE`",
+		"`TOTAL DAYS OF SUPPLY (INCLUDING UNITS FROM OPEN SHIPMENTS)`",
+		"`FULFILLMENT SERVICE AND PROGRAMS`",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("Inventory Planning migration missing %q", want)
+		}
+	}
+	for _, forbidden := range []string{"DROP TABLE", "DROP COLUMN", "DELETE FROM", "TRUNCATE", "UPDATE "} {
+		if strings.Contains(sql, forbidden) {
+			t.Fatalf("Inventory Planning migration contains destructive %s", forbidden)
+		}
+	}
+}
+
 func TestStorageFeeProductionColumnsMigrationIsGuardedAndNonDestructive(t *testing.T) {
 	raw, err := os.ReadFile("../../migrations/060_add_fba_storage_fee_charges_production_columns.sql")
 	if err != nil {

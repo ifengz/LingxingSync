@@ -96,6 +96,15 @@ report_exports:
     marketplace_ids: []
     cron: ""
     window_days: 0
+  - type: "fba_inventory_planning"
+    enabled: false
+    account: ""
+    seller_id: ""
+    store_id: ""
+    region: ""
+    marketplace_ids: []
+    cron: ""
+    window_days: 0
   - type: "fba_reimbursements"
     enabled: false
     account: ""

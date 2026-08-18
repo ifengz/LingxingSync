@@ -514,6 +514,10 @@ func formalReportSchemaRequirements(reportType string) map[string][]string {
 		requirements["ls_fba_estimated_fees"] = append([]string{
 			"account_id", "seller_id", "store_id", "report_task_id", "row_number", "row_sha256",
 		}, fbaEstimatedFeesSchemaColumns...)
+	case reportexport.FBAInventoryPlanningReportType:
+		requirements["ls_fba_inventory_planning"] = append([]string{
+			"account_id", "seller_id", "store_id", "report_task_id", "row_number", "row_sha256",
+		}, reportexport.FBAInventoryPlanningColumns()...)
 	case reportexport.FBAInboundNoncomplianceReportType:
 		requirements["ls_fba_inbound_noncompliance"] = append([]string{
 			"account_id", "seller_id", "store_id", "report_task_id", "row_number", "row_sha256",
@@ -574,7 +578,7 @@ func normalizedReportType(request reportexport.Request) string {
 }
 
 func reportRequiresDailyProjection(reportType string) bool {
-	return reportType != reportexport.CustomerShipmentReplacementsReportType && reportType != reportexport.FBAReimbursementsReportType && reportType != reportexport.AFNInventoryByCountryReportType && reportType != reportexport.FBAStorageFeeChargesReportType && reportType != reportexport.FBAOverageFeeChargesReportType && reportType != reportexport.FBALongtermStorageFeeChargesReportType && reportType != reportexport.FBAStrandedInventoryReportType && reportType != reportexport.FBAEstimatedFeesReportType && reportType != reportexport.FBAInboundNoncomplianceReportType && reportType != reportexport.FBARecommendedRemovalReportType && reportType != reportexport.FBARemovalOrderReportType && reportType != reportexport.FBARemovalShipmentReportType && reportType != reportexport.AllOrdersReportType && reportType != reportexport.FulfilledShipmentsReportType
+	return reportType != reportexport.CustomerShipmentReplacementsReportType && reportType != reportexport.FBAReimbursementsReportType && reportType != reportexport.AFNInventoryByCountryReportType && reportType != reportexport.FBAStorageFeeChargesReportType && reportType != reportexport.FBAOverageFeeChargesReportType && reportType != reportexport.FBALongtermStorageFeeChargesReportType && reportType != reportexport.FBAStrandedInventoryReportType && reportType != reportexport.FBAEstimatedFeesReportType && reportType != reportexport.FBAInventoryPlanningReportType && reportType != reportexport.FBAInboundNoncomplianceReportType && reportType != reportexport.FBARecommendedRemovalReportType && reportType != reportexport.FBARemovalOrderReportType && reportType != reportexport.FBARemovalShipmentReportType && reportType != reportexport.AllOrdersReportType && reportType != reportexport.FulfilledShipmentsReportType
 }
 
 func projectDailyBatch(ctx context.Context, dailyReader listingdaily.SourceReader, dailyStore listingdaily.Store, accountID string, targets []worker.DailyProjectionTarget, today time.Time) error {

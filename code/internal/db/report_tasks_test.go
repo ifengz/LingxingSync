@@ -36,6 +36,14 @@ func TestSaveFixedReportRowsRejectsPlaceholderMismatchBeforeDatabase(t *testing.
 	}
 }
 
+func TestSaveFixedReportRowsIgnoresQuestionMarkInQuotedColumnName(t *testing.T) {
+	store := &DBReportStore{}
+	err := store.saveFixedReportRows(context.Background(), 1, "test report", "INSERT INTO t (`fee?`, value) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", [][]string{{"a", "b"}}, "sha", "doc")
+	if err == nil || !strings.Contains(err.Error(), "nil database") {
+		t.Fatalf("error = %v, want placeholder validation to ignore quoted column question mark", err)
+	}
+}
+
 func TestSaveAllOrdersAcceptsCanonicalThirtyFourColumnRow(t *testing.T) {
 	store := &DBReportStore{}
 	err := store.SaveAllOrders(context.Background(), 1, []reportexport.AllOrder{{Values: make([]string, 34)}}, "sha", "doc")
@@ -73,6 +81,14 @@ func TestSaveFBAEstimatedFeesAcceptsCanonicalFortyColumnRow(t *testing.T) {
 	err := store.SaveFBAEstimatedFees(context.Background(), 1, []reportexport.FBAEstimatedFees{{Values: make([]string, 40)}}, "sha", "doc")
 	if err == nil || !strings.Contains(err.Error(), "nil database") {
 		t.Fatalf("error = %v, want 40-column placeholder validation to pass before nil database", err)
+	}
+}
+
+func TestSaveFBAInventoryPlanningAcceptsProductionNinetyNineColumnRow(t *testing.T) {
+	store := &DBReportStore{}
+	err := store.SaveFBAInventoryPlanning(context.Background(), 1, []reportexport.FBAInventoryPlanning{{Values: make([]string, 99)}}, "sha", "doc")
+	if err == nil || !strings.Contains(err.Error(), "nil database") {
+		t.Fatalf("error = %v, want placeholder validation to pass before nil database", err)
 	}
 }
 
