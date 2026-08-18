@@ -198,6 +198,53 @@ func TestCreateDatasetProjectTokenPersistsPlaintextForInternalProjects(t *testin
 	}
 }
 
+func TestDatasetCatalogKeepsRestartRequiredUntilNewServerStarts(t *testing.T) {
+	cfg := validDatasetProjectTestConfig()
+	store := config.NewStore(t.TempDir()+"/config.yaml", cfg)
+	assets := Assets{FS: renderTestFS, TemplateFS: "testdata", StaticFS: "testdata"}
+	s := New(cfg, nil, nil, nil, "", assets, store, nil, nil, "")
+
+	create := httptest.NewRecorder()
+	s.Routes().ServeHTTP(create, httptest.NewRequest(http.MethodPost, datasetProjectsPath, strings.NewReader(`{
+		"project_id":"polabel2",
+		"dataset_scopes":["listing-daily-v1"],
+		"store_scopes":["12534"]
+	}`)))
+	if create.Code != http.StatusOK {
+		t.Fatalf("create dataset project status=%d body=%s", create.Code, create.Body.String())
+	}
+
+	readRestartState := func(server *Server) bool {
+		rec := httptest.NewRecorder()
+		server.Routes().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/datasources/datasets/catalog", nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("catalog status=%d body=%s", rec.Code, rec.Body.String())
+		}
+		var response struct {
+			Data struct {
+				NeedRestart bool `json:"need_restart"`
+				Projects    []struct {
+					ProjectID string `json:"project_id"`
+				} `json:"projects"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+			t.Fatalf("decode catalog: %v", err)
+		}
+		if len(response.Data.Projects) != 1 || response.Data.Projects[0].ProjectID != "polabel2" {
+			t.Fatalf("catalog projects=%+v, want persisted polabel2 project", response.Data.Projects)
+		}
+		return response.Data.NeedRestart
+	}
+
+	if !readRestartState(s) {
+		t.Fatal("catalog must retain restart-required state after a page refresh")
+	}
+	if readRestartState(New(store.Current(), nil, nil, nil, "", assets, store, nil, nil, "")) {
+		t.Fatal("catalog must clear restart-required state after the new server starts")
+	}
+}
+
 func TestUpdateDownstreamProjectScopesKeepsPlaintextToken(t *testing.T) {
 	rawToken := "internal-reader-token"
 	cfg := validDatasetProjectTestConfig()

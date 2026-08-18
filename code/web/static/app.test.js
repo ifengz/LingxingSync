@@ -275,7 +275,7 @@ void (async () => {
         return { datasets: [
           { id: 'listing-daily-v1', name: 'Listing 日维指标表', kind: 'daily', source: 'listing_dimensions + listing_daily_metrics', grain: 'store + channel + asin + sku + business_date' },
           { id: 'return-reason-detail-v1', name: '退货原因明细表', kind: 'detail', source: 'ls_sc_refunds', grain: 'store + license_plate_number' },
-        ], projects: [
+        ], need_restart: true, projects: [
           { project_id: 'polabel2', token_id: 'tok_reader', token: 'visible-token', dataset_scopes: ['listing-daily-v1'], store_scopes: ['12534'] },
           { project_id: 'returns-reader', token_id: 'tok_returns', token: 'returns-token', dataset_scopes: ['return-reason-detail-v1'], store_scopes: ['12536'] },
         ] };
@@ -291,6 +291,7 @@ void (async () => {
       };
     };
     await catalog.loadDatasetCatalog();
+    assert.equal(catalog.datasetProjectsNeedRestart, true, '刷新后的项目目录必须恢复重启提示');
     assert.equal(catalog.datasetName, 'Listing 日维指标表');
     assert.equal(catalog.datasetDefinitions.length, 2, '下游项目必须能从静态目录选择多张数据表');
     assert.equal(catalog.fixedFields.length, 8);

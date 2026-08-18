@@ -1452,6 +1452,7 @@ window.dataSources = function () {
         this.tableSavedFields = [...catalog.tableSelectedFields];
         this.tableFieldsSaveError = '';
         this.datasetProjects = normalizeDatasetProjects(catalogResponse).projects;
+        this.datasetProjectsNeedRestart = Boolean(catalogResponse && catalogResponse.need_restart);
       } catch (error) {
         if (requestVersion === this.fieldsRequestVersion) this.fieldsError = errorMessage(error, '未能读取数据表配置');
       } finally {

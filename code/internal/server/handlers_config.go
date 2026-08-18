@@ -388,7 +388,7 @@ func (s *Server) apiDatasetCatalog(w http.ResponseWriter, _ *http.Request) {
 			DatasetScopes: append([]string(nil), token.DatasetScopes...), StoreScopes: append([]string(nil), token.StoreScopes...),
 		})
 	}
-	okJSON(w, map[string]any{"datasets": items, "projects": projects})
+	okJSON(w, map[string]any{"datasets": items, "projects": projects, "need_restart": s.datasetConfigNeedsRestart()})
 }
 
 func (s *Server) apiExportDatasetCSV(w http.ResponseWriter, r *http.Request) {

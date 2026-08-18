@@ -42,14 +42,15 @@ type Assets struct {
 
 // Server 持有 HTTP 服务运行期所需的全部依赖。
 type Server struct {
-	cfg       *config.Config
-	dbx       *sqlx.DB
-	reg       *worker.Registry
-	clients   *api.ClientRegistry
-	httpSrv   *http.Server
-	startTime time.Time
-	baseURL   string // 领星 openapi 根，默认 https://openapi.lingxing.com
-	assets    Assets // 注入的 web/ 静态资源（embed.FS）
+	cfg        *config.Config
+	startupCfg *config.Config // 进程启动时的配置，用于判断落盘配置是否尚未被本进程加载。
+	dbx        *sqlx.DB
+	reg        *worker.Registry
+	clients    *api.ClientRegistry
+	httpSrv    *http.Server
+	startTime  time.Time
+	baseURL    string // 领星 openapi 根，默认 https://openapi.lingxing.com
+	assets     Assets // 注入的 web/ 静态资源（embed.FS）
 
 	// 配置读写 + 热加载/重启依赖（宪法 §7.5）
 	store        *config.ConfigStore     // config.yaml 线程安全读写 + 变更分类
@@ -80,8 +81,13 @@ func New(cfg *config.Config, dbx *sqlx.DB, reg *worker.Registry, clients *api.Cl
 	if assets.StaticFS == "" {
 		assets.StaticFS = "static"
 	}
+	startupCfg := cfg
+	if store != nil {
+		startupCfg = store.Current()
+	}
 	s := &Server{
 		cfg:        cfg,
+		startupCfg: startupCfg,
 		dbx:        dbx,
 		reg:        reg,
 		clients:    clients,
@@ -113,6 +119,13 @@ func New(cfg *config.Config, dbx *sqlx.DB, reg *worker.Registry, clients *api.Cl
 		log.Fatalf("[server] 模板编译失败: %v", err)
 	}
 	return s
+}
+
+func (s *Server) datasetConfigNeedsRestart() bool {
+	if s.startupCfg == nil || s.store == nil {
+		return false
+	}
+	return config.ClassifyChange(s.startupCfg, s.store.Current()) == config.ChangeRestart
 }
 
 func (s *Server) newDatasetHandler(cfg *config.Config, definition datasetapi.Definition) (*datasetapi.Handler, error) {
