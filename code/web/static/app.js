@@ -1339,7 +1339,7 @@ window.dataSources = function () {
     datasetTab: new URLSearchParams(window.location.search).get('tab') === 'projects' ? 'projects' : 'table',
     datasetID: 'listing-daily-v1',
     datasetDefinitions: [],
-    datasetScopeSelection: { 'listing-daily-v1': true },
+    datasetScopeSelection: {},
     datasetName: '',
     fixedFields: [],
     fieldGroups: [],
@@ -1591,6 +1591,7 @@ window.dataSources = function () {
         this.datasetProjectsNeedRestart = Boolean(this.datasetCreateResult && this.datasetCreateResult.need_restart);
         await this.loadDatasetCatalog();
         this.datasetCreateForm = { project_id: '' };
+        this.datasetScopeSelection = {};
         this.datasetStoreSelection = {};
         window.toast('success', '下游项目 Token 已创建');
       } catch (error) {
@@ -1615,7 +1616,7 @@ window.dataSources = function () {
     cancelDatasetProjectEdit() {
       this.datasetEditingTokenId = '';
       this.datasetCreateForm = { project_id: '' };
-      this.datasetScopeSelection = { 'listing-daily-v1': true };
+      this.datasetScopeSelection = {};
       this.datasetStoreSelection = {};
       this.datasetCreateError = '';
     },
@@ -1644,6 +1645,9 @@ window.dataSources = function () {
         } : project);
         this.datasetProjectsNeedRestart = Boolean(result && result.need_restart);
         this.datasetEditingTokenId = '';
+        this.datasetCreateForm = { project_id: '' };
+        this.datasetScopeSelection = {};
+        this.datasetStoreSelection = {};
         window.toast('success', '下游项目读取范围已保存');
       } catch (error) {
         this.datasetCreateError = errorMessage(error, '保存下游项目读取范围失败');

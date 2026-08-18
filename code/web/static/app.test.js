@@ -59,7 +59,10 @@ assert.equal(entryManage.advancedAdd, false);
   assert.match(template, /<nav class="flex items-center gap-1\.5" aria-label="数据表管理">/);
   assert.match(template, /x-data="dataSources\(\)"/);
   assert.match(template, /x-init="loadDatasetCatalog\(\); loadDatasetStores\(\)"/);
+  assert.match(template, /CSV 导出范围/);
+  assert.match(template, /只筛选导出的记录，不修改数据表或字段/);
   assert.match(template, /可添加字段/);
+  assert.match(template, /当前版本锁定/);
   assert.match(template, /已发布字段/);
   assert.match(template, /固定字段/);
   assert.match(template, /固定字段，不能删除/);
@@ -267,9 +270,10 @@ root.confirmResolve(true);
 confirmation.then((accepted) => assert.equal(accepted, true));
 
 void (async () => {
-  // 数据表目录独立于下游项目：完整业务字段和固定字段先可见，下游项目只带读取范围。
+  // 数据表字段和下游项目权限分开；左侧只显示尚未加入当前表的字段。
   {
     const catalog = sandbox.window.dataSources();
+    assert.equal(JSON.stringify(catalog.selectedDatasetScopes), JSON.stringify([]), '新增下游项目不应默认勾选任何数据表');
     sandbox.window.apiGet = async (url) => {
       if (url === '/api/datasources/datasets/catalog') {
         return { datasets: [
@@ -295,7 +299,7 @@ void (async () => {
     assert.equal(catalog.datasetName, 'Listing 日维指标表');
     assert.equal(catalog.datasetDefinitions.length, 2, '下游项目必须能从静态目录选择多张数据表');
     assert.equal(catalog.fixedFields.length, 8);
-    assert.equal(catalog.availableTableFieldCount, 1);
+    assert.equal(catalog.availableTableFieldCount, 1, '左侧只显示尚未加入当前表的字段');
     assert.equal(JSON.stringify(catalog.availableTableFieldGroups.map((group) => group.fields.map((field) => field.name))), JSON.stringify([['inventory_sellable']]));
     assert.match(catalog.fieldGroupSource('销量'), /ls_sc_sales_report/);
     assert.equal(JSON.stringify(catalog.tableSelectedFields), JSON.stringify(['sales_units', 'sessions_total']));
@@ -362,7 +366,11 @@ void (async () => {
     catalog.editDatasetProject(catalog.datasetProjects[0]);
     assert.equal(catalog.datasetEditingTokenId, 'tok_reader');
     assert.equal(catalog.datasetCreateForm.project_id, 'polabel2');
+    assert.equal(JSON.stringify(catalog.selectedDatasetScopes), JSON.stringify(['listing-daily-v1']), '编辑已有项目才回填已授权数据表');
     assert.equal(JSON.stringify(catalog.datasetStoreScopes()), JSON.stringify(['12534']));
+    catalog.cancelDatasetProjectEdit();
+    assert.equal(JSON.stringify(catalog.selectedDatasetScopes), JSON.stringify([]), '取消编辑后回到新增表单时不应默认勾选数据表');
+    catalog.editDatasetProject(catalog.datasetProjects[0]);
     catalog.toggleDatasetStore(catalog.datasetStores[1]);
     let updateRequest = null;
     sandbox.window.apiPut = async (url, body) => {
@@ -376,6 +384,7 @@ void (async () => {
     }));
     assert.equal(catalog.datasetProjects[0].token, 'visible-token');
     assert.equal(catalog.datasetProjectsNeedRestart, true);
+    assert.equal(JSON.stringify(catalog.selectedDatasetScopes), JSON.stringify([]), '保存编辑后回到新增表单时不应保留旧项目的数据表选择');
 
     let createRequest = null;
     sandbox.window.apiPost = async (url, body) => {
@@ -383,13 +392,16 @@ void (async () => {
       return { project_id: 'reader', token_id: 'tok_new', token: 'secret', need_restart: true };
     };
     catalog.datasetCreateForm = { project_id: 'reader' };
+    catalog.toggleDatasetScope('listing-daily-v1');
     catalog.toggleDatasetScope('return-reason-detail-v1');
+    catalog.toggleAllDatasetStores(true);
     await catalog.createDatasetProjectToken();
     assert.equal(JSON.stringify(createRequest), JSON.stringify({
       url: '/api/datasources/datasets/projects',
       body: { project_id: 'reader', dataset_scopes: ['listing-daily-v1', 'return-reason-detail-v1'], store_scopes: ['12534', '12536'] },
     }));
     assert.equal(catalog.datasetProjectsNeedRestart, true, '创建下游项目后必须提示重启');
+    assert.equal(JSON.stringify(catalog.selectedDatasetScopes), JSON.stringify([]), '创建完成后下一次新增项目不应默认沿用数据表选择');
 
     let deleteURL = '';
     sandbox.window.syncConfirm = async () => true;
