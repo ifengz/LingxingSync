@@ -42,54 +42,57 @@ func salesOrderDetailBatches(candidates []db.SalesOrderCandidate) [][]db.SalesOr
 	return batches
 }
 
-func detailCandidateParams(batch []db.SalesOrderCandidate) (map[string]any, map[string]string, error) {
+func detailCandidateParams(batch []db.SalesOrderCandidate) (map[string]any, map[string]struct{}, error) {
 	ids := make([]string, 0, len(batch))
-	sids := make(map[string]string, len(batch))
+	expectedIDs := make(map[string]struct{}, len(batch))
 	for _, candidate := range batch {
 		if candidate.SID == "" || candidate.AmazonOrderID == "" {
 			return nil, nil, fmt.Errorf("订单详情候选缺少 sid/amazon_order_id")
 		}
-		if existing, ok := sids[candidate.AmazonOrderID]; ok && existing != candidate.SID {
-			return nil, nil, fmt.Errorf("订单详情候选订单 %s 同时属于 sid=%s/%s", candidate.AmazonOrderID, existing, candidate.SID)
+		if _, duplicate := expectedIDs[candidate.AmazonOrderID]; duplicate {
+			return nil, nil, fmt.Errorf("订单详情候选重复 amazon_order_id=%s", candidate.AmazonOrderID)
 		}
 		ids = append(ids, candidate.AmazonOrderID)
-		sids[candidate.AmazonOrderID] = candidate.SID
+		expectedIDs[candidate.AmazonOrderID] = struct{}{}
 	}
-	return map[string]any{"order_id": strings.Join(ids, ",")}, sids, nil
+	return map[string]any{"order_id": strings.Join(ids, ",")}, expectedIDs, nil
 }
 
-func shapeSalesOrderDetailRows(rows []map[string]any, expectedSIDs map[string]string) ([]map[string]any, error) {
+func shapeSalesOrderDetailRows(rows []map[string]any, expectedIDs map[string]struct{}) ([]map[string]any, error) {
 	seen := make(map[string][]byte, len(rows))
+	returnedIDs := make(map[string]struct{}, len(rows))
 	shaped := make([]map[string]any, 0, len(rows))
 	for _, row := range rows {
 		if row == nil {
 			return nil, fmt.Errorf("订单详情响应包含空行")
 		}
 		orderID := strings.TrimSpace(fmt.Sprint(row["amazon_order_id"]))
-		sid, ok := expectedSIDs[orderID]
-		if !ok {
+		if _, ok := expectedIDs[orderID]; !ok {
 			return nil, fmt.Errorf("订单详情响应返回未请求的 amazon_order_id=%q", orderID)
 		}
-		if strings.TrimSpace(fmt.Sprint(row["sid"])) != sid {
-			return nil, fmt.Errorf("订单详情响应 sid=%q 与候选 sid=%q 不一致 (amazon_order_id=%q)", row["sid"], sid, orderID)
+		sid := strings.TrimSpace(fmt.Sprint(row["sid"]))
+		if sid == "" || sid == "<nil>" {
+			return nil, fmt.Errorf("订单详情响应缺少 sid (amazon_order_id=%q)", orderID)
 		}
+		identity := sid + "|" + orderID
 		canonical, err := json.Marshal(row)
 		if err != nil {
 			return nil, fmt.Errorf("订单详情响应无法规范化 amazon_order_id=%q: %w", orderID, err)
 		}
-		if previous, duplicate := seen[orderID]; duplicate {
+		if previous, duplicate := seen[identity]; duplicate {
 			if !bytes.Equal(previous, canonical) {
-				return nil, fmt.Errorf("订单详情响应同一 amazon_order_id 存在非等价重复: %q", orderID)
+				return nil, fmt.Errorf("订单详情响应同一 sid/amazon_order_id 存在非等价重复: %q", identity)
 			}
 			continue
 		}
-		seen[orderID] = canonical
+		seen[identity] = canonical
+		returnedIDs[orderID] = struct{}{}
 		shaped = append(shaped, row)
 	}
-	if len(seen) != len(expectedSIDs) {
-		missing := make([]string, 0, len(expectedSIDs)-len(seen))
-		for orderID := range expectedSIDs {
-			if _, ok := seen[orderID]; !ok {
+	if len(returnedIDs) != len(expectedIDs) {
+		missing := make([]string, 0, len(expectedIDs)-len(returnedIDs))
+		for orderID := range expectedIDs {
+			if _, ok := returnedIDs[orderID]; !ok {
 				missing = append(missing, orderID)
 			}
 		}

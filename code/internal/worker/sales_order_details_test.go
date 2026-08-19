@@ -24,17 +24,17 @@ func TestSalesOrderDetailBatchesKeepStoreAnd200OrderLimit(t *testing.T) {
 }
 
 func TestDetailCandidateParamsSendsOnlyCommaSeparatedOrderIDs(t *testing.T) {
-	params, sids, err := detailCandidateParams([]db.SalesOrderCandidate{{SID: "store-a", AmazonOrderID: "order-1"}, {SID: "store-a", AmazonOrderID: "order-2"}})
+	params, expectedIDs, err := detailCandidateParams([]db.SalesOrderCandidate{{SID: "store-a", AmazonOrderID: "order-1"}, {SID: "store-a", AmazonOrderID: "order-2"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(params, map[string]any{"order_id": "order-1,order-2"}) || !reflect.DeepEqual(sids, map[string]string{"order-1": "store-a", "order-2": "store-a"}) {
-		t.Fatalf("detail request identity = params=%#v sids=%#v", params, sids)
+	if !reflect.DeepEqual(params, map[string]any{"order_id": "order-1,order-2"}) || !reflect.DeepEqual(expectedIDs, map[string]struct{}{"order-1": {}, "order-2": {}}) {
+		t.Fatalf("detail request identity = params=%#v expected=%#v", params, expectedIDs)
 	}
 }
 
 func TestShapeSalesOrderDetailRowsRequiresExactReturnedIdentity(t *testing.T) {
-	expected := map[string]string{"order-1": "store-a", "order-2": "store-a"}
+	expected := map[string]struct{}{"order-1": {}, "order-2": {}}
 	rows := []map[string]any{{"amazon_order_id": "order-1", "sid": "store-a"}, {"amazon_order_id": "order-2", "sid": "store-a"}}
 	shaped, err := shapeSalesOrderDetailRows(rows, expected)
 	if err != nil {
@@ -45,7 +45,7 @@ func TestShapeSalesOrderDetailRowsRequiresExactReturnedIdentity(t *testing.T) {
 	}
 	for name, rows := range map[string][]map[string]any{
 		"unknown order": {{"amazon_order_id": "order-x", "sid": "store-a"}},
-		"wrong store":   {{"amazon_order_id": "order-1", "sid": "store-b"}, {"amazon_order_id": "order-2", "sid": "store-a"}},
+		"missing store": {{"amazon_order_id": "order-1", "sid": ""}, {"amazon_order_id": "order-2", "sid": "store-a"}},
 		"missing order": {{"amazon_order_id": "order-1", "sid": "store-a"}},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -57,7 +57,7 @@ func TestShapeSalesOrderDetailRowsRequiresExactReturnedIdentity(t *testing.T) {
 }
 
 func TestShapeSalesOrderDetailRowsDeduplicatesOnlyEquivalentRows(t *testing.T) {
-	expected := map[string]string{"order-1": "store-a", "order-2": "store-a"}
+	expected := map[string]struct{}{"order-1": {}, "order-2": {}}
 	first := map[string]any{
 		"amazon_order_id": "order-1",
 		"sid":             "store-a",
@@ -84,5 +84,21 @@ func TestShapeSalesOrderDetailRowsDeduplicatesOnlyEquivalentRows(t *testing.T) {
 	}
 	if _, err := shapeSalesOrderDetailRows([]map[string]any{first, conflicting, second}, expected); err == nil || !strings.Contains(err.Error(), "非等价重复") {
 		t.Fatalf("conflicting duplicate error = %v, want non-equivalent duplicate", err)
+	}
+}
+
+func TestShapeSalesOrderDetailRowsKeepsAuthoritativeReturnedStores(t *testing.T) {
+	expected := map[string]struct{}{"order-1": {}, "order-2": {}}
+	rows := []map[string]any{
+		{"amazon_order_id": "order-1", "sid": float64(101)},
+		{"amazon_order_id": "order-1", "sid": float64(202)},
+		{"amazon_order_id": "order-2", "sid": float64(101)},
+	}
+	shaped, err := shapeSalesOrderDetailRows(rows, expected)
+	if err != nil {
+		t.Fatalf("authoritative detail stores rejected: %v", err)
+	}
+	if !reflect.DeepEqual(shaped, rows) {
+		t.Fatalf("shaped rows = %#v, want all returned store rows", shaped)
 	}
 }
