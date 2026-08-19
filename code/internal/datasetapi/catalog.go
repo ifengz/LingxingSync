@@ -21,6 +21,9 @@ type Definition struct {
 	InitialCursor string
 	FixedFields   []string
 	Fields        []string
+	CatalogFields []string
+	ParentID      string
+	NextVersionID string
 }
 
 var definitions = map[string]Definition{
@@ -36,6 +39,15 @@ var definitions = map[string]Definition{
 		InitialCursor: "0|0|0",
 		FixedFields:   []string{"store", "record_date", "stable_key", "updated_at"},
 		Fields:        []string{"license_plate_number", "order_id", "asin", "sku", "fnsku", "local_sku", "product_name", "quantity", "return_date", "reason", "customer_comments", "remark", "detailed_disposition", "status", "fulfillment_center_id", "purchase_date"},
+		CatalogFields: []string{"license_plate_number", "order_id", "asin", "sku", "fnsku", "local_sku", "product_name", "quantity", "return_date", "reason", "customer_comments", "remark", "detailed_disposition", "status", "fulfillment_center_id", "purchase_date", "return_date_locale", "purchase_date_locale", "gmt_modified"},
+		NextVersionID: "return-reason-detail-v2",
+	},
+	"return-reason-detail-v2": {
+		ID: "return-reason-detail-v2", Name: "退货原因明细表 v2", Kind: DatasetKindDetail,
+		Source: "ls_sc_refunds", Grain: "store + license_plate_number", ParentID: "return-reason-detail-v1",
+		InitialCursor: "0|0|0", FixedFields: []string{"store", "record_date", "stable_key", "updated_at"},
+		Fields:        []string{"license_plate_number", "order_id", "asin", "sku", "fnsku", "local_sku", "product_name", "quantity", "return_date", "reason", "customer_comments", "remark", "detailed_disposition", "status", "fulfillment_center_id", "purchase_date"},
+		CatalogFields: []string{"license_plate_number", "order_id", "asin", "sku", "fnsku", "local_sku", "product_name", "quantity", "return_date", "reason", "customer_comments", "remark", "detailed_disposition", "status", "fulfillment_center_id", "purchase_date", "return_date_locale", "purchase_date_locale", "gmt_modified"},
 	},
 	"fba-inventory-snapshot-v1": {
 		ID: "fba-inventory-snapshot-v1", Name: "FBA 库存快照表", Kind: DatasetKindSnapshot,
@@ -43,6 +55,15 @@ var definitions = map[string]Definition{
 		InitialCursor: "0|0|0|1000-01-01",
 		FixedFields:   []string{"store", "record_date", "stable_key", "updated_at"},
 		Fields:        []string{"fnsku", "msku", "asin", "sku", "product_name", "fulfillable_quantity", "unsellable_quantity", "reserved_quantity", "inbound_receiving_quantity", "inbound_shipped_quantity", "inbound_working_quantity", "inv_age_0_to_30_days", "inv_age_31_to_60_days", "inv_age_61_to_90_days", "inv_age_91_to_180_days", "inv_age_181_to_270_days", "inv_age_271_to_365_days", "inv_age_365_plus_days", "stock_cost_total", "sell_through", "historical_days_of_supply", "fba_inventory_level_health_status"},
+		CatalogFields: []string{"fnsku", "msku", "asin", "sku", "product_name", "fulfillable_quantity", "unsellable_quantity", "reserved_quantity", "inbound_receiving_quantity", "inbound_shipped_quantity", "inbound_working_quantity", "inv_age_0_to_30_days", "inv_age_31_to_60_days", "inv_age_61_to_90_days", "inv_age_91_to_180_days", "inv_age_181_to_270_days", "inv_age_271_to_365_days", "inv_age_365_plus_days", "stock_cost_total", "sell_through", "historical_days_of_supply", "fba_inventory_level_health_status", "afn_erp_real_shipped_quantity", "afn_researching_quantity", "brand_id", "brand_name", "category_id", "category_name", "cost", "estimated_excess_quantity", "estimated_storage_cost_next_month", "fba_minimum_inventory_level", "fulfillment_channel_name", "inv_age_0_to_90_days", "inv_age_271_to_330_days", "inv_age_331_to_365_days", "long_term_historical_days_of_supply", "low_inventory_level_fee_applied", "name", "product_image", "recommended_action", "reserved_customerorders", "share_type", "short_term_historical_days_of_supply", "total_fulfillable_quantity", "wname"},
+		NextVersionID: "fba-inventory-snapshot-v2",
+	},
+	"fba-inventory-snapshot-v2": {
+		ID: "fba-inventory-snapshot-v2", Name: "FBA 库存快照表 v2", Kind: DatasetKindSnapshot,
+		Source: "fba_inventory_daily_snapshots", Grain: "store + fnsku + snapshot_date", ParentID: "fba-inventory-snapshot-v1",
+		InitialCursor: "0|0|0|1000-01-01", FixedFields: []string{"store", "record_date", "stable_key", "updated_at"},
+		Fields:        []string{"fnsku", "msku", "asin", "sku", "product_name", "fulfillable_quantity", "unsellable_quantity", "reserved_quantity", "inbound_receiving_quantity", "inbound_shipped_quantity", "inbound_working_quantity", "inv_age_0_to_30_days", "inv_age_31_to_60_days", "inv_age_61_to_90_days", "inv_age_91_to_180_days", "inv_age_181_to_270_days", "inv_age_271_to_365_days", "inv_age_365_plus_days", "stock_cost_total", "sell_through", "historical_days_of_supply", "fba_inventory_level_health_status"},
+		CatalogFields: []string{"fnsku", "msku", "asin", "sku", "product_name", "fulfillable_quantity", "unsellable_quantity", "reserved_quantity", "inbound_receiving_quantity", "inbound_shipped_quantity", "inbound_working_quantity", "inv_age_0_to_30_days", "inv_age_31_to_60_days", "inv_age_61_to_90_days", "inv_age_91_to_180_days", "inv_age_181_to_270_days", "inv_age_271_to_365_days", "inv_age_365_plus_days", "stock_cost_total", "sell_through", "historical_days_of_supply", "fba_inventory_level_health_status", "afn_erp_real_shipped_quantity", "afn_researching_quantity", "brand_id", "brand_name", "category_id", "category_name", "cost", "estimated_excess_quantity", "estimated_storage_cost_next_month", "fba_minimum_inventory_level", "fulfillment_channel_name", "inv_age_0_to_90_days", "inv_age_271_to_330_days", "inv_age_331_to_365_days", "long_term_historical_days_of_supply", "low_inventory_level_fee_applied", "name", "product_image", "recommended_action", "reserved_customerorders", "share_type", "short_term_historical_days_of_supply", "total_fulfillable_quantity", "wname"},
 	},
 	"order-shipping-address-detail-v1": {
 		ID: "order-shipping-address-detail-v1", Name: "订单配送地址明细表", Kind: DatasetKindDetail,
@@ -57,6 +78,15 @@ var definitions = map[string]Definition{
 		InitialCursor: "0|0|0|0",
 		FixedFields:   []string{"store", "record_date", "stable_key", "updated_at"},
 		Fields:        []string{"amazon_order_id", "store_name", "marketplace", "purchase_date", "last_updated_date", "order_status", "asin", "sku", "product_name", "quantity", "currency", "item_price", "fulfillment_channel", "ship_country", "ship_state", "ship_city", "ship_postal_code", "ship_lat", "ship_lng", "source_store", "shipment_id", "shipment_item_id", "amazon_order_item_id", "source_updated_at"},
+		CatalogFields: []string{"amazon_order_id", "store_name", "marketplace", "purchase_date", "last_updated_date", "order_status", "asin", "sku", "product_name", "quantity", "currency", "item_price", "fulfillment_channel", "ship_country", "ship_state", "ship_city", "ship_postal_code", "ship_lat", "ship_lng", "source_store", "shipment_id", "shipment_item_id", "amazon_order_item_id", "source_updated_at", "payments_date", "shipment_date", "reporting_date", "estimated_arrival_date", "quantity_shipped", "item_tax", "shipping_price", "shipping_tax", "gift_wrap_price", "gift_wrap_tax", "ship_service_level", "item_promotion_discount", "ship_promotion_discount", "carrier", "tracking_number", "points_granted", "hide_time"},
+		NextVersionID: "address-order-item-detail-v2",
+	},
+	"address-order-item-detail-v2": {
+		ID: "address-order-item-detail-v2", Name: "Address 订单商品配送明细表 v2", Kind: DatasetKindDetail,
+		Source: "ls_sc_fba_order_addresses + ls_sales_orders + ls_sc_order_details + ls_stores", Grain: "store + shipment_id + shipment_item_id", ParentID: "address-order-item-detail-v1",
+		InitialCursor: "0|0|0|0", FixedFields: []string{"store", "record_date", "stable_key", "updated_at"},
+		Fields:        []string{"amazon_order_id", "store_name", "marketplace", "purchase_date", "last_updated_date", "order_status", "asin", "sku", "product_name", "quantity", "currency", "item_price", "fulfillment_channel", "ship_country", "ship_state", "ship_city", "ship_postal_code", "ship_lat", "ship_lng", "source_store", "shipment_id", "shipment_item_id", "amazon_order_item_id", "source_updated_at"},
+		CatalogFields: []string{"amazon_order_id", "store_name", "marketplace", "purchase_date", "last_updated_date", "order_status", "asin", "sku", "product_name", "quantity", "currency", "item_price", "fulfillment_channel", "ship_country", "ship_state", "ship_city", "ship_postal_code", "ship_lat", "ship_lng", "source_store", "shipment_id", "shipment_item_id", "amazon_order_item_id", "source_updated_at", "payments_date", "shipment_date", "reporting_date", "estimated_arrival_date", "quantity_shipped", "item_tax", "shipping_price", "shipping_tax", "gift_wrap_price", "gift_wrap_tax", "ship_service_level", "item_promotion_discount", "ship_promotion_discount", "carrier", "tracking_number", "points_granted", "hide_time"},
 	},
 }
 
@@ -81,5 +111,6 @@ func DefinitionFor(id string) (Definition, bool) {
 func copyDefinition(definition Definition) Definition {
 	definition.FixedFields = append([]string(nil), definition.FixedFields...)
 	definition.Fields = append([]string(nil), definition.Fields...)
+	definition.CatalogFields = append([]string(nil), definition.CatalogFields...)
 	return definition
 }

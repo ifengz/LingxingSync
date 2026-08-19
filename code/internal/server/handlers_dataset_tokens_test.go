@@ -106,6 +106,47 @@ func TestSaveDatasetFieldAllowlistRejectsChangingPublishedV1FieldSet(t *testing.
 	}
 }
 
+func TestVersionedDatasetFieldAllowlistInheritsDraftThenLocksAfterFirstPublish(t *testing.T) {
+	cfg := validDatasetProjectTestConfig()
+	cfg.DatasetAPI.FieldAllowlist = []string{"sales_units", "returns_qty"}
+	store := config.NewStore(t.TempDir()+"/config.yaml", cfg)
+	s := New(cfg, nil, nil, nil, "", Assets{FS: renderTestFS, TemplateFS: "testdata", StaticFS: "testdata"}, store, nil, nil, "")
+	path := "/api/datasources/datasets/return-reason-detail-v2/fields/config"
+	v1 := httptest.NewRecorder()
+	s.Routes().ServeHTTP(v1, httptest.NewRequest(http.MethodGet, "/api/datasources/datasets/return-reason-detail-v1/fields/config", nil))
+	if v1.Code != http.StatusOK || !strings.Contains(v1.Body.String(), `"published":true`) || !strings.Contains(v1.Body.String(), `"next_version_id":"return-reason-detail-v2"`) {
+		t.Fatalf("v1 metadata status=%d body=%s", v1.Code, v1.Body.String())
+	}
+	get := httptest.NewRecorder()
+	s.Routes().ServeHTTP(get, httptest.NewRequest(http.MethodGet, path, nil))
+	if get.Code != http.StatusOK || !strings.Contains(get.Body.String(), `"published":false`) || !strings.Contains(get.Body.String(), `"parent_dataset_id":"return-reason-detail-v1"`) {
+		t.Fatalf("draft metadata status=%d body=%s", get.Code, get.Body.String())
+	}
+	if !strings.Contains(get.Body.String(), `"configured_fields":["license_plate_number","order_id"`) || !strings.Contains(get.Body.String(), `"return_date_locale"`) {
+		t.Fatalf("draft must inherit v1 fields and expose candidates: %s", get.Body.String())
+	}
+	missingInherited := httptest.NewRecorder()
+	s.Routes().ServeHTTP(missingInherited, httptest.NewRequest(http.MethodPut, path, strings.NewReader(`{"fields":["license_plate_number","return_date_locale"]}`)))
+	if missingInherited.Code != http.StatusBadRequest || !strings.Contains(missingInherited.Body.String(), "继承字段不能删除") {
+		t.Fatalf("missing inherited fields status=%d body=%s", missingInherited.Code, missingInherited.Body.String())
+	}
+	definition, _ := datasetapi.DefinitionFor("return-reason-detail-v2")
+	publishBody, err := json.Marshal(map[string]any{"fields": append(definition.Fields, "return_date_locale")})
+	if err != nil {
+		t.Fatalf("encode publish body: %v", err)
+	}
+	first := httptest.NewRecorder()
+	s.Routes().ServeHTTP(first, httptest.NewRequest(http.MethodPut, path, strings.NewReader(string(publishBody))))
+	if first.Code != http.StatusOK {
+		t.Fatalf("first draft publish status=%d body=%s", first.Code, first.Body.String())
+	}
+	second := httptest.NewRecorder()
+	s.Routes().ServeHTTP(second, httptest.NewRequest(http.MethodPut, path, strings.NewReader(`{"fields":["license_plate_number"]}`)))
+	if second.Code != http.StatusConflict {
+		t.Fatalf("second draft change status=%d body=%s", second.Code, second.Body.String())
+	}
+}
+
 func TestSaveDatasetFieldAllowlistRejectsRemovingPublishedV1Field(t *testing.T) {
 	cfg := validDatasetProjectTestConfig()
 	cfg.DatasetAPI.FieldAllowlist = []string{"sales_units", "returns_qty"}

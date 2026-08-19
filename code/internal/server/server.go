@@ -131,8 +131,9 @@ func (s *Server) datasetConfigNeedsRestart() bool {
 func (s *Server) newDatasetHandler(cfg *config.Config, definition datasetapi.Definition) (*datasetapi.Handler, error) {
 	fields := configuredDatasetFields(cfg.DatasetAPI, definition)
 	tokens := make([]datasetapi.Token, 0, len(cfg.DatasetAPI.Tokens))
+	published := datasetVersionPublished(cfg.DatasetAPI, definition)
 	for _, token := range cfg.DatasetAPI.Tokens {
-		if !containsDatasetScope(token.DatasetScopes, definition.ID) {
+		if !published || !containsDatasetScope(token.DatasetScopes, definition.ID) {
 			continue
 		}
 		expiresAt, err := parseDatasetTokenExpiry(token.ExpiresAt)
@@ -148,13 +149,13 @@ func (s *Server) newDatasetHandler(cfg *config.Config, definition datasetapi.Def
 	switch definition.ID {
 	case datasetapi.DatasetID:
 		handler.SetReader(datasetapi.NewSQLReader(s.dbx))
-	case "return-reason-detail-v1":
+	case "return-reason-detail-v1", "return-reason-detail-v2":
 		handler.SetReader(datasetapi.NewReturnReasonDetailReader(s.dbx))
-	case "fba-inventory-snapshot-v1":
+	case "fba-inventory-snapshot-v1", "fba-inventory-snapshot-v2":
 		handler.SetReader(datasetapi.NewFBAInventorySnapshotReader(s.dbx))
 	case "order-shipping-address-detail-v1":
 		handler.SetReader(datasetapi.NewOrderShippingAddressDetailReader(s.dbx))
-	case "address-order-item-detail-v1":
+	case "address-order-item-detail-v1", "address-order-item-detail-v2":
 		handler.SetReader(datasetapi.NewAddressOrderItemDetailReader(s.dbx))
 	}
 	return handler, nil
@@ -164,8 +165,14 @@ func configuredDatasetFields(cfg config.DatasetAPIConfig, definition datasetapi.
 	if definition.ID == datasetapi.DatasetID {
 		return append([]string(nil), cfg.FieldAllowlist...)
 	}
-	if fields := cfg.FieldAllowlists[definition.ID]; len(fields) > 0 {
+	if fields, ok := cfg.FieldAllowlists[definition.ID]; ok && len(fields) > 0 {
 		return append([]string(nil), fields...)
+	}
+	if definition.ParentID != "" {
+		parent, ok := datasetapi.DefinitionFor(definition.ParentID)
+		if ok {
+			return configuredDatasetFields(cfg, parent)
+		}
 	}
 	return append([]string(nil), definition.Fields...)
 }
@@ -174,7 +181,18 @@ func catalogDatasetFields(definition datasetapi.Definition) []string {
 	if definition.ID == datasetapi.DatasetID {
 		return append([]string(nil), availableDatasetFields...)
 	}
+	if len(definition.CatalogFields) > 0 {
+		return append([]string(nil), definition.CatalogFields...)
+	}
 	return append([]string(nil), definition.Fields...)
+}
+
+func datasetVersionPublished(cfg config.DatasetAPIConfig, definition datasetapi.Definition) bool {
+	if definition.ParentID == "" {
+		return len(configuredDatasetFields(cfg, definition)) > 0
+	}
+	fields, ok := cfg.FieldAllowlists[definition.ID]
+	return ok && len(fields) > 0
 }
 
 func containsDatasetScope(scopes []string, datasetID string) bool {

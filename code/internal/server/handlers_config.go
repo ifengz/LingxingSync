@@ -127,7 +127,7 @@ func (s *Server) apiCreateDatasetProjectToken(w http.ResponseWriter, r *http.Req
 	}
 	for _, datasetID := range datasetScopes {
 		definition, _ := datasetapi.DefinitionFor(datasetID)
-		if len(configuredDatasetFields(current.DatasetAPI, definition)) == 0 {
+		if !datasetVersionPublished(current.DatasetAPI, definition) {
 			errJSON(w, http.StatusConflict, "数据表尚未发布字段: "+datasetID)
 			return
 		}
@@ -205,7 +205,7 @@ func (s *Server) apiUpdateDatasetProjectScopes(w http.ResponseWriter, r *http.Re
 	}
 	for _, datasetID := range datasetScopes {
 		definition, _ := datasetapi.DefinitionFor(datasetID)
-		if len(configuredDatasetFields(current.DatasetAPI, definition)) == 0 {
+		if !datasetVersionPublished(current.DatasetAPI, definition) {
 			errJSON(w, http.StatusConflict, "数据表尚未发布字段: "+datasetID)
 			return
 		}
@@ -311,8 +311,12 @@ func (s *Server) apiSaveDatasetFieldAllowlist(w http.ResponseWriter, r *http.Req
 	}
 	old := s.store.Current()
 	existing := configuredDatasetFields(old.DatasetAPI, definition)
-	if len(existing) > 0 && !sameDatasetFields(existing, fields) {
+	if datasetVersionPublished(old.DatasetAPI, definition) && !sameDatasetFields(existing, fields) {
 		errJSON(w, http.StatusConflict, "数据表版本已发布，字段不能增删改，请注册新的数据表版本")
+		return
+	}
+	if definition.ParentID != "" && !containsAllDatasetFields(fields, existing) {
+		errJSON(w, http.StatusBadRequest, "新版本的继承字段不能删除")
 		return
 	}
 	snap := s.store.Snapshot()
@@ -364,6 +368,9 @@ func (s *Server) apiGetDatasetFieldAllowlist(w http.ResponseWriter, r *http.Requ
 		"fixed_fields":      append([]string(nil), definition.FixedFields...),
 		"available_fields":  catalogDatasetFields(definition),
 		"configured_fields": configuredDatasetFields(current.DatasetAPI, definition),
+		"published":         datasetVersionPublished(current.DatasetAPI, definition),
+		"parent_dataset_id": definition.ParentID,
+		"next_version_id":   definition.NextVersionID,
 		"projects":          projects,
 	})
 }
@@ -379,6 +386,7 @@ func (s *Server) apiDatasetCatalog(w http.ResponseWriter, _ *http.Request) {
 		items = append(items, map[string]any{
 			"id": definition.ID, "name": definition.Name, "kind": definition.Kind, "source": definition.Source, "grain": definition.Grain,
 			"fixed_fields": definition.FixedFields, "available_fields": catalogDatasetFields(definition), "configured_fields": configuredDatasetFields(current.DatasetAPI, definition),
+			"published": datasetVersionPublished(current.DatasetAPI, definition), "parent_dataset_id": definition.ParentID, "next_version_id": definition.NextVersionID,
 		})
 	}
 	projects := make([]datasetapi.ProjectFields, 0, len(current.DatasetAPI.Tokens))
@@ -486,6 +494,19 @@ func sameDatasetFields(left, right []string) bool {
 	}
 	for _, field := range right {
 		if _, ok := seen[field]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func containsAllDatasetFields(fields, required []string) bool {
+	available := make(map[string]struct{}, len(fields))
+	for _, field := range fields {
+		available[field] = struct{}{}
+	}
+	for _, field := range required {
+		if _, ok := available[field]; !ok {
 			return false
 		}
 	}

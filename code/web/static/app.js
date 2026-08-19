@@ -1268,6 +1268,9 @@ function normalizeListingDailyCatalog(data) {
     fixedFields,
     fieldGroups: fields.groups,
     tableSelectedFields: fields.selectedFields,
+    published: data.published === undefined ? true : Boolean(data.published),
+    parentDatasetID: typeof data.parent_dataset_id === 'string' ? data.parent_dataset_id : '',
+    nextVersionID: typeof data.next_version_id === 'string' ? data.next_version_id : '',
     projects: normalizeDatasetProjects(data).projects,
   };
 }
@@ -1345,6 +1348,9 @@ window.dataSources = function () {
     fieldGroups: [],
     tableSelectedFields: [],
     tableSavedFields: [],
+    tableFieldsPublished: true,
+    parentDatasetID: '',
+    nextVersionID: '',
     tableFieldsSaving: false,
     tableFieldsSaveError: '',
     tableFieldsNeedRestart: false,
@@ -1395,7 +1401,15 @@ window.dataSources = function () {
       return JSON.stringify(this.tableSelectedFields) !== JSON.stringify(this.tableSavedFields);
     },
     get tableFieldsLocked() {
-      return this.tableSavedFields.length > 0;
+      return this.tableFieldsPublished;
+    },
+    get canRegisterNextVersion() {
+      return Boolean(this.nextVersionID && this.datasetDefinitions.some((definition) => definition && definition.id === this.nextVersionID && definition.published === false));
+    },
+    get visibleDatasetDefinitions() {
+      const current = this.datasetDefinitions.find((definition) => definition && definition.id === this.datasetID);
+      const parentID = current && current.parent_dataset_id;
+      return this.datasetDefinitions.filter((definition) => definition && (definition.published !== false || definition.id === this.datasetID || definition.id === parentID));
     },
     get catalogFieldCount() {
       return this.fieldGroups.reduce((count, group) => count + this.displayFields(group).length, 0);
@@ -1422,7 +1436,7 @@ window.dataSources = function () {
       return this.datasetStores.filter((store) => this.isDatasetStoreSelected(store)).length;
     },
     get selectedDatasetScopes() {
-      return this.datasetDefinitions.filter((definition) => this.datasetScopeSelection[definition.id]).map((definition) => definition.id);
+      return this.datasetDefinitions.filter((definition) => definition.published !== false && this.datasetScopeSelection[definition.id]).map((definition) => definition.id);
     },
     get dailyPreviewPages() {
       return Math.max(1, Math.ceil(this.dailyPreviewTotal / this.dailyPreviewFilters.page_size));
@@ -1450,6 +1464,9 @@ window.dataSources = function () {
         this.fieldGroups = catalog.fieldGroups;
         this.tableSelectedFields = [...catalog.tableSelectedFields];
         this.tableSavedFields = [...catalog.tableSelectedFields];
+        this.tableFieldsPublished = catalog.published;
+        this.parentDatasetID = catalog.parentDatasetID;
+        this.nextVersionID = catalog.nextVersionID;
         this.tableFieldsSaveError = '';
         this.datasetProjects = normalizeDatasetProjects(catalogResponse).projects;
         this.datasetProjectsNeedRestart = Boolean(catalogResponse && catalogResponse.need_restart);
@@ -1463,6 +1480,10 @@ window.dataSources = function () {
       if (datasetID === this.datasetID) return;
       this.datasetID = datasetID;
       this.loadDatasetCatalog();
+    },
+    registerDatasetVersion() {
+      if (!this.canRegisterNextVersion) return;
+      this.selectDatasetTable(this.nextVersionID);
     },
     setDatasetTab(tab) {
       this.datasetTab = tab;
@@ -1795,6 +1816,7 @@ window.dataSources = function () {
         const saved = result && Array.isArray(result.fields) ? result.fields : fields;
         this.tableSelectedFields = [...saved];
         this.tableSavedFields = [...saved];
+        this.tableFieldsPublished = true;
         this.tableFieldsNeedRestart = Boolean(result && result.need_restart);
       } catch (error) {
         this.tableFieldsSaveError = errorMessage(error, '保存数据表字段失败');

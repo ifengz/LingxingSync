@@ -62,3 +62,47 @@ func TestAddressOrderItemSchemaKeepsCompositeDownstreamKey(t *testing.T) {
 		}
 	}
 }
+
+func TestVersionedSchemasContainCandidateColumnsWithFixedTypes(t *testing.T) {
+	cases := []struct {
+		datasetID, field, sqlType string
+	}{
+		{"return-reason-detail-v2", "return_date_locale", "VARCHAR(32)"},
+		{"fba-inventory-snapshot-v2", "total_fulfillable_quantity", "INT"},
+		{"fba-inventory-snapshot-v2", "cost", "DECIMAL(14,4)"},
+		{"address-order-item-detail-v2", "tracking_number", "VARCHAR(128)"},
+	}
+	for _, tc := range cases {
+		schema, ok := SchemaFor(tc.datasetID)
+		if !ok {
+			t.Fatalf("schema %s missing", tc.datasetID)
+		}
+		found := false
+		for _, column := range schema.Columns {
+			if column.Name == tc.field {
+				found = true
+				if column.SQLType != tc.sqlType {
+					t.Fatalf("schema %s field %s type=%q want %q", tc.datasetID, tc.field, column.SQLType, tc.sqlType)
+				}
+			}
+		}
+		if !found {
+			t.Fatalf("schema %s missing candidate %s", tc.datasetID, tc.field)
+		}
+	}
+}
+
+func TestV1SchemasDoNotSilentlyIncludeV2CandidateColumns(t *testing.T) {
+	for _, tc := range []struct{ datasetID, candidate string }{
+		{"return-reason-detail-v1", "return_date_locale"},
+		{"fba-inventory-snapshot-v1", "total_fulfillable_quantity"},
+		{"address-order-item-detail-v1", "tracking_number"},
+	} {
+		schema, _ := SchemaFor(tc.datasetID)
+		for _, column := range schema.Columns {
+			if column.Name == tc.candidate {
+				t.Fatalf("locked %s unexpectedly contains v2 candidate %s", tc.datasetID, tc.candidate)
+			}
+		}
+	}
+}

@@ -85,6 +85,8 @@ assert.equal(entryManage.advancedAdd, false);
   assert.match(template, /接入说明/);
   assert.match(template, /h-\[720px\] overflow-y-auto/);
   assert.match(template, /saveDatasetFieldAllowlist\(\)/);
+  assert.match(template, /registerDatasetVersion\(\)/);
+  assert.match(template, /注册新版本/);
   assert.match(template, /暂无可添加字段/);
   assert.doesNotMatch(template, /<input[^>]*x-model[^>]*(?:table|sql)/i);
   assert.doesNotMatch(template, /type=["']password/i);
@@ -320,6 +322,38 @@ void (async () => {
     assert.equal(catalog.datasetProjects[1].token_id, 'tok_returns', '只授权其他数据表的项目刷新后也必须保留');
     assert.equal(catalog.datasetProjects[0].token, 'visible-token');
     assert.equal(JSON.stringify(catalog.datasetProjects[0].store_scopes), JSON.stringify(['12534']));
+
+    const draft = sandbox.window.dataSources();
+    draft.datasetDefinitions = [
+      { id: 'return-reason-detail-v1', name: '退货原因明细表', published: true, next_version_id: 'return-reason-detail-v2' },
+      { id: 'return-reason-detail-v2', name: '退货原因明细表 v2', published: false, parent_dataset_id: 'return-reason-detail-v1' },
+    ];
+    draft.datasetID = 'return-reason-detail-v1';
+    draft.nextVersionID = 'return-reason-detail-v2';
+    draft.loadDatasetCatalog = async () => {};
+    assert.equal(draft.visibleDatasetDefinitions.length, 1, '未发布 v2 不应出现在普通数据表切卡');
+    assert.equal(draft.canRegisterNextVersion, true, 'v1 只能注册代码预登记且未发布的下一个版本');
+    draft.registerDatasetVersion();
+    assert.equal(draft.datasetID, 'return-reason-detail-v2', '注册新版本只能切换到代码预注册的 v2');
+    assert.equal(draft.visibleDatasetDefinitions.length, 2, '进入草稿后应保留父版本和当前 v2 切卡');
+    const normalizedDraft = sandbox.normalizeListingDailyCatalog({
+      dataset_id: 'return-reason-detail-v2', dataset_name: '退货原因明细表 v2', fixed_fields: ['store'],
+      available_fields: ['reason', 'return_date_locale'], configured_fields: ['reason'], published: false,
+      parent_dataset_id: 'return-reason-detail-v1', next_version_id: '', projects: [],
+    });
+    draft.tableSelectedFields = [...normalizedDraft.tableSelectedFields];
+    draft.tableSavedFields = [...normalizedDraft.tableSelectedFields];
+    draft.fieldGroups = normalizedDraft.fieldGroups;
+    draft.tableFieldsPublished = normalizedDraft.published;
+    assert.equal(draft.tableFieldsLocked, false, 'v2 继承字段但未发布时不能因 savedFields 非空而锁定');
+    assert.equal(draft.availableTableFieldCount, 1, 'v2 左侧必须显示尚未加入的原始候选字段');
+    draft.addTableField('return_date_locale');
+    sandbox.window.apiPut = async () => ({ fields: ['reason', 'return_date_locale'], need_restart: true });
+    await draft.saveDatasetFieldAllowlist();
+    assert.equal(draft.tableFieldsLocked, true, 'v2 首次发布后必须立即锁定');
+    draft.datasetDefinitions[1].published = true;
+    draft.datasetID = 'return-reason-detail-v1';
+    assert.equal(draft.canRegisterNextVersion, false, 'v2 已发布后 v1 不应继续显示无效注册入口');
 
     sandbox.window.location.search = '?tab=projects';
     const refreshedTab = sandbox.window.dataSources();

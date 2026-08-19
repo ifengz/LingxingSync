@@ -36,18 +36,33 @@ var schemas = map[string]Schema{
 		Columns:    detailSchemaColumns([]Column{{Name: "store", SQLType: "VARCHAR(64)", Nullable: false}, {Name: "record_date", SQLType: "DATE", Nullable: true}, {Name: "stable_key", SQLType: "VARCHAR(255)", Nullable: false}, {Name: "updated_at", SQLType: "DATETIME(6)", Nullable: false}}),
 		PrimaryKey: []string{"store", "stable_key"},
 	},
+	"return-reason-detail-v2": {
+		DatasetID: "return-reason-detail-v2", TableName: "return_reason_detail_v2", DataNote: "退货原因明细 v2；补充站点日期和上游更新时间。",
+		Columns:    detailSchemaColumns([]Column{{Name: "store", SQLType: "VARCHAR(64)", Nullable: false}, {Name: "record_date", SQLType: "DATE", Nullable: true}, {Name: "stable_key", SQLType: "VARCHAR(255)", Nullable: false}, {Name: "updated_at", SQLType: "DATETIME(6)", Nullable: false}}),
+		PrimaryKey: []string{"store", "stable_key"},
+	},
 	"order-shipping-address-detail-v1": {
 		DatasetID: "order-shipping-address-detail-v1", TableName: "order_shipping_address_detail_v1", DataNote: "订单配送地址行明细；原始接口只提供城市、州、省、邮编和国家等字段。",
 		Columns:    detailSchemaColumns([]Column{{Name: "store", SQLType: "VARCHAR(64)", Nullable: false}, {Name: "record_date", SQLType: "DATE", Nullable: true}, {Name: "stable_key", SQLType: "VARCHAR(255)", Nullable: false}, {Name: "updated_at", SQLType: "DATETIME(6)", Nullable: false}}),
 		PrimaryKey: []string{"store", "stable_key"},
 	},
 	"address-order-item-detail-v1": {
-		DatasetID: "address-order-item-detail-v1", TableName: "address_order_item_detail_v1", DataNote: "订单配送商品行；marketplace 由店铺接口的 marketplace_id 映射为 US/AU/JP，AFN/MFN 映射为 FBA/FBM。上游当前未返回坐标，ship_lat/ship_lng 保持 NULL。",
+		DatasetID: "address-order-item-detail-v1", TableName: "address_order_item_detail_v1", DataNote: "订单配送商品行；marketplace 由店铺接口的 marketplace_id 映射为 US/AU/JP，AFN/MFN 映射为 FBA/FBM。ship_lat/ship_lng 为历史兼容字段，保持 NULL。",
+		Columns:    detailSchemaColumns([]Column{{Name: "store", SQLType: "VARCHAR(64)", Nullable: false}, {Name: "record_date", SQLType: "DATE", Nullable: true}, {Name: "stable_key", SQLType: "VARCHAR(255)", Nullable: false}, {Name: "updated_at", SQLType: "DATETIME(6)", Nullable: false}}),
+		PrimaryKey: []string{"store", "stable_key"},
+	},
+	"address-order-item-detail-v2": {
+		DatasetID: "address-order-item-detail-v2", TableName: "address_order_item_detail_v2", DataNote: "订单配送商品行 v2；补充地址原始列。",
 		Columns:    detailSchemaColumns([]Column{{Name: "store", SQLType: "VARCHAR(64)", Nullable: false}, {Name: "record_date", SQLType: "DATE", Nullable: true}, {Name: "stable_key", SQLType: "VARCHAR(255)", Nullable: false}, {Name: "updated_at", SQLType: "DATETIME(6)", Nullable: false}}),
 		PrimaryKey: []string{"store", "stable_key"},
 	},
 	"fba-inventory-snapshot-v1": {
 		DatasetID: "fba-inventory-snapshot-v1", TableName: "fba_inventory_snapshot_v1", DataNote: "FBA 库存每日快照；历史从本版本部署后每次成功同步开始累计，不补造部署前日期。",
+		Columns:    detailSchemaColumns([]Column{{Name: "store", SQLType: "VARCHAR(64)", Nullable: false}, {Name: "record_date", SQLType: "DATE", Nullable: true}, {Name: "stable_key", SQLType: "VARCHAR(255)", Nullable: false}, {Name: "updated_at", SQLType: "DATETIME(6)", Nullable: false}}),
+		PrimaryKey: []string{"store", "stable_key"},
+	},
+	"fba-inventory-snapshot-v2": {
+		DatasetID: "fba-inventory-snapshot-v2", TableName: "fba_inventory_snapshot_v2", DataNote: "FBA 库存快照 v2；补充已验证原始库存列。",
 		Columns:    detailSchemaColumns([]Column{{Name: "store", SQLType: "VARCHAR(64)", Nullable: false}, {Name: "record_date", SQLType: "DATE", Nullable: true}, {Name: "stable_key", SQLType: "VARCHAR(255)", Nullable: false}, {Name: "updated_at", SQLType: "DATETIME(6)", Nullable: false}}),
 		PrimaryKey: []string{"store", "stable_key"},
 	},
@@ -81,6 +96,42 @@ func columnsForFields(fields []string) []Column {
 
 func schemaType(name string) string {
 	switch {
+	case name == "return_date_locale", name == "purchase_date_locale":
+		return "VARCHAR(32)"
+	case name == "gmt_modified":
+		return "VARCHAR(64)"
+	case name == "afn_erp_real_shipped_quantity", name == "afn_researching_quantity", name == "inv_age_0_to_90_days", name == "inv_age_271_to_330_days", name == "inv_age_331_to_365_days", name == "reserved_customerorders", name == "total_fulfillable_quantity":
+		return "INT"
+	case name == "brand_id", name == "category_id":
+		return "BIGINT"
+	case name == "brand_name":
+		return "VARCHAR(128)"
+	case name == "category_name":
+		return "VARCHAR(128)"
+	case name == "cost", name == "estimated_excess_quantity", name == "estimated_storage_cost_next_month", name == "fba_minimum_inventory_level", name == "long_term_historical_days_of_supply", name == "short_term_historical_days_of_supply":
+		return "DECIMAL(14,4)"
+	case name == "fulfillment_channel_name", name == "low_inventory_level_fee_applied", name == "share_type":
+		return "VARCHAR(32)"
+	case name == "name":
+		return "VARCHAR(256)"
+	case name == "product_image":
+		return "VARCHAR(512)"
+	case name == "recommended_action":
+		return "VARCHAR(64)"
+	case name == "wname":
+		return "VARCHAR(64)"
+	case name == "payments_date", name == "shipment_date", name == "reporting_date", name == "estimated_arrival_date", name == "hide_time":
+		return "VARCHAR(40)"
+	case name == "quantity_shipped":
+		return "INT"
+	case name == "item_tax", name == "shipping_price", name == "shipping_tax", name == "gift_wrap_price", name == "gift_wrap_tax", name == "item_promotion_discount", name == "ship_promotion_discount", name == "points_granted":
+		return "VARCHAR(32)"
+	case name == "ship_service_level":
+		return "VARCHAR(64)"
+	case name == "carrier":
+		return "VARCHAR(64)"
+	case name == "tracking_number":
+		return "VARCHAR(128)"
 	case name == "ship_lat", name == "ship_lng":
 		return "DECIMAL(10,7)"
 	case name == "marketplace", name == "fulfillment_channel":
@@ -116,8 +167,12 @@ func SchemaFor(id string) (Schema, bool) {
 		return Schema{}, false
 	}
 	definition, _ := DefinitionFor(id)
-	if id != "listing-daily-v1" {
-		schema.Columns = append(fixedColumnsForDataset(), columnsForFields(definition.Fields)...)
+	if definition.Kind != DatasetKindDaily {
+		fields := definition.Fields
+		if definition.ParentID != "" && len(definition.CatalogFields) > 0 {
+			fields = definition.CatalogFields
+		}
+		schema.Columns = append(fixedColumnsForDataset(), columnsForFields(fields)...)
 	}
 	schema.Columns = append([]Column(nil), schema.Columns...)
 	schema.PrimaryKey = append([]string(nil), schema.PrimaryKey...)
@@ -131,7 +186,10 @@ func (s Schema) CreateTableSQL(selected []string) (string, error) {
 	}
 	definition, _ := DefinitionFor(s.DatasetID)
 	definitionFields := definition.Fields
-	if s.DatasetID == DatasetID {
+	if definition.ParentID != "" && len(definition.CatalogFields) > 0 {
+		definitionFields = definition.CatalogFields
+	}
+	if definition.Kind == DatasetKindDaily {
 		definitionFields = availableSchemaFields
 	}
 	business := make(map[string]struct{}, len(definitionFields))

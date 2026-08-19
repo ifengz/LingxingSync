@@ -540,3 +540,19 @@ func TestSaveVCStoreProfileRejectsMissingProfileField(t *testing.T) {
 		t.Fatalf("missing profile_id status=%d, want %d; body=%s", rec.Code, http.StatusBadRequest, rec.Body.String())
 	}
 }
+
+func TestUnpublishedVersionCannotAuthorizeBearerReads(t *testing.T) {
+	cfg := validDatasetProjectTestConfig()
+	cfg.DatasetAPI.Tokens = []config.DatasetToken{{
+		ID: "draft-reader", ProjectID: "draft-reader", TokenHash: datasetapi.HashToken("draft-token"),
+		DatasetScopes: []string{"return-reason-detail-v2"}, StoreScopes: []string{"store-a"},
+	}}
+	s := New(cfg, nil, nil, nil, "", Assets{FS: renderTestFS, TemplateFS: "testdata", StaticFS: "testdata"}, nil, nil, nil, "")
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/datasets/return-reason-detail-v2/snapshot", strings.NewReader(`{"store":"store-a","date_from":"2026-08-01","date_to":"2026-08-01"}`))
+	req.Header.Set("Authorization", "Bearer draft-token")
+	rec := httptest.NewRecorder()
+	s.Routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("unpublished draft read status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
