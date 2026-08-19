@@ -27,7 +27,7 @@ func TestCatalogExposesOnlyRegisteredDataProducts(t *testing.T) {
 	if !ok || address.Kind != DatasetKindDetail || address.Grain != "store + shipment_id + shipment_item_id" {
 		t.Fatalf("address order item definition=%+v found=%t", address, ok)
 	}
-	for _, field := range []string{"store_name", "last_updated_date", "order_status", "asin", "quantity", "source_updated_at"} {
+	for _, field := range []string{"store_name", "marketplace", "last_updated_date", "order_status", "asin", "quantity", "fulfillment_channel", "ship_country", "ship_state", "ship_city", "ship_postal_code", "ship_lat", "ship_lng", "source_updated_at"} {
 		found := false
 		for _, actual := range address.Fields {
 			found = found || actual == field

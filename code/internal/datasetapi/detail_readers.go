@@ -107,6 +107,8 @@ LEFT JOIN ls_sales_orders o
   ON o.account_id = a.account_id AND o.sid = a.sid AND o.amazon_order_id = a.amazon_order_id
 LEFT JOIN ls_sc_order_details d
   ON d.account_id = a.account_id AND d.sid = a.sid AND d.amazon_order_id = a.amazon_order_id
+LEFT JOIN ls_stores s
+  ON s.account_id = a.account_id AND s.sid = a.sid AND s.store_type = 'SC'
 LEFT JOIN JSON_TABLE(COALESCE(d.item_list, JSON_ARRAY()), '$[*]' COLUMNS(
   order_item_id VARCHAR(64) PATH '$.order_item_id' NULL ON EMPTY,
   asin VARCHAR(64) PATH '$.asin' NULL ON EMPTY,
@@ -117,14 +119,15 @@ LEFT JOIN JSON_TABLE(COALESCE(d.item_list, JSON_ARRAY()), '$[*]' COLUMNS(
   quantity_ordered BIGINT PATH '$.quantity_ordered' NULL ON EMPTY
 )) di ON di.order_item_id = a.amazon_order_item_id`,
 	storeColumn:     "a.sid",
-	baseColumns:     []string{"a.account_id", "a.sid", "di.asin", "COALESCE(NULLIF(di.seller_sku, ''), NULLIF(di.sku, ''), a.sku)", "DATE(a.purchase_date)", "GREATEST(a.synced_at, COALESCE(o.synced_at, a.synced_at), COALESCE(d.synced_at, a.synced_at))", "CONCAT_WS('|', a.account_id, a.sid, a.shipment_id, a.shipment_item_id)"},
+	baseColumns:     []string{"a.account_id", "a.sid", "di.asin", "COALESCE(NULLIF(di.seller_sku, ''), NULLIF(di.sku, ''), a.sku)", "DATE(a.purchase_date)", "GREATEST(a.synced_at, COALESCE(o.synced_at, a.synced_at), COALESCE(d.synced_at, a.synced_at), COALESCE(s.synced_at, a.synced_at))", "CONCAT_WS('|', a.account_id, a.sid, a.shipment_id, a.shipment_item_id)"},
 	dateColumn:      "DATE(a.purchase_date)",
 	stableKeyColumn: "CONCAT_WS('|', a.account_id, a.sid, a.shipment_id, a.shipment_item_id)",
-	updatedAtColumn: "GREATEST(a.synced_at, COALESCE(o.synced_at, a.synced_at), COALESCE(d.synced_at, a.synced_at))",
+	updatedAtColumn: "GREATEST(a.synced_at, COALESCE(o.synced_at, a.synced_at), COALESCE(d.synced_at, a.synced_at), COALESCE(s.synced_at, a.synced_at))",
 	stableKeyParts:  4,
 	fields: map[string]string{
 		"amazon_order_id":      "a.amazon_order_id",
 		"store_name":           "o.seller_name",
+		"marketplace":          "CASE s.marketplace_id WHEN 'ATVPDKIKX0DER' THEN 'US' WHEN 'A39IBJ37TRP1C6' THEN 'AU' WHEN 'A1VC38T7YXB528' THEN 'JP' END",
 		"purchase_date":        "a.purchase_date",
 		"last_updated_date":    "o.last_update_date",
 		"order_status":         "COALESCE(NULLIF(o.order_status, ''), d.order_status)",
@@ -134,16 +137,18 @@ LEFT JOIN JSON_TABLE(COALESCE(d.item_list, JSON_ARRAY()), '$[*]' COLUMNS(
 		"quantity":             "COALESCE(di.quantity_shipped, di.quantity_ordered, a.quantity_shipped)",
 		"currency":             "a.currency",
 		"item_price":           "a.item_price",
-		"ship_city":            "a.ship_city",
-		"ship_state":           "a.ship_state",
-		"ship_postal_code":     "a.ship_postal_code",
+		"fulfillment_channel":  "CASE a.fulfillment_channel WHEN 'AFN' THEN 'FBA' WHEN 'MFN' THEN 'FBM' ELSE a.fulfillment_channel END",
 		"ship_country":         "a.ship_country",
+		"ship_state":           "a.ship_state",
+		"ship_city":            "a.ship_city",
+		"ship_postal_code":     "a.ship_postal_code",
+		"ship_lat":             "CAST(NULL AS DECIMAL(10,7))",
+		"ship_lng":             "CAST(NULL AS DECIMAL(10,7))",
 		"source_store":         "a.sid",
 		"shipment_id":          "a.shipment_id",
 		"shipment_item_id":     "a.shipment_item_id",
 		"amazon_order_item_id": "a.amazon_order_item_id",
-		"fulfillment_channel":  "a.fulfillment_channel",
-		"source_updated_at":    "GREATEST(a.synced_at, COALESCE(o.synced_at, a.synced_at), COALESCE(d.synced_at, a.synced_at))",
+		"source_updated_at":    "GREATEST(a.synced_at, COALESCE(o.synced_at, a.synced_at), COALESCE(d.synced_at, a.synced_at), COALESCE(s.synced_at, a.synced_at))",
 	},
 }
 

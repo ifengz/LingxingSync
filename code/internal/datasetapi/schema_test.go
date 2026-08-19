@@ -56,7 +56,7 @@ func TestAddressOrderItemSchemaKeepsCompositeDownstreamKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create SQL: %v", err)
 	}
-	for _, want := range []string{"`source_updated_at` DATETIME(6)", "PRIMARY KEY (`store`, `stable_key`)", "KEY `idx_updated_at` (`updated_at`)"} {
+	for _, want := range []string{"`marketplace` VARCHAR(8)", "`fulfillment_channel` VARCHAR(8)", "`ship_country` CHAR(2)", "`ship_state` VARCHAR(128)", "`ship_city` VARCHAR(128)", "`ship_postal_code` VARCHAR(32)", "`ship_lat` DECIMAL(10,7)", "`ship_lng` DECIMAL(10,7)", "`source_updated_at` DATETIME(6)", "PRIMARY KEY (`store`, `stable_key`)", "KEY `idx_updated_at` (`updated_at`)"} {
 		if !strings.Contains(ddl, want) {
 			t.Fatalf("address order item DDL missing %q: %s", want, ddl)
 		}

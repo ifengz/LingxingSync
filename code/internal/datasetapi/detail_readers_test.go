@@ -57,27 +57,27 @@ func TestOrderShippingAddressReaderChangesUsesStaticKeyset(t *testing.T) {
 	}
 }
 
-func TestAddressOrderItemReaderUsesOnlyFixedThreeSourceJoin(t *testing.T) {
+func TestAddressOrderItemReaderUsesOnlyFixedSourceJoin(t *testing.T) {
 	updated := time.Date(2026, 8, 15, 3, 4, 5, 0, time.UTC)
 	queryer := &fixedQueryer{rows: &fixedRows{values: []any{
-		"sc-us-1", "store-a", "ASIN1", "SKU1", "2026-08-14", updated, "sc-us-1|store-a|shipment-1|item-1", "ORDER-1", "Store A", "2026-08-14 12:00:00", "Shipped", "ASIN1", int64(2), "US",
+		"sc-us-1", "store-a", "ASIN1", "SKU1", "2026-08-14", updated, "sc-us-1|store-a|shipment-1|item-1", "ORDER-1", "Store A", "US", "FBA", "US", "CA", "Los Angeles", "00123", nil, nil,
 	}}}
 	reader := &DetailSQLReader{queryer: queryer, definition: addressOrderItemDetailDefinition}
 	page, err := reader.Changes(context.Background(), Query{
-		Store: "store-a", Fields: []string{"amazon_order_id", "store_name", "last_updated_date", "order_status", "asin", "quantity", "ship_country"}, PageSize: 10,
+		Store: "store-a", Fields: []string{"amazon_order_id", "store_name", "marketplace", "fulfillment_channel", "ship_country", "ship_state", "ship_city", "ship_postal_code", "ship_lat", "ship_lng"}, PageSize: 10,
 		Cursor: &CursorKey{UpdatedAt: updated.Add(-time.Second), StableKey: "0|0|0|0"},
 	})
 	if err != nil {
 		t.Fatalf("Changes: %v", err)
 	}
 	for _, want := range []string{
-		"FROM ls_sc_fba_order_addresses a", "LEFT JOIN ls_sales_orders o", "LEFT JOIN ls_sc_order_details d", "JSON_TABLE", "di.order_item_id = a.amazon_order_item_id", "GREATEST(a.synced_at", "a.sid IN (?)",
+		"FROM ls_sc_fba_order_addresses a", "LEFT JOIN ls_sales_orders o", "LEFT JOIN ls_sc_order_details d", "LEFT JOIN ls_stores s", "JSON_TABLE", "di.order_item_id = a.amazon_order_item_id", "GREATEST(a.synced_at", "s.synced_at", "a.sid IN (?)", "WHEN 'ATVPDKIKX0DER' THEN 'US'", "WHEN 'AFN' THEN 'FBA'", "CAST(NULL AS DECIMAL(10,7))",
 	} {
 		if !strings.Contains(queryer.query, want) {
 			t.Fatalf("address order item query missing %q: %s", want, queryer.query)
 		}
 	}
-	if len(page.Rows) != 1 || page.Rows[0].StableKey != "sc-us-1|store-a|shipment-1|item-1" || page.Rows[0].Values["asin"] != "ASIN1" {
+	if len(page.Rows) != 1 || page.Rows[0].StableKey != "sc-us-1|store-a|shipment-1|item-1" || page.Rows[0].Values["marketplace"] != "US" || page.Rows[0].Values["fulfillment_channel"] != "FBA" || page.Rows[0].Values["ship_postal_code"] != "00123" || page.Rows[0].Values["ship_lat"] != nil || page.Rows[0].Values["ship_lng"] != nil {
 		t.Fatalf("address order item row mismatch: %+v", page)
 	}
 }

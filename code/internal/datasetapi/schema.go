@@ -42,7 +42,7 @@ var schemas = map[string]Schema{
 		PrimaryKey: []string{"store", "stable_key"},
 	},
 	"address-order-item-detail-v1": {
-		DatasetID: "address-order-item-detail-v1", TableName: "address_order_item_detail_v1", DataNote: "FBA/AFN 订单配送商品行；关联订单头和订单详情补充状态、更新时间与 ASIN。坐标不属于上游数据。",
+		DatasetID: "address-order-item-detail-v1", TableName: "address_order_item_detail_v1", DataNote: "订单配送商品行；marketplace 由店铺接口的 marketplace_id 映射为 US/AU/JP，AFN/MFN 映射为 FBA/FBM。上游当前未返回坐标，ship_lat/ship_lng 保持 NULL。",
 		Columns:    detailSchemaColumns([]Column{{Name: "store", SQLType: "VARCHAR(64)", Nullable: false}, {Name: "record_date", SQLType: "DATE", Nullable: true}, {Name: "stable_key", SQLType: "VARCHAR(255)", Nullable: false}, {Name: "updated_at", SQLType: "DATETIME(6)", Nullable: false}}),
 		PrimaryKey: []string{"store", "stable_key"},
 	},
@@ -81,6 +81,16 @@ func columnsForFields(fields []string) []Column {
 
 func schemaType(name string) string {
 	switch {
+	case name == "ship_lat", name == "ship_lng":
+		return "DECIMAL(10,7)"
+	case name == "marketplace", name == "fulfillment_channel":
+		return "VARCHAR(8)"
+	case name == "ship_country":
+		return "CHAR(2)"
+	case name == "ship_state", name == "ship_city":
+		return "VARCHAR(128)"
+	case name == "ship_postal_code":
+		return "VARCHAR(32)"
 	case strings.HasSuffix(name, "_units"), strings.HasSuffix(name, "_orders"), strings.HasSuffix(name, "_count"), strings.HasPrefix(name, "sessions_"), strings.HasPrefix(name, "inv_age_"), name == "quantity", name == "quantity_shipped", strings.HasSuffix(name, "_quantity"), name == "returns_qty":
 		return "BIGINT"
 	case strings.HasSuffix(name, "_date"), strings.HasSuffix(name, "_date_locale"):
