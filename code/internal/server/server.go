@@ -379,8 +379,7 @@ func (s *Server) withMiddleware(h http.Handler) http.Handler {
 				r.Method, r.URL.RequestURI(), rr.status, time.Since(start).Milliseconds())
 		}()
 
-		if isDatasetGuidePath(r.URL.Path) && s.cfg.Server.Secret == "" {
-			errJSON(w, http.StatusForbidden, "dataset guide requires X-Sync-Secret configuration")
+		if isDatasetGuidePath(r.URL.Path) && !s.authorizeDatasetGuide(w, r) {
 			return
 		}
 		if s.cfg.Server.Secret != "" && strings.HasPrefix(r.URL.Path, "/api/") && !datasetapi.IsBearerPath(r.URL.Path) {
@@ -391,6 +390,18 @@ func (s *Server) withMiddleware(h http.Handler) http.Handler {
 		}
 		h.ServeHTTP(rr, r)
 	})
+}
+
+func (s *Server) authorizeDatasetGuide(w http.ResponseWriter, r *http.Request) bool {
+	if s.cfg.Server.Secret == "" {
+		errJSON(w, http.StatusForbidden, "dataset guide requires X-Sync-Secret configuration")
+		return false
+	}
+	if r.Header.Get("X-Sync-Secret") != s.cfg.Server.Secret {
+		errJSON(w, http.StatusUnauthorized, "missing or wrong X-Sync-Secret")
+		return false
+	}
+	return true
 }
 
 func isDatasetGuidePath(path string) bool {

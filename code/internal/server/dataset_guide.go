@@ -10,6 +10,9 @@ import (
 )
 
 func (s *Server) apiDownstreamProjectGuide(w http.ResponseWriter, r *http.Request) {
+	if !s.authorizeDatasetGuide(w, r) {
+		return
+	}
 	if s.store == nil {
 		errJSON(w, http.StatusInternalServerError, "配置存储未初始化")
 		return

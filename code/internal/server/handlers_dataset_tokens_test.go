@@ -332,7 +332,7 @@ func TestDownstreamProjectGuideRejectsAnonymousAccess(t *testing.T) {
 	store := config.NewStore(t.TempDir()+"/config.yaml", cfg)
 	s := New(cfg, nil, nil, nil, "", Assets{FS: renderTestFS, TemplateFS: "testdata", StaticFS: "testdata"}, store, nil, nil, "")
 	rec := httptest.NewRecorder()
-	s.withMiddleware(s.Routes()).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/datasources/datasets/projects/tok_reader/guide", nil))
+	s.Routes().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/datasources/datasets/projects/tok_reader/guide", nil))
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("anonymous guide status=%d, want 401; body=%s", rec.Code, rec.Body.String())
 	}
