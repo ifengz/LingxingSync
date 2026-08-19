@@ -1200,6 +1200,19 @@ function datasetFieldConfigPath(datasetID) {
   return '/api/datasources/datasets/' + encodeURIComponent(datasetID) + '/fields/config';
 }
 
+function datasetIDFromURL() {
+  const value = new URLSearchParams(window.location.search).get('dataset');
+  return value && value.trim() ? value.trim() : '';
+}
+
+function updateDatasetURL(datasetID) {
+  const query = new URLSearchParams(window.location.search);
+  if (datasetID) query.set('dataset', datasetID);
+  else query.delete('dataset');
+  const search = query.toString();
+  window.history.replaceState(null, '', (window.location.pathname || '') + (search ? '?' + search : '') + (window.location.hash || ''));
+}
+
 function listingDailyFieldConfigPath() {
   return datasetFieldConfigPath('listing-daily-v1');
 }
@@ -1340,7 +1353,7 @@ window.dataSources = function () {
     colError: '',       // 读字段失败时的提示（不静默空白）
     refreshing: false,  // 刷新主表工作态（只重拉 /api/endpoints，不动整页）
     datasetTab: new URLSearchParams(window.location.search).get('tab') === 'projects' ? 'projects' : 'table',
-    datasetID: 'listing-daily-v1',
+    datasetID: datasetIDFromURL() || 'listing-daily-v1',
     datasetDefinitions: [],
     datasetScopeSelection: {},
     datasetName: '',
@@ -1403,6 +1416,9 @@ window.dataSources = function () {
     get tableFieldsLocked() {
       return this.tableFieldsPublished;
     },
+    get canExitDatasetDraft() {
+      return Boolean(!this.tableFieldsPublished && this.parentDatasetID);
+    },
     get canRegisterNextVersion() {
       return Boolean(this.nextVersionID && this.datasetDefinitions.some((definition) => definition && definition.id === this.nextVersionID && definition.published === false));
     },
@@ -1452,8 +1468,14 @@ window.dataSources = function () {
       this.fieldsError = '';
       try {
         const catalogResponse = await window.apiGet('/api/datasources/datasets/catalog');
+        if (requestVersion !== this.fieldsRequestVersion) return;
         this.datasetDefinitions = Array.isArray(catalogResponse && catalogResponse.datasets) ? catalogResponse.datasets : [];
-        if (!this.datasetDefinitions.some((definition) => definition && definition.id === this.datasetID)) throw new Error('当前数据表不在系统目录中');
+        const firstPublished = this.datasetDefinitions.find((definition) => definition && definition.published !== false);
+        if (!firstPublished) throw new Error('系统目录中没有已发布数据表');
+        const requestedID = datasetIDFromURL();
+        const requested = requestedID && this.datasetDefinitions.find((definition) => definition && definition.id === requestedID);
+        this.datasetID = requested ? requested.id : firstPublished.id;
+        if (requestedID && !requested) updateDatasetURL('');
         const data = await window.apiGet(datasetFieldConfigPath(this.datasetID));
         if (requestVersion !== this.fieldsRequestVersion) return;
         if (!data || data.dataset_id !== this.datasetID) throw new Error('数据表配置响应格式错误');
@@ -1476,14 +1498,25 @@ window.dataSources = function () {
         if (requestVersion === this.fieldsRequestVersion) this.fieldsLoading = false;
       }
     },
-    selectDatasetTable(datasetID) {
+    async selectDatasetTable(datasetID) {
+      if (this.tableFieldsSaving) return;
       if (datasetID === this.datasetID) return;
+      if (this.canExitDatasetDraft && this.tableFieldDirty) {
+        const accepted = await window.syncConfirm('当前草稿有未保存修改，退出将放弃这些修改，确认？', '退出草稿');
+        if (!accepted) return;
+        if (this.tableFieldsSaving) return;
+      }
       this.datasetID = datasetID;
-      this.loadDatasetCatalog();
+      updateDatasetURL(datasetID);
+      return this.loadDatasetCatalog();
     },
     registerDatasetVersion() {
-      if (!this.canRegisterNextVersion) return;
-      this.selectDatasetTable(this.nextVersionID);
+      if (this.tableFieldsSaving || !this.canRegisterNextVersion) return;
+      return this.selectDatasetTable(this.nextVersionID);
+    },
+    async exitDatasetDraft() {
+      if (this.tableFieldsSaving || !this.canExitDatasetDraft) return;
+      return this.selectDatasetTable(this.parentDatasetID);
     },
     setDatasetTab(tab) {
       this.datasetTab = tab;

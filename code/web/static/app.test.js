@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 
 const sandbox = {
-  window: { addEventListener() {}, dispatchEvent() {}, location: { search: '?tab=schedule&add=1', pathname: '/dataset-fields', hash: '' }, history: { replaceState(_state, _title, url) { this.lastURL = url; } } },
+  window: { addEventListener() {}, dispatchEvent() {}, location: { search: '?tab=schedule&add=1', pathname: '/dataset-fields', hash: '' }, history: { replaceState(_state, _title, url) { this.lastURL = url; const next = new URL(url, 'http://test.local'); sandbox.window.location.pathname = next.pathname; sandbox.window.location.search = next.search; sandbox.window.location.hash = next.hash; } } },
   document: { querySelector() { return null; } },
   CustomEvent: class CustomEvent {},
   URLSearchParams,
@@ -86,7 +86,9 @@ assert.equal(entryManage.advancedAdd, false);
   assert.match(template, /h-\[720px\] overflow-y-auto/);
   assert.match(template, /saveDatasetFieldAllowlist\(\)/);
   assert.match(template, /registerDatasetVersion\(\)/);
-  assert.match(template, /注册新版本/);
+  assert.match(template, /配置新版本/);
+  assert.doesNotMatch(template, /注册新版本/);
+  assert.match(template, /发布 v2/);
   assert.match(template, /暂无可添加字段/);
   assert.doesNotMatch(template, /<input[^>]*x-model[^>]*(?:table|sql)/i);
   assert.doesNotMatch(template, /type=["']password/i);
@@ -272,6 +274,195 @@ root.confirmResolve(true);
 confirmation.then((accepted) => assert.equal(accepted, true));
 
 void (async () => {
+  // 数据表选择由 URL 驱动：无参数默认第一张已发布表，有效参数恢复（包括未发布 v2），无效参数回退并清除。
+  {
+    const definitions = [
+      { id: 'address-v1', name: 'Address v1', published: true },
+      { id: 'listing-daily-v1', name: 'Listing v1', published: true },
+      { id: 'listing-daily-v2', name: 'Listing v2', published: false, parent_dataset_id: 'listing-daily-v1' },
+    ];
+    const configFor = (id) => ({
+      dataset_id: id,
+      dataset_name: definitions.find((definition) => definition.id === id).name,
+      fixed_fields: ['store'],
+      available_fields: ['sales_units'],
+      configured_fields: [],
+      published: id !== 'listing-daily-v2',
+      parent_dataset_id: id === 'listing-daily-v2' ? 'listing-daily-v1' : '',
+      projects: [],
+    });
+    sandbox.window.location.pathname = '/dataset-fields';
+    sandbox.window.location.hash = '#fields';
+    sandbox.window.location.search = '?tab=projects&keep=yes';
+    sandbox.window.apiGet = async (url) => {
+      if (url === '/api/datasources/datasets/catalog') return { datasets: definitions, projects: [] };
+      const prefix = '/api/datasources/datasets/';
+      if (url.startsWith(prefix) && url.endsWith('/fields/config')) {
+        const id = decodeURIComponent(url.slice(prefix.length, -'/fields/config'.length));
+        return configFor(id);
+      }
+      throw new Error('unexpected dataset GET ' + url);
+    };
+
+    const defaultTable = sandbox.window.dataSources();
+    await defaultTable.loadDatasetCatalog();
+    assert.equal(defaultTable.datasetID, 'address-v1');
+    assert.doesNotMatch(sandbox.window.history.lastURL || '', /dataset=/);
+
+    sandbox.window.location.search = '?tab=projects&keep=yes&dataset=listing-daily-v2';
+    const draftTable = sandbox.window.dataSources();
+    await draftTable.loadDatasetCatalog();
+    assert.equal(draftTable.datasetID, 'listing-daily-v2');
+    assert.equal(draftTable.parentDatasetID, 'listing-daily-v1');
+    await draftTable.selectDatasetTable('address-v1');
+    assert.equal(sandbox.window.history.lastURL, '/dataset-fields?tab=projects&keep=yes&dataset=address-v1#fields');
+
+    sandbox.window.location.search = '?tab=projects&keep=yes&dataset=missing';
+    const invalidTable = sandbox.window.dataSources();
+    await invalidTable.loadDatasetCatalog();
+    assert.equal(invalidTable.datasetID, 'address-v1');
+    assert.equal(sandbox.window.history.lastURL, '/dataset-fields?tab=projects&keep=yes#fields');
+  }
+
+  // 旧目录请求晚于新请求返回时，不得覆盖新请求的选择或 URL。
+  {
+    const catalogRequests = [];
+    const definitions = [
+      { id: 'listing-daily-v1', name: 'Listing v1', published: true },
+    ];
+    const config = { dataset_id: 'listing-daily-v1', dataset_name: 'Listing v1', fixed_fields: ['store'], available_fields: [], configured_fields: [], published: true, projects: [] };
+    sandbox.window.location.search = '?tab=projects&keep=yes&dataset=listing-daily-v1';
+    sandbox.window.apiGet = (url) => {
+      if (url !== '/api/datasources/datasets/catalog') return Promise.resolve(config);
+      return new Promise((resolve) => catalogRequests.push(resolve));
+    };
+    const racing = sandbox.window.dataSources();
+    const oldRequest = racing.loadDatasetCatalog();
+    const newRequest = racing.loadDatasetCatalog();
+    catalogRequests[1]({ datasets: definitions, projects: [] });
+    await newRequest;
+    assert.equal(racing.datasetID, 'listing-daily-v1');
+    assert.match(sandbox.window.location.search, /dataset=listing-daily-v1/);
+    catalogRequests[0]({ datasets: [{ id: 'stale-only', name: 'Stale', published: true }], projects: [] });
+    await oldRequest;
+    assert.equal(racing.datasetID, 'listing-daily-v1');
+    assert.match(sandbox.window.location.search, /dataset=listing-daily-v1/);
+  }
+
+  // 未发布 v2 可以退出草稿：无修改直接返回父版本，有修改先确认，拒绝确认则保持原表。
+  {
+    sandbox.window.location.search = '?tab=projects&keep=yes&dataset=listing-daily-v2';
+    const draftTable = sandbox.window.dataSources();
+    await draftTable.loadDatasetCatalog();
+    assert.equal(draftTable.canExitDatasetDraft, true);
+    draftTable.tableFieldsPublished = true;
+    assert.equal(draftTable.canExitDatasetDraft, false, 'v2 发布后必须立即隐藏退出草稿入口');
+    draftTable.tableFieldsPublished = false;
+    let confirmCalls = 0;
+    sandbox.window.syncConfirm = async () => { confirmCalls++; return false; };
+    draftTable.tableSelectedFields = ['sales_units'];
+    draftTable.tableSavedFields = [];
+    await draftTable.exitDatasetDraft();
+    assert.equal(confirmCalls, 1);
+    assert.equal(draftTable.datasetID, 'listing-daily-v2');
+    assert.match(sandbox.window.location.search, /dataset=listing-daily-v2/);
+
+    sandbox.window.syncConfirm = async () => { confirmCalls++; return true; };
+    await draftTable.exitDatasetDraft();
+    assert.equal(draftTable.datasetID, 'listing-daily-v1');
+    assert.equal(sandbox.window.history.lastURL, '/dataset-fields?tab=projects&keep=yes&dataset=listing-daily-v1#fields');
+
+    sandbox.window.location.search = '?tab=projects&keep=yes&dataset=listing-daily-v2';
+    const cleanDraft = sandbox.window.dataSources();
+    await cleanDraft.loadDatasetCatalog();
+    confirmCalls = 0;
+    sandbox.window.syncConfirm = async () => { confirmCalls++; return false; };
+    await cleanDraft.exitDatasetDraft();
+    assert.equal(confirmCalls, 0);
+    assert.equal(cleanDraft.datasetID, 'listing-daily-v1');
+
+  }
+
+  // 脏草稿从顶部切卡离开时也必须确认；退出草稿复用同一切换路径，不能重复确认。
+  {
+    sandbox.window.location.search = '?tab=projects&keep=yes&dataset=listing-daily-v2';
+    const clickDraft = sandbox.window.dataSources();
+    await clickDraft.loadDatasetCatalog();
+    clickDraft.tableSelectedFields = ['sales_units'];
+    clickDraft.tableSavedFields = [];
+    let confirmCalls = 0;
+    sandbox.window.syncConfirm = async () => { confirmCalls++; return false; };
+    await clickDraft.selectDatasetTable('listing-daily-v1');
+    assert.equal(confirmCalls, 1);
+    assert.equal(clickDraft.datasetID, 'listing-daily-v2');
+    assert.match(sandbox.window.location.search, /dataset=listing-daily-v2/);
+
+    sandbox.window.syncConfirm = async () => { confirmCalls++; return true; };
+    await clickDraft.selectDatasetTable('listing-daily-v1');
+    assert.equal(clickDraft.datasetID, 'listing-daily-v1');
+    assert.equal(confirmCalls, 2);
+
+    sandbox.window.location.search = '?tab=projects&keep=yes&dataset=listing-daily-v2';
+    const exitDraft = sandbox.window.dataSources();
+    await exitDraft.loadDatasetCatalog();
+    exitDraft.tableSelectedFields = ['sales_units'];
+    exitDraft.tableSavedFields = [];
+    confirmCalls = 0;
+    sandbox.window.syncConfirm = async () => { confirmCalls++; return true; };
+    await exitDraft.exitDatasetDraft();
+    assert.equal(exitDraft.datasetID, 'listing-daily-v1');
+    assert.equal(confirmCalls, 1, '退出草稿只能确认一次');
+
+    sandbox.window.location.search = '?tab=projects&keep=yes&dataset=listing-daily-v2';
+    const raceDraft = sandbox.window.dataSources();
+    await raceDraft.loadDatasetCatalog();
+    raceDraft.tableSelectedFields = ['sales_units'];
+    raceDraft.tableSavedFields = [];
+    let resolveConfirm;
+    sandbox.window.syncConfirm = () => new Promise((resolve) => { resolveConfirm = resolve; });
+    const pendingSwitch = raceDraft.selectDatasetTable('listing-daily-v1');
+    raceDraft.tableFieldsSaving = true;
+    resolveConfirm(true);
+    await pendingSwitch;
+    assert.equal(raceDraft.datasetID, 'listing-daily-v2', '确认等待期间开始发布后不得切表');
+  }
+
+  // 发布 PUT 进行中禁止切表、配置新版本和退出草稿，避免旧响应污染新表。
+  {
+    const saving = sandbox.window.dataSources();
+    saving.datasetDefinitions = [
+      { id: 'listing-daily-v1', name: 'Listing v1', published: true, next_version_id: 'listing-daily-v2' },
+      { id: 'listing-daily-v2', name: 'Listing v2', published: false, parent_dataset_id: 'listing-daily-v1' },
+    ];
+    saving.datasetID = 'listing-daily-v2';
+    saving.loadDatasetCatalog = async () => { throw new Error('切表不应加载新数据表'); };
+    saving.tableSelectedFields = ['sales_units'];
+    saving.tableSavedFields = [];
+    saving.tableFieldsPublished = false;
+    saving.parentDatasetID = 'listing-daily-v1';
+    let resolveSave;
+    sandbox.window.apiPut = () => new Promise((resolve) => { resolveSave = resolve; });
+    const savePromise = saving.saveDatasetFieldAllowlist();
+    assert.equal(saving.tableFieldsSaving, true);
+    await saving.selectDatasetTable('listing-daily-v1');
+    assert.equal(saving.datasetID, 'listing-daily-v2');
+    sandbox.window.syncConfirm = async () => { throw new Error('保存中不应弹退出确认'); };
+    await saving.exitDatasetDraft();
+    assert.equal(saving.datasetID, 'listing-daily-v2');
+    resolveSave({ fields: ['sales_units'] });
+    await savePromise;
+    assert.equal(saving.tableFieldsSaving, false);
+
+    const registering = sandbox.window.dataSources();
+    registering.datasetDefinitions = saving.datasetDefinitions;
+    registering.datasetID = 'listing-daily-v1';
+    registering.nextVersionID = 'listing-daily-v2';
+    registering.tableFieldsSaving = true;
+    registering.loadDatasetCatalog = async () => { throw new Error('发布中不应配置新版本'); };
+    registering.registerDatasetVersion();
+    assert.equal(registering.datasetID, 'listing-daily-v1');
+  }
+
   // 数据表字段和下游项目权限分开；左侧只显示尚未加入当前表的字段。
   {
     const catalog = sandbox.window.dataSources();
