@@ -379,6 +379,10 @@ func (s *Server) withMiddleware(h http.Handler) http.Handler {
 				r.Method, r.URL.RequestURI(), rr.status, time.Since(start).Milliseconds())
 		}()
 
+		if isDatasetGuidePath(r.URL.Path) && s.cfg.Server.Secret == "" {
+			errJSON(w, http.StatusForbidden, "dataset guide requires X-Sync-Secret configuration")
+			return
+		}
 		if s.cfg.Server.Secret != "" && strings.HasPrefix(r.URL.Path, "/api/") && !datasetapi.IsBearerPath(r.URL.Path) {
 			if r.Header.Get("X-Sync-Secret") != s.cfg.Server.Secret {
 				errJSON(w, http.StatusUnauthorized, "missing or wrong X-Sync-Secret")
@@ -387,6 +391,15 @@ func (s *Server) withMiddleware(h http.Handler) http.Handler {
 		}
 		h.ServeHTTP(rr, r)
 	})
+}
+
+func isDatasetGuidePath(path string) bool {
+	const prefix = "/api/datasources/datasets/projects/"
+	if !strings.HasPrefix(path, prefix) || !strings.HasSuffix(path, "/guide") {
+		return false
+	}
+	tokenID := strings.TrimSuffix(strings.TrimPrefix(path, prefix), "/guide")
+	return tokenID != "" && !strings.Contains(tokenID, "/")
 }
 
 // recorder 仅用于记录响应状态码，供日志中间件读取。

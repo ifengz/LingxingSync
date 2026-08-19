@@ -295,6 +295,7 @@ func TestDeleteDownstreamProjectRemovesOnlyMatchingToken(t *testing.T) {
 
 func TestDownstreamProjectGuideContainsAuthorizedSchemaAndExamples(t *testing.T) {
 	cfg := validDatasetProjectTestConfig()
+	cfg.Server.Secret = "admin-secret"
 	cfg.DatasetAPI.Tokens = []config.DatasetToken{{
 		ID: "tok_reader", ProjectID: "reader", Token: "visible-internal-token", TokenHash: datasetapi.HashToken("visible-internal-token"),
 		DatasetScopes: []string{datasetapi.DatasetID, "return-reason-detail-v1", "fba-inventory-snapshot-v1"}, StoreScopes: []string{"12534"},
@@ -303,7 +304,9 @@ func TestDownstreamProjectGuideContainsAuthorizedSchemaAndExamples(t *testing.T)
 	store := config.NewStore(t.TempDir()+"/config.yaml", cfg)
 	s := New(cfg, nil, nil, nil, "", Assets{FS: renderTestFS, TemplateFS: "testdata", StaticFS: "testdata"}, store, nil, nil, "")
 	rec := httptest.NewRecorder()
-	s.Routes().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/datasources/datasets/projects/tok_reader/guide", nil))
+	req := httptest.NewRequest(http.MethodGet, "/api/datasources/datasets/projects/tok_reader/guide", nil)
+	req.Header.Set("X-Sync-Secret", "admin-secret")
+	s.withMiddleware(s.Routes()).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("guide status=%d body=%s", rec.Code, rec.Body.String())
@@ -316,6 +319,65 @@ func TestDownstreamProjectGuideContainsAuthorizedSchemaAndExamples(t *testing.T)
 	}
 	if strings.Contains(body, "当前源表是库存当前状态") {
 		t.Fatalf("guide still describes FBA dataset as current-state only: %s", body)
+	}
+}
+
+func TestDownstreamProjectGuideRejectsAnonymousAccess(t *testing.T) {
+	cfg := validDatasetProjectTestConfig()
+	cfg.Server.Secret = "admin-secret"
+	cfg.DatasetAPI.Tokens = []config.DatasetToken{{
+		ID: "tok_reader", ProjectID: "reader", Token: "visible-internal-token", TokenHash: datasetapi.HashToken("visible-internal-token"),
+		DatasetScopes: []string{datasetapi.DatasetID}, StoreScopes: []string{"12534"}, Fields: []string{"sales_units"},
+	}}
+	store := config.NewStore(t.TempDir()+"/config.yaml", cfg)
+	s := New(cfg, nil, nil, nil, "", Assets{FS: renderTestFS, TemplateFS: "testdata", StaticFS: "testdata"}, store, nil, nil, "")
+	rec := httptest.NewRecorder()
+	s.withMiddleware(s.Routes()).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/datasources/datasets/projects/tok_reader/guide", nil))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("anonymous guide status=%d, want 401; body=%s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "visible-internal-token") {
+		t.Fatalf("anonymous guide leaked bearer token: %s", rec.Body.String())
+	}
+}
+
+func TestDownstreamProjectGuideRejectsWrongAdminSecret(t *testing.T) {
+	cfg := validDatasetProjectTestConfig()
+	cfg.Server.Secret = "admin-secret"
+	cfg.DatasetAPI.Tokens = []config.DatasetToken{{
+		ID: "tok_reader", ProjectID: "reader", Token: "visible-internal-token", TokenHash: datasetapi.HashToken("visible-internal-token"),
+		DatasetScopes: []string{datasetapi.DatasetID}, StoreScopes: []string{"12534"}, Fields: []string{"sales_units"},
+	}}
+	store := config.NewStore(t.TempDir()+"/config.yaml", cfg)
+	s := New(cfg, nil, nil, nil, "", Assets{FS: renderTestFS, TemplateFS: "testdata", StaticFS: "testdata"}, store, nil, nil, "")
+	req := httptest.NewRequest(http.MethodGet, "/api/datasources/datasets/projects/tok_reader/guide", nil)
+	req.Header.Set("X-Sync-Secret", "wrong-secret")
+	rec := httptest.NewRecorder()
+	s.withMiddleware(s.Routes()).ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("wrong-secret guide status=%d, want 401; body=%s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "visible-internal-token") {
+		t.Fatalf("wrong-secret guide leaked bearer token: %s", rec.Body.String())
+	}
+}
+
+func TestDownstreamProjectGuideFailsClosedWithoutAdminSecret(t *testing.T) {
+	cfg := validDatasetProjectTestConfig()
+	cfg.DatasetAPI.Tokens = []config.DatasetToken{{
+		ID: "tok_reader", ProjectID: "reader", Token: "visible-internal-token", TokenHash: datasetapi.HashToken("visible-internal-token"),
+		DatasetScopes: []string{datasetapi.DatasetID}, StoreScopes: []string{"12534"}, Fields: []string{"sales_units"},
+	}}
+	store := config.NewStore(t.TempDir()+"/config.yaml", cfg)
+	s := New(cfg, nil, nil, nil, "", Assets{FS: renderTestFS, TemplateFS: "testdata", StaticFS: "testdata"}, store, nil, nil, "")
+	req := httptest.NewRequest(http.MethodGet, "/api/datasources/datasets/projects/tok_reader/guide", nil)
+	rec := httptest.NewRecorder()
+	s.withMiddleware(s.Routes()).ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("unconfigured secret guide status=%d, want 403; body=%s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "visible-internal-token") {
+		t.Fatalf("unconfigured secret guide leaked bearer token: %s", rec.Body.String())
 	}
 }
 
