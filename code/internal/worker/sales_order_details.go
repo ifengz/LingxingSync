@@ -1,7 +1,9 @@
 package worker
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"sort"
@@ -56,24 +58,33 @@ func detailCandidateParams(batch []db.SalesOrderCandidate) (map[string]any, map[
 	return map[string]any{"order_id": strings.Join(ids, ",")}, sids, nil
 }
 
-func shapeSalesOrderDetailRows(rows []map[string]any, expectedSIDs map[string]string) error {
-	seen := make(map[string]struct{}, len(rows))
+func shapeSalesOrderDetailRows(rows []map[string]any, expectedSIDs map[string]string) ([]map[string]any, error) {
+	seen := make(map[string][]byte, len(rows))
+	shaped := make([]map[string]any, 0, len(rows))
 	for _, row := range rows {
 		if row == nil {
-			return fmt.Errorf("订单详情响应包含空行")
+			return nil, fmt.Errorf("订单详情响应包含空行")
 		}
 		orderID := strings.TrimSpace(fmt.Sprint(row["amazon_order_id"]))
 		sid, ok := expectedSIDs[orderID]
 		if !ok {
-			return fmt.Errorf("订单详情响应返回未请求的 amazon_order_id=%q", orderID)
+			return nil, fmt.Errorf("订单详情响应返回未请求的 amazon_order_id=%q", orderID)
 		}
-		if _, duplicate := seen[orderID]; duplicate {
-			return fmt.Errorf("订单详情响应重复 amazon_order_id=%q", orderID)
-		}
-		seen[orderID] = struct{}{}
 		if strings.TrimSpace(fmt.Sprint(row["sid"])) != sid {
-			return fmt.Errorf("订单详情响应 sid=%q 与候选 sid=%q 不一致 (amazon_order_id=%q)", row["sid"], sid, orderID)
+			return nil, fmt.Errorf("订单详情响应 sid=%q 与候选 sid=%q 不一致 (amazon_order_id=%q)", row["sid"], sid, orderID)
 		}
+		canonical, err := json.Marshal(row)
+		if err != nil {
+			return nil, fmt.Errorf("订单详情响应无法规范化 amazon_order_id=%q: %w", orderID, err)
+		}
+		if previous, duplicate := seen[orderID]; duplicate {
+			if !bytes.Equal(previous, canonical) {
+				return nil, fmt.Errorf("订单详情响应同一 amazon_order_id 存在非等价重复: %q", orderID)
+			}
+			continue
+		}
+		seen[orderID] = canonical
+		shaped = append(shaped, row)
 	}
 	if len(seen) != len(expectedSIDs) {
 		missing := make([]string, 0, len(expectedSIDs)-len(seen))
@@ -83,9 +94,9 @@ func shapeSalesOrderDetailRows(rows []map[string]any, expectedSIDs map[string]st
 			}
 		}
 		sort.Strings(missing)
-		return fmt.Errorf("订单详情响应缺少 %d 个请求订单: %s", len(missing), strings.Join(missing, ","))
+		return nil, fmt.Errorf("订单详情响应缺少 %d 个请求订单: %s", len(missing), strings.Join(missing, ","))
 	}
-	return nil
+	return shaped, nil
 }
 
 func (w *EndpointWorker) syncSalesOrderDetails(ctx context.Context, taskID int64, req triggerReq) (int, int, error) {
@@ -116,17 +127,18 @@ func (w *EndpointWorker) syncSalesOrderDetails(ctx context.Context, taskID int64
 			_ = db.InsertTaskLog(w.DB, taskID, pages+1, httpStatus, apiCode, 0, durationMs, err.Error())
 			return records, pages, fmt.Errorf("订单详情请求失败: %w", err)
 		}
-		if err := shapeSalesOrderDetailRows(result.List, expectedSIDs); err != nil {
+		rows, err := shapeSalesOrderDetailRows(result.List, expectedSIDs)
+		if err != nil {
 			_ = db.InsertTaskLog(w.DB, taskID, pages+1, httpStatus, apiCode, len(result.List), durationMs, "shape: "+err.Error())
 			return records, pages, err
 		}
-		if err := db.UpsertRows(w.DB, w.Endpoint.Table, result.List, w.Columns, w.JSONCols, w.Account.ID); err != nil {
-			_ = db.InsertTaskLog(w.DB, taskID, pages+1, httpStatus, apiCode, len(result.List), durationMs, "upsert: "+err.Error())
+		if err := db.UpsertRows(w.DB, w.Endpoint.Table, rows, w.Columns, w.JSONCols, w.Account.ID); err != nil {
+			_ = db.InsertTaskLog(w.DB, taskID, pages+1, httpStatus, apiCode, len(rows), durationMs, "upsert: "+err.Error())
 			return records, pages, fmt.Errorf("订单详情落库失败: %w", err)
 		}
 		pages++
-		records += len(result.List)
-		_ = db.InsertTaskLog(w.DB, taskID, pages, httpStatus, apiCode, len(result.List), durationMs, "")
+		records += len(rows)
+		_ = db.InsertTaskLog(w.DB, taskID, pages, httpStatus, apiCode, len(rows), durationMs, "")
 	}
 	log.Printf("[worker:%s] 订单详情完成候选=%d records=%d", w.Endpoint.Name, len(candidates), records)
 	return records, pages, nil
