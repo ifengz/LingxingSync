@@ -269,6 +269,14 @@ func TestEndpointDTORoundTripPreservesVCPOOrderIteration(t *testing.T) {
 	}
 }
 
+func TestEndpointDTORoundTripPreservesSalesOrderIteration(t *testing.T) {
+	want := config.Endpoint{IterateBySalesOrders: true}
+	got := dtoToEndpoint(endpointToDTO(want))
+	if !got.IterateBySalesOrders {
+		t.Fatal("endpoint DTO round trip lost iterate_by_sales_orders")
+	}
+}
+
 func TestUpdateEndpointPersistsDailyDateContract(t *testing.T) {
 	cfg := &config.Config{
 		Database: config.Database{Host: "127.0.0.1", User: "test", DB: "lingsync"},

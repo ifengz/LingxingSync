@@ -721,6 +721,36 @@ func TestValidateVCPOOrderIterationContract(t *testing.T) {
 	}
 }
 
+func TestValidateSalesOrderDetailIterationContract(t *testing.T) {
+	endpoint := Endpoint{
+		Name: "sc_order_details", Account: "sc_us_1", Path: "/erp/sc/data/mws/orderDetail",
+		Method: "POST", Table: "ls_sc_order_details", RecordIDFields: []string{"sid", "amazon_order_id"},
+		ResponseShape: "list", Cron: "*/30 * * * *", WindowDays: 30,
+		Rate: Rate{Bucket: 1, IntervalMs: 1000, Dimension: "account+path"}, IterateBySalesOrders: true,
+	}
+	mk := func(ep Endpoint) *Config {
+		return &Config{Database: Database{Host: "h", User: "u", DB: "d"}, Accounts: []Account{{ID: "sc_us_1", AppKey: "k", AppSecret: "s"}}, Endpoints: []Endpoint{ep}}
+	}
+	if err := mk(endpoint).validate(); err != nil {
+		t.Fatalf("valid sales order detail iteration rejected: %v", err)
+	}
+	for name, mutate := range map[string]func(*Endpoint){
+		"GET":               func(ep *Endpoint) { ep.Method = "GET" },
+		"object response":   func(ep *Endpoint) { ep.ResponseShape = "object" },
+		"store iteration":   func(ep *Endpoint) { ep.IterateByStore = true },
+		"extra body params": func(ep *Endpoint) { ep.ExtraParams = map[string]any{"sid": "x"} },
+		"wrong table":       func(ep *Endpoint) { ep.Table = "ls_anything" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			candidate := endpoint
+			mutate(&candidate)
+			if err := mk(candidate).validate(); err == nil {
+				t.Fatal("invalid sales order detail iteration contract was accepted")
+			}
+		})
+	}
+}
+
 func TestClassifyChangeTreatsSingleDayFieldsAsHot(t *testing.T) {
 	oldCfg := &Config{Endpoints: []Endpoint{{Name: "performance", WindowDays: 2}}}
 	newCfg := &Config{Endpoints: []Endpoint{{Name: "performance", WindowDays: 2, SingleDayWindow: true, RowDateField: "business_date"}}}

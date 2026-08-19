@@ -44,11 +44,12 @@ type CatalogEntry struct {
 	RequestHeaders   map[string]string
 
 	// 多店铺
-	IsStoreSource     bool
-	IterateByStore    bool
-	StoreParamName    string
-	StoreType         string
-	IterateByVCOrders bool
+	IsStoreSource        bool
+	IterateByStore       bool
+	StoreParamName       string
+	StoreType            string
+	IterateByVCOrders    bool
+	IterateBySalesOrders bool
 
 	// 广告账号迭代与落库前行整形。
 	IterateByAdAccount bool
@@ -65,36 +66,37 @@ type CatalogEntry struct {
 // 重试无需在此设置：它是 worker 层的固定策略（网络/429/5xx 指数退避），不入 Endpoint 配置。
 func (e CatalogEntry) ToEndpoint(accountID string) Endpoint {
 	return Endpoint{
-		Name:               e.Key + "_" + accountID,
-		Display:            e.Display,
-		Account:            accountID,
-		Path:               e.Path,
-		Method:             e.Method,
-		Table:              e.Table,
-		RecordIDFields:     slices.Clone(e.RecordIDs),
-		ResponseShape:      e.ResponseShape,
-		Rate:               e.Rate,
-		Cron:               e.DefaultCron,
-		Enabled:            true,
-		WindowDays:         e.WindowDays,
-		SingleDayWindow:    e.SingleDayWindow,
-		RowDateField:       e.RowDateField,
-		WindowStartField:   e.WindowStartField,
-		WindowEndField:     e.WindowEndField,
-		DateField:          e.DateField,
-		DateOffsetDays:     e.DateOffsetDays,
-		ExtraParams:        maps.Clone(e.ExtraParams),
-		RequestHeaders:     maps.Clone(e.RequestHeaders),
-		IsStoreSource:      e.IsStoreSource,
-		IterateByStore:     e.IterateByStore,
-		StoreParamName:     e.StoreParamName,
-		StoreType:          e.StoreType,
-		IterateByVCOrders:  e.IterateByVCOrders,
-		IterateByAdAccount: e.IterateByAdAccount,
-		AdAccountType:      e.AdAccountType,
-		FieldPaths:         maps.Clone(e.FieldPaths),
-		InjectParams:       slices.Clone(e.InjectParams),
-		ForceInjectParams:  slices.Clone(e.ForceInjectParams),
+		Name:                 e.Key + "_" + accountID,
+		Display:              e.Display,
+		Account:              accountID,
+		Path:                 e.Path,
+		Method:               e.Method,
+		Table:                e.Table,
+		RecordIDFields:       slices.Clone(e.RecordIDs),
+		ResponseShape:        e.ResponseShape,
+		Rate:                 e.Rate,
+		Cron:                 e.DefaultCron,
+		Enabled:              true,
+		WindowDays:           e.WindowDays,
+		SingleDayWindow:      e.SingleDayWindow,
+		RowDateField:         e.RowDateField,
+		WindowStartField:     e.WindowStartField,
+		WindowEndField:       e.WindowEndField,
+		DateField:            e.DateField,
+		DateOffsetDays:       e.DateOffsetDays,
+		ExtraParams:          maps.Clone(e.ExtraParams),
+		RequestHeaders:       maps.Clone(e.RequestHeaders),
+		IsStoreSource:        e.IsStoreSource,
+		IterateByStore:       e.IterateByStore,
+		StoreParamName:       e.StoreParamName,
+		StoreType:            e.StoreType,
+		IterateByVCOrders:    e.IterateByVCOrders,
+		IterateBySalesOrders: e.IterateBySalesOrders,
+		IterateByAdAccount:   e.IterateByAdAccount,
+		AdAccountType:        e.AdAccountType,
+		FieldPaths:           maps.Clone(e.FieldPaths),
+		InjectParams:         slices.Clone(e.InjectParams),
+		ForceInjectParams:    slices.Clone(e.ForceInjectParams),
 	}
 }
 
@@ -396,6 +398,37 @@ var catalogEntries = []CatalogEntry{
 		StoreParamName: "sid",
 		StoreType:      "SC",
 		InjectParams:   []string{"sid"},
+	},
+	{
+		Key:            "sc_sales_orders",
+		Display:        "SC 亚马逊订单列表",
+		Summary:        "按 SC 店铺和订单修改时间同步订单头；为订单详情提供候选订单号。",
+		Path:           "/erp/sc/data/mws/orders",
+		Method:         "POST",
+		Table:          "ls_sales_orders",
+		RecordIDs:      []string{"amazon_order_id"},
+		Rate:           Rate{Bucket: 1, IntervalMs: 1000, MultiIntervalMs: 1000, Dimension: "account+path"},
+		DefaultCron:    "*/30 * * * *",
+		WindowDays:     30,
+		ExtraParams:    map[string]any{"date_type": 2},
+		IterateByStore: true,
+		StoreParamName: "sid",
+		StoreType:      "SC",
+		InjectParams:   []string{"sid"},
+	},
+	{
+		Key:                  "sc_order_details",
+		Display:              "SC 亚马逊订单详情",
+		Summary:              "从同账号订单列表取候选订单号，批量同步订单及商品原始详情。",
+		Path:                 "/erp/sc/data/mws/orderDetail",
+		Method:               "POST",
+		Table:                "ls_sc_order_details",
+		RecordIDs:            []string{"sid", "amazon_order_id"},
+		Rate:                 Rate{Bucket: 1, IntervalMs: 1000, MultiIntervalMs: 0, Dimension: "account+path"},
+		DefaultCron:          "*/30 * * * *",
+		ResponseShape:        "list",
+		WindowDays:           30,
+		IterateBySalesOrders: true,
 	},
 	{
 		Key:         "ad_accounts",

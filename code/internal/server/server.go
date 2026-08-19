@@ -154,6 +154,8 @@ func (s *Server) newDatasetHandler(cfg *config.Config, definition datasetapi.Def
 		handler.SetReader(datasetapi.NewFBAInventorySnapshotReader(s.dbx))
 	case "order-shipping-address-detail-v1":
 		handler.SetReader(datasetapi.NewOrderShippingAddressDetailReader(s.dbx))
+	case "address-order-item-detail-v1":
+		handler.SetReader(datasetapi.NewAddressOrderItemDetailReader(s.dbx))
 	}
 	return handler, nil
 }

@@ -204,6 +204,28 @@ func TestVCPODetailsMigrationPreservesObjectAndStoreScopedKey(t *testing.T) {
 	}
 }
 
+func TestSalesOrderDetailMigrationPreservesRawPayloadAndKey(t *testing.T) {
+	raw, err := os.ReadFile("../../migrations/066_add_ls_sc_order_details.sql")
+	if err != nil {
+		t.Fatalf("读取订单详情迁移失败: %v", err)
+	}
+	sql := strings.ToUpper(string(raw))
+	for _, want := range []string{
+		"CREATE TABLE IF NOT EXISTS LS_SC_ORDER_DETAILS",
+		"SID", "AMAZON_ORDER_ID", "ITEM_LIST", "JSON",
+		"PRIMARY KEY (ACCOUNT_ID, SID, AMAZON_ORDER_ID)",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("订单详情迁移缺少 %q", want)
+		}
+	}
+	for _, destructive := range []string{"DROP TABLE", "DELETE FROM", "TRUNCATE"} {
+		if strings.Contains(sql, destructive) {
+			t.Fatalf("订单详情迁移不得使用破坏性语句 %s", destructive)
+		}
+	}
+}
+
 func TestVCOrdersStoreScopeMigrationIsEndpointSafe(t *testing.T) {
 	raw, err := os.ReadFile("../../migrations/031_scope_ls_vc_orders_by_store.sql")
 	if err != nil {

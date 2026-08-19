@@ -41,6 +41,11 @@ var schemas = map[string]Schema{
 		Columns:    detailSchemaColumns([]Column{{Name: "store", SQLType: "VARCHAR(64)", Nullable: false}, {Name: "record_date", SQLType: "DATE", Nullable: true}, {Name: "stable_key", SQLType: "VARCHAR(255)", Nullable: false}, {Name: "updated_at", SQLType: "DATETIME(6)", Nullable: false}}),
 		PrimaryKey: []string{"store", "stable_key"},
 	},
+	"address-order-item-detail-v1": {
+		DatasetID: "address-order-item-detail-v1", TableName: "address_order_item_detail_v1", DataNote: "FBA/AFN 订单配送商品行；关联订单头和订单详情补充状态、更新时间与 ASIN。坐标不属于上游数据。",
+		Columns:    detailSchemaColumns([]Column{{Name: "store", SQLType: "VARCHAR(64)", Nullable: false}, {Name: "record_date", SQLType: "DATE", Nullable: true}, {Name: "stable_key", SQLType: "VARCHAR(255)", Nullable: false}, {Name: "updated_at", SQLType: "DATETIME(6)", Nullable: false}}),
+		PrimaryKey: []string{"store", "stable_key"},
+	},
 	"fba-inventory-snapshot-v1": {
 		DatasetID: "fba-inventory-snapshot-v1", TableName: "fba_inventory_snapshot_v1", DataNote: "FBA 库存每日快照；历史从本版本部署后每次成功同步开始累计，不补造部署前日期。",
 		Columns:    detailSchemaColumns([]Column{{Name: "store", SQLType: "VARCHAR(64)", Nullable: false}, {Name: "record_date", SQLType: "DATE", Nullable: true}, {Name: "stable_key", SQLType: "VARCHAR(255)", Nullable: false}, {Name: "updated_at", SQLType: "DATETIME(6)", Nullable: false}}),
@@ -80,6 +85,8 @@ func schemaType(name string) string {
 		return "BIGINT"
 	case strings.HasSuffix(name, "_date"), strings.HasSuffix(name, "_date_locale"):
 		return "VARCHAR(64)"
+	case name == "source_updated_at":
+		return "DATETIME(6)"
 	case name == "inventory_currency", name == "currency", strings.HasSuffix(name, "_status"):
 		return "VARCHAR(255)"
 	case strings.Contains(name, "rate"), name == "rating", name == "sell_through", name == "historical_days_of_supply", name == "inventory_avg_lead_time_days":

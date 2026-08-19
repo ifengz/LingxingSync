@@ -334,9 +334,38 @@ func TestHalfHourlyCatalogDefaults(t *testing.T) {
 	}
 }
 
-func TestDeletedSalesOrdersCatalogEntry(t *testing.T) {
-	if _, err := FindCatalogEntry("sc_sales_orders"); err == nil {
-		t.Fatal("sc_sales_orders 已确认删除，不应重新出现在接口清单")
+func TestCatalogIncludesSalesOrderDetailContracts(t *testing.T) {
+	tests := []struct {
+		key      string
+		path     string
+		table    string
+		ids      []string
+		contract func(Endpoint) bool
+	}{
+		{
+			key: "sc_sales_orders", path: "/erp/sc/data/mws/orders", table: "ls_sales_orders", ids: []string{"amazon_order_id"},
+			contract: func(ep Endpoint) bool {
+				return ep.IterateByStore && ep.StoreType == "SC" && ep.WindowDays == 30 && ep.ExtraParams["date_type"] == 2 && reflect.DeepEqual(ep.InjectParams, []string{"sid"})
+			},
+		},
+		{
+			key: "sc_order_details", path: "/erp/sc/data/mws/orderDetail", table: "ls_sc_order_details", ids: []string{"sid", "amazon_order_id"},
+			contract: func(ep Endpoint) bool {
+				return ep.IterateBySalesOrders && ep.ResponseShape == "list" && ep.WindowDays == 30 && !ep.IterateByStore && len(ep.ExtraParams) == 0
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.key, func(t *testing.T) {
+			e, err := FindCatalogEntry(tc.key)
+			if err != nil {
+				t.Fatalf("FindCatalogEntry(%q): %v", tc.key, err)
+			}
+			ep := e.ToEndpoint("sc_us")
+			if ep.Path != tc.path || ep.Method != "POST" || ep.Table != tc.table || !reflect.DeepEqual(ep.RecordIDFields, tc.ids) || !tc.contract(ep) {
+				t.Fatalf("template contract = %#v", ep)
+			}
+		})
 	}
 }
 

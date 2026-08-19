@@ -250,6 +250,9 @@ type Endpoint struct {
 	// IterateByVCOrders reads recent local_po_number + vc_store_id candidates from
 	// the same account's ls_vc_orders rows. The detail request itself is not paged.
 	IterateByVCOrders bool `yaml:"iterate_by_vc_orders"`
+	// IterateBySalesOrders reads recent amazon_order_id + sid candidates from the
+	// same account's ls_sales_orders rows. The detail request itself is not paged.
+	IterateBySalesOrders bool `yaml:"iterate_by_sales_orders"`
 
 	// ---- 行整形（落库前把领星返回的行"摆正"，两个机制都是通用的、配置驱动的）----
 	//
@@ -557,8 +560,8 @@ func (c *Config) validate() error {
 				return fmt.Errorf("endpoint %s 的 row_date_field=%q 不能与窗口起止参数同名", e.Name, e.RowDateField)
 			}
 		}
-		if e.IterateByVCOrders && (e.IterateByStore || e.IterateByAdAccount) {
-			return fmt.Errorf("endpoint %s 不能同时启用 iterate_by_vc_orders 与其他迭代模式", e.Name)
+		if e.IterateByVCOrders && (e.IterateByStore || e.IterateByAdAccount || e.IterateBySalesOrders) {
+			return fmt.Errorf("endpoint %s 的 iterate_by_vc_orders 不能与其他迭代模式同时启用", e.Name)
 		}
 		if e.IterateByVCOrders {
 			if !strings.EqualFold(e.Method, "POST") {
@@ -577,6 +580,23 @@ func (c *Config) validate() error {
 				if !slices.Contains(e.ForceInjectParams, required) {
 					return fmt.Errorf("endpoint %s 的 iterate_by_vc_orders 必须 force_inject_params=%q", e.Name, required)
 				}
+			}
+		}
+		if e.IterateBySalesOrders {
+			if !strings.EqualFold(e.Method, "POST") {
+				return fmt.Errorf("endpoint %s 的 iterate_by_sales_orders 必须使用 POST", e.Name)
+			}
+			if responseShape != "list" {
+				return fmt.Errorf("endpoint %s 的 iterate_by_sales_orders 必须使用 response_shape=list", e.Name)
+			}
+			if e.WindowDays <= 0 {
+				return fmt.Errorf("endpoint %s 的 iterate_by_sales_orders 必须配置 window_days > 0", e.Name)
+			}
+			if e.IterateByStore || e.IterateByAdAccount || e.IterateByVCOrders || len(e.ExtraParams) > 0 || e.DateField != "" {
+				return fmt.Errorf("endpoint %s 的 iterate_by_sales_orders 不得配置其他迭代模式、extra_params 或 date_field", e.Name)
+			}
+			if e.Table != "ls_sc_order_details" || !slices.Equal(e.RecordIDFields, []string{"sid", "amazon_order_id"}) {
+				return fmt.Errorf("endpoint %s 的 iterate_by_sales_orders 仅允许 ls_sc_order_details，且 record_id_fields 必须为 [sid amazon_order_id]", e.Name)
 			}
 		}
 		if e.IterateByAdAccount && e.AdAccountType != "seller" {

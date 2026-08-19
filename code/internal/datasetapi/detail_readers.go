@@ -19,7 +19,9 @@ type DetailSQLReader struct {
 
 type detailReaderDefinition struct {
 	sourceTable     string
+	fromClause      string
 	alias           string
+	storeColumn     string
 	baseColumns     []string
 	dateColumn      string
 	stableKeyColumn string
@@ -99,6 +101,52 @@ var orderShippingAddressDetailDefinition = detailReaderDefinition{
 	},
 }
 
+var addressOrderItemDetailDefinition = detailReaderDefinition{
+	fromClause: `ls_sc_fba_order_addresses a
+LEFT JOIN ls_sales_orders o
+  ON o.account_id = a.account_id AND o.sid = a.sid AND o.amazon_order_id = a.amazon_order_id
+LEFT JOIN ls_sc_order_details d
+  ON d.account_id = a.account_id AND d.sid = a.sid AND d.amazon_order_id = a.amazon_order_id
+LEFT JOIN JSON_TABLE(COALESCE(d.item_list, JSON_ARRAY()), '$[*]' COLUMNS(
+  order_item_id VARCHAR(64) PATH '$.order_item_id' NULL ON EMPTY,
+  asin VARCHAR(64) PATH '$.asin' NULL ON EMPTY,
+  seller_sku VARCHAR(255) PATH '$.seller_sku' NULL ON EMPTY,
+  sku VARCHAR(255) PATH '$.sku' NULL ON EMPTY,
+  product_name VARCHAR(255) PATH '$.product_name' NULL ON EMPTY,
+  quantity_shipped BIGINT PATH '$.quantity_shipped' NULL ON EMPTY,
+  quantity_ordered BIGINT PATH '$.quantity_ordered' NULL ON EMPTY
+)) di ON di.order_item_id = a.amazon_order_item_id`,
+	storeColumn:     "a.sid",
+	baseColumns:     []string{"a.account_id", "a.sid", "di.asin", "COALESCE(NULLIF(di.seller_sku, ''), NULLIF(di.sku, ''), a.sku)", "DATE(a.purchase_date)", "GREATEST(a.synced_at, COALESCE(o.synced_at, a.synced_at), COALESCE(d.synced_at, a.synced_at))", "CONCAT_WS('|', a.account_id, a.sid, a.shipment_id, a.shipment_item_id)"},
+	dateColumn:      "DATE(a.purchase_date)",
+	stableKeyColumn: "CONCAT_WS('|', a.account_id, a.sid, a.shipment_id, a.shipment_item_id)",
+	updatedAtColumn: "GREATEST(a.synced_at, COALESCE(o.synced_at, a.synced_at), COALESCE(d.synced_at, a.synced_at))",
+	stableKeyParts:  4,
+	fields: map[string]string{
+		"amazon_order_id":      "a.amazon_order_id",
+		"store_name":           "o.seller_name",
+		"purchase_date":        "a.purchase_date",
+		"last_updated_date":    "o.last_update_date",
+		"order_status":         "COALESCE(NULLIF(o.order_status, ''), d.order_status)",
+		"asin":                 "di.asin",
+		"sku":                  "COALESCE(NULLIF(di.seller_sku, ''), NULLIF(di.sku, ''), a.sku)",
+		"product_name":         "COALESCE(NULLIF(di.product_name, ''), a.product_name)",
+		"quantity":             "COALESCE(di.quantity_shipped, di.quantity_ordered, a.quantity_shipped)",
+		"currency":             "a.currency",
+		"item_price":           "a.item_price",
+		"ship_city":            "a.ship_city",
+		"ship_state":           "a.ship_state",
+		"ship_postal_code":     "a.ship_postal_code",
+		"ship_country":         "a.ship_country",
+		"source_store":         "a.sid",
+		"shipment_id":          "a.shipment_id",
+		"shipment_item_id":     "a.shipment_item_id",
+		"amazon_order_item_id": "a.amazon_order_item_id",
+		"fulfillment_channel":  "a.fulfillment_channel",
+		"source_updated_at":    "GREATEST(a.synced_at, COALESCE(o.synced_at, a.synced_at), COALESCE(d.synced_at, a.synced_at))",
+	},
+}
+
 var fbaInventorySnapshotDefinition = detailReaderDefinition{
 	sourceTable:     "fba_inventory_daily_snapshots",
 	alias:           "i",
@@ -139,6 +187,10 @@ func NewReturnReasonDetailReader(db *sqlx.DB) *DetailSQLReader {
 
 func NewOrderShippingAddressDetailReader(db *sqlx.DB) *DetailSQLReader {
 	return newDetailSQLReader(db, orderShippingAddressDetailDefinition)
+}
+
+func NewAddressOrderItemDetailReader(db *sqlx.DB) *DetailSQLReader {
+	return newDetailSQLReader(db, addressOrderItemDetailDefinition)
 }
 
 func NewFBAInventorySnapshotReader(db *sqlx.DB) *DetailSQLReader {
@@ -182,10 +234,18 @@ func (r *DetailSQLReader) read(ctx context.Context, query Query, snapshot bool) 
 	}
 	selectColumns := append([]string(nil), r.definition.baseColumns...)
 	selectColumns = append(selectColumns, fields...)
-	queryText := "SELECT " + strings.Join(selectColumns, ", ") + " FROM " + r.definition.sourceTable + " " + r.definition.alias
+	fromClause := r.definition.fromClause
+	if fromClause == "" {
+		fromClause = r.definition.sourceTable + " " + r.definition.alias
+	}
+	storeColumn := r.definition.storeColumn
+	if storeColumn == "" {
+		storeColumn = r.definition.alias + ".sid"
+	}
+	queryText := "SELECT " + strings.Join(selectColumns, ", ") + " FROM " + fromClause
 	where := make([]string, 0, 3)
 	args := make([]any, 0, 6)
-	where, args = appendStoreFilter(where, args, r.definition.alias+".sid", query)
+	where, args = appendStoreFilter(where, args, storeColumn, query)
 	if snapshot {
 		where = append(where, r.definition.dateColumn+" BETWEEN ? AND ?")
 		args = append(args, query.DateFrom, query.DateTo)

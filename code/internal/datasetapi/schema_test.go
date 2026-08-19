@@ -46,3 +46,19 @@ func TestDatasetSchemaCreateTableCanRestrictPublishedFields(t *testing.T) {
 		t.Fatalf("restricted SQL columns are wrong: %s", ddl)
 	}
 }
+
+func TestAddressOrderItemSchemaKeepsCompositeDownstreamKey(t *testing.T) {
+	schema, ok := SchemaFor("address-order-item-detail-v1")
+	if !ok {
+		t.Fatal("address order item schema missing")
+	}
+	ddl, err := schema.CreateTableSQL(nil)
+	if err != nil {
+		t.Fatalf("create SQL: %v", err)
+	}
+	for _, want := range []string{"`source_updated_at` DATETIME(6)", "PRIMARY KEY (`store`, `stable_key`)", "KEY `idx_updated_at` (`updated_at`)"} {
+		if !strings.Contains(ddl, want) {
+			t.Fatalf("address order item DDL missing %q: %s", want, ddl)
+		}
+	}
+}

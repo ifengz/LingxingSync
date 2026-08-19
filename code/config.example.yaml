@@ -339,6 +339,47 @@ endpoints:
     store_param_name: "sid"
     store_type: "SC"
 
+  # 订单列表按修改时间取得候选订单；订单详情只读取这些候选，先后手动同步一次。
+  - name: sc_sales_orders
+    display: "SC 亚马逊订单列表"
+    account: "sc_us"
+    path: "/erp/sc/data/mws/orders"
+    method: "POST"
+    table: "ls_sales_orders"
+    record_id_fields: ["amazon_order_id"]
+    rate:
+      bucket: 1
+      interval_ms: 1000
+      multi_interval_ms: 1000
+      dimension: "account+path"
+    cron: "*/30 * * * *"
+    enabled: true
+    window_days: 30
+    extra_params:
+      date_type: 2
+    iterate_by_store: true
+    store_param_name: "sid"
+    store_type: "SC"
+    inject_params: ["sid"]
+
+  - name: sc_order_details
+    display: "SC 亚马逊订单详情"
+    account: "sc_us"
+    path: "/erp/sc/data/mws/orderDetail"
+    method: "POST"
+    table: "ls_sc_order_details"
+    record_id_fields: ["sid", "amazon_order_id"]
+    response_shape: "list"
+    rate:
+      bucket: 1
+      interval_ms: 1000
+      multi_interval_ms: 0
+      dimension: "account+path"
+    cron: "*/30 * * * *"
+    enabled: true
+    window_days: 30
+    iterate_by_sales_orders: true
+
   - name: sc_products
     display: "SC 产品列表"
     account: "sc_us"

@@ -213,6 +213,7 @@ func ClassifyChange(oldCfg, newCfg *Config) ChangeKind {
 			oldE.IsStoreSource != newE.IsStoreSource ||
 			oldE.IterateByStore != newE.IterateByStore ||
 			oldE.IterateByVCOrders != newE.IterateByVCOrders ||
+			oldE.IterateBySalesOrders != newE.IterateBySalesOrders ||
 			oldE.StoreParamName != newE.StoreParamName {
 			return ChangeRestart
 		}

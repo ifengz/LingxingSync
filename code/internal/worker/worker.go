@@ -496,6 +496,20 @@ func (w *EndpointWorker) doSync(ctx context.Context, req triggerReq) {
 		status = "error"
 		return
 	}
+	if w.Endpoint.IterateBySalesOrders {
+		records, pages, syncErr := w.syncSalesOrderDetails(syncCtx, taskID, req)
+		totalRecords = records
+		totalPages = pages
+		if syncErr == nil {
+			return
+		}
+		if syncCtx.Err() != nil {
+			status = "cancelled"
+			return
+		}
+		status = "error"
+		return
+	}
 
 	if w.Endpoint.IterateByAdAccount {
 		accounts, qerr := db.QueryEnabledAdAccountsForAccount(w.DB, w.Account.ID, w.Endpoint.AdAccountType)
