@@ -478,11 +478,13 @@ func (w *EndpointWorker) runIterateByStore(ctx context.Context) error {
 }
 ```
 
-### 10.4 VC PO detail 的单一例外
+### 10.4 两个受限候选迭代例外
 
 `/basicOpen/platformOrder/vcOrderPo/detail` 每次只接受一个 `local_po_number`，且响应不返回店铺身份。已验证线路使用 `iterate_by_vc_orders: true`：同一账号从 `ls_vc_orders` 按 `gmt_modified` 窗口读取 `(vc_store_id, local_po_number)`，请求体只发送 `local_po_number`，落库前强制写回两个身份字段。
 
-该模式仍是一个 endpoint Worker、一张 `ls_vc_po_details` raw 表和一条 `sync_tasks` 任务；首个请求、解析或 Upsert 错误立即终止本 endpoint。禁止把它扩展成队列、父子任务、staging 或任意跨表工作流。
+`/erp/sc/data/mws/orderDetail` 不接受日期或店铺分页，只接受最多 200 个英文逗号分隔的 `order_id`。已验证线路使用 `iterate_by_sales_orders: true`：同一账号从 `ls_sales_orders.last_update_date` 窗口读取 `(sid, amazon_order_id)`，按店铺分批请求；响应中的 `sid` 和 `amazon_order_id` 必须逐行与候选一致，才写入 `ls_sc_order_details`。
+
+两种模式均仍是一个 endpoint Worker、一张 raw 表和一条 `sync_tasks` 任务；首个请求、解析或 Upsert 错误立即终止本 endpoint。禁止把它扩展成队列、父子任务、staging 或任意跨表工作流。
 
 ### 10.5 config.yaml 新增字段
 

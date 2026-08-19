@@ -20,7 +20,7 @@ UI 上路 B 收在「高级 / 开发者」折叠区，默认隐藏，避免非�
 > 参数形态三选一（config 字段，路 A 的模板也用同一套）：
 > `window_days>0` 注入 `start_date/end_date` 范围；`date_field` 注入单日期（如 `event_date`，配 `date_offset_days`：1=昨天）；都不填=全量。
 
-> 唯一已实现的例外是清单内的 VC PO detail：`iterate_by_vc_orders` 从同账号 PO 列表读取候选后逐单请求。它不是手工新增接口的通用参数，不得复制成跨表工作流。
+> 已实现的候选迭代例外仅两项：清单内的 VC PO detail 使用 `iterate_by_vc_orders` 从同账号 PO 列表逐单请求；SC order detail 使用 `iterate_by_sales_orders` 从同账号订单列表按店铺每批最多 200 个订单号请求。它们不是手工新增接口的通用参数，不得复制成跨表工作流。
 
 ---
 

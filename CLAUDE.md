@@ -69,7 +69,7 @@
 
 以上能力都必须物理留在本 Go 进程与 MySQL 中；不得借机增加 Redis、对象存储、队列、微服务、React/npm 或通用动态数据平台。`changes` 只发布 LingxingSync 已经落库的变化，不能替代上游重拉或正式报表对账。
 
-**已授权的唯一候选迭代例外**：VC PO detail 必须先从同账号 `ls_vc_orders` 取得 `local_po_number` 与 `vc_store_id`。它只使用 `iterate_by_vc_orders` 在本 endpoint 内串行逐单请求并直接写唯一的 `ls_vc_po_details`，不引入队列、父子任务、staging 或通用工作流引擎；其他接口不得借此扩展跨表编排。
+**已授权的候选迭代例外仅两项**：VC PO detail 从同账号 `ls_vc_orders` 取得 `local_po_number` 与 `vc_store_id`，使用 `iterate_by_vc_orders` 串行逐单写 `ls_vc_po_details`；SC order detail 从同账号 `ls_sales_orders` 的订单修改时间窗口取得 `(sid, amazon_order_id)`，使用 `iterate_by_sales_orders` 每批最多 200 个订单号写 `ls_sc_order_details`。两者均不引入队列、父子任务、staging 或通用工作流引擎；其他接口不得借此扩展跨表编排。
 
 ### 与 polabel2 的关系（边界）
 
