@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -18,6 +19,23 @@ import (
 	"lingxing-sync/internal/server"
 	"lingxing-sync/internal/worker"
 )
+
+func TestDeployWorkflowAuthenticatesSettingsHealthCheck(t *testing.T) {
+	workflow, err := os.ReadFile("../.github/workflows/deploy-baota.yml")
+	if err != nil {
+		t.Fatalf("read deploy workflow: %v", err)
+	}
+	text := string(workflow)
+	for _, want := range []string{
+		"SYNC_HEALTHCHECK_SECRET: ${{ secrets.SYNC_HEALTHCHECK_SECRET }}",
+		"missing SYNC_HEALTHCHECK_SECRET",
+		"X-Sync-Secret: ${SYNC_HEALTHCHECK_SECRET}",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("deploy workflow must contain %q", want)
+		}
+	}
+}
 
 func TestCustomerReturnsRunUsesConfiguredAccount(t *testing.T) {
 	cfg := &config.Config{Accounts: []config.Account{{ID: "sc_us", AppKey: "key", AppSecret: "secret"}}}

@@ -30,10 +30,18 @@ jobs:
           jq -e '.code == 1' <<<"$response" >/dev/null
 
       - name: Verify deployed commit and public health
+        env:
+          SYNC_HEALTHCHECK_SECRET: ${{ secrets.SYNC_HEALTHCHECK_SECRET }}
         run: |
+          if [ -z "${SYNC_HEALTHCHECK_SECRET}" ]; then
+            echo "missing SYNC_HEALTHCHECK_SECRET" >&2
+            exit 1
+          fi
           deployed=""
           for attempt in $(seq 1 120); do
-            response="$(curl -fsS --max-time 10 https://sync.usfan.net/api/settings || true)"
+            response="$(curl -fsS --max-time 10 \
+              -H "X-Sync-Secret: ${SYNC_HEALTHCHECK_SECRET}" \
+              https://sync.usfan.net/api/settings || true)"
             deployed="$(jq -r '.data.deploy_commit // empty' <<<"$response" 2>/dev/null || true)"
             db_connected="$(jq -r '.data.db_connected // false' <<<"$response" 2>/dev/null || true)"
             if [ "$deployed" = "$GITHUB_SHA" ] && [ "$db_connected" = "true" ]; then

@@ -18,7 +18,7 @@ push main
 
 GitHub 原生 WebHook 不直接访问宝塔面板：面板使用自签名证书，GitHub 会拒绝投递。Actions 按同服务器现有项目的方式调用宝塔 WebHook，仓库 Secret `BAOTA_WEBHOOK_URL` 保存完整回调地址；Secret 不写入 workflow、日志或仓库。
 
-Actions 不能只看公网 HTTP `200`：宝塔 WebHook 会异步返回，旧进程仍可能存活。生产构建会把完整 Git SHA 写入 `/api/settings` 的 `deploy_commit`，Actions 只有在该值等于本次 `GITHUB_SHA` 且 `db_connected=true` 时才通过。
+Actions 不能只看公网 HTTP `200`：宝塔 WebHook 会异步返回，旧进程仍可能存活。生产构建会把完整 Git SHA 写入受管理鉴权保护的 `/api/settings` 的 `deploy_commit`，Actions 使用 GitHub Secret `SYNC_HEALTHCHECK_SECRET` 作为 `X-Sync-Secret`，只有该值等于本次 `GITHUB_SHA` 且 `db_connected=true` 时才通过。该 Secret 的值必须与生产 `server.secret` 一致；缺失时 workflow 立即失败，不开放接口也不依赖 Nginx 注入请求头。
 
 宝塔仓库由面板账号持有，Go 的 VCS 探测不会继承脚本给 Git 设置的 `safe.directory`。构建固定使用 `-buildvcs=false`，提交 SHA 只由部署脚本显式注入，不依赖 Go 的隐式 VCS 元数据。
 
@@ -40,7 +40,8 @@ GitHub 仓库中确认：
 
 - `.github/workflows/deploy-baota.yml` 只监听 `main` push；
 - Actions Secret `BAOTA_WEBHOOK_URL` 已配置；
-- Actions 调用 WebHook 后继续检查公网 `/api/settings`，只接受 `200` 或 `401`。
+- Actions Secret `SYNC_HEALTHCHECK_SECRET` 已配置，值与生产 `server.secret` 一致；
+- Actions 调用 WebHook 后携带 `X-Sync-Secret` 检查公网 `/api/settings`，只接受匹配 SHA 且 `db_connected=true` 的 `200` JSON。
 
 ## 服务器一次性前置条件
 
