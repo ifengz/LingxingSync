@@ -18,7 +18,7 @@
  * ------------------------------------------------------------------ */
 
 // 同步读取页面上 meta 标记的 secret（如有），用于给 /api 请求加 X-Sync-Secret。
-// 由 layout 模板里没有专门写 meta，这里从 body data-secret 取（页面 handler 可扩展注入）。
+// 管理页面由 layout 模板输出该值，避免每个页面重复处理鉴权头。
 function syncSecret() {
   const el = document.querySelector('meta[name="sync-secret"]');
   return el ? el.getAttribute('content') : '';

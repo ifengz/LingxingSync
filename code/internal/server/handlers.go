@@ -69,6 +69,7 @@ func errJSON(w http.ResponseWriter, code int, msg string) {
 type pageData struct {
 	Active         string
 	BuildCommit    string
+	SyncSecret     string
 	EndpointCount  int
 	AccountCount   int
 	SecretRequired bool
@@ -101,6 +102,7 @@ func (s *Server) newPageData(active string) pageData {
 	return pageData{
 		Active:         active,
 		BuildCommit:    shortBuildCommit(BuildCommit),
+		SyncSecret:     s.cfg.Server.Secret,
 		EndpointCount:  len(s.cfg.Endpoints),
 		AccountCount:   len(s.cfg.Accounts),
 		SecretRequired: s.cfg.Server.Secret != "",

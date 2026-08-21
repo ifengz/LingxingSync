@@ -40,6 +40,23 @@ func TestRenderPageWritesLayout(t *testing.T) {
 	}
 }
 
+func TestRenderPageIncludesSyncSecretMeta(t *testing.T) {
+	s := &Server{
+		cfg:    &config.Config{Server: config.Server{Secret: "admin-secret"}},
+		assets: Assets{FS: renderTestFS, TemplateFS: "testdata", StaticFS: "testdata"},
+		pages:  map[string]*template.Template{},
+	}
+	if err := s.parseTemplates(); err != nil {
+		t.Fatalf("parse templates: %v", err)
+	}
+
+	recorder := httptest.NewRecorder()
+	s.renderPage(recorder, "sync_manage", s.newPageData("sync_manage"))
+	if got := recorder.Body.String(); !strings.Contains(got, `<meta name="sync-secret" content="admin-secret">`) {
+		t.Fatalf("rendered page missing sync secret meta: %q", got)
+	}
+}
+
 func TestNavigationIncludesDedicatedDatasetFieldsPage(t *testing.T) {
 	items := sharedFuncs()["listItems"].(func() []navItem)()
 	if len(items) != 5 {
