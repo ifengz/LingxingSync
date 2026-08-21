@@ -161,15 +161,20 @@ func TestVCPOReaderUsesDetailRowsAndSyncDate(t *testing.T) {
 	}
 }
 
-func TestConfirmedPageBoundariesDoNotInventFacts(t *testing.T) {
-	if got := vcLinksDefinition.fields["ad_spend_30d"]; got != "CAST(NULL AS DECIMAL(20,6))" {
-		t.Fatalf("VC ad spend must remain NULL without a verified VC attribution source: %q", got)
+func TestConfirmedPageBoundariesUseOnlyConfirmedFacts(t *testing.T) {
+	if got := vcLinksDefinition.fields["ad_spend_30d"]; got != "ads.ad_spend_30d" {
+		t.Fatalf("VC ad spend must use the ASIN-level SP/SD aggregate: %q", got)
 	}
-	if got := vcLinksDefinition.fields["ad_spend_sparkline_7d"]; got != "CAST(NULL AS JSON)" {
-		t.Fatalf("VC ad sparkline must remain NULL without a verified source: %q", got)
+	if got := vcLinksDefinition.fields["ad_spend_sparkline_7d"]; got != "ads.ad_spend_sparkline_7d" {
+		t.Fatalf("VC ad sparkline must use the SP/SD daily aggregate: %q", got)
 	}
-	if strings.Contains(vcLinksDefinition.fromClause, "ls_ad_") {
-		t.Fatalf("VC Links must not infer VC ad attribution from SC ad raw tables: %s", vcLinksDefinition.fromClause)
+	for _, source := range []string{"ls_ad_sp_product", "ls_ad_sd_product"} {
+		if !strings.Contains(vcLinksDefinition.fromClause, source) {
+			t.Fatalf("VC Links missing ASIN-level ad source %q: %s", source, vcLinksDefinition.fromClause)
+		}
+	}
+	if strings.Contains(vcLinksDefinition.fromClause, "ls_ad_hsa_campaign") {
+		t.Fatal("VC Links must not include HSA before its store allocation is implemented")
 	}
 	if got := vcPODetailDefinition.fields["items"]; got != "d.items" {
 		t.Fatalf("PO item payload must remain the verified raw JSON object: %q", got)

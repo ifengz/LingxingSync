@@ -373,12 +373,34 @@ LEFT JOIN (
          SUBSTRING_INDEX(GROUP_CONCAT(orderedRevenue ORDER BY localEndTime DESC), ',', 1) AS realtime_ordered_revenue,
          MAX(synced_at) AS latest_sync_at
     FROM ls_vc_realtime_sales GROUP BY account_id, sid, asin
-) realtime ON realtime.account_id = v.account_id AND realtime.sid = v.vc_store_id AND realtime.asin = v.asin`,
+) realtime ON realtime.account_id = v.account_id AND realtime.sid = v.vc_store_id AND realtime.asin = v.asin
+LEFT JOIN (
+  SELECT ad.account_id, ad.asin,
+         SUM(CASE WHEN ad.report_date >= DATE_SUB(CURDATE(), INTERVAL 6 DAY) THEN ad.ad_orders ELSE 0 END) AS ad_orders_7d,
+         SUM(CASE WHEN ad.report_date >= DATE_SUB(CURDATE(), INTERVAL 29 DAY) THEN ad.spend ELSE 0 END) AS ad_spend_30d,
+         SUM(CASE WHEN ad.report_date >= DATE_SUB(CURDATE(), INTERVAL 29 DAY) THEN ad.ad_sales ELSE 0 END) AS ad_sales_30d,
+         CASE WHEN COUNT(DISTINCT NULLIF(ad.currency_code, '')) = 1 THEN MAX(ad.currency_code) END AS ad_spend_currency,
+         CAST(CONCAT('[', GROUP_CONCAT(CASE WHEN ad.report_date >= DATE_SUB(CURDATE(), INTERVAL 6 DAY) THEN COALESCE(ad.spend, 0) END ORDER BY ad.report_date SEPARATOR ','), ']') AS JSON) AS ad_spend_sparkline_7d,
+         MAX(ad.report_date) AS latest_date,
+         MAX(ad.synced_at) AS latest_sync_at
+    FROM (
+      SELECT p.account_id, p.asin, p.report_date, p.cost AS spend, p.sales AS ad_sales, p.orders AS ad_orders, p.synced_at, a.currency_code
+        FROM ls_ad_sp_product p
+        LEFT JOIN ls_ad_accounts a ON a.account_id = p.account_id AND a.profile_id = p.profile_id
+       WHERE p.asin IS NOT NULL AND p.asin <> ''
+      UNION ALL
+      SELECT p.account_id, p.asin, p.report_date, p.cost AS spend, p.sales AS ad_sales, p.orders AS ad_orders, p.synced_at, a.currency_code
+        FROM ls_ad_sd_product p
+        LEFT JOIN ls_ad_accounts a ON a.account_id = p.account_id AND a.profile_id = p.profile_id
+       WHERE p.asin IS NOT NULL AND p.asin <> ''
+    ) ad
+   GROUP BY ad.account_id, ad.asin
+) ads ON ads.account_id = v.account_id AND ads.asin = v.asin`,
 	storeColumn:     "v.vc_store_id",
-	baseColumns:     []string{"v.account_id", "v.vc_store_id", "v.asin", "''", "DATE(v.synced_at)", "GREATEST(v.synced_at, COALESCE(sales.latest_sync_at, v.synced_at), COALESCE(inventory.latest_sync_at, v.synced_at), COALESCE(traffic.latest_sync_at, v.synced_at), COALESCE(margin.latest_sync_at, v.synced_at), COALESCE(realtime.latest_sync_at, v.synced_at))", "CONCAT_WS('|', v.account_id, v.vc_store_id, v.asin)"},
+	baseColumns:     []string{"v.account_id", "v.vc_store_id", "v.asin", "''", "DATE(v.synced_at)", "GREATEST(v.synced_at, COALESCE(sales.latest_sync_at, v.synced_at), COALESCE(inventory.latest_sync_at, v.synced_at), COALESCE(traffic.latest_sync_at, v.synced_at), COALESCE(margin.latest_sync_at, v.synced_at), COALESCE(realtime.latest_sync_at, v.synced_at), COALESCE(ads.latest_sync_at, v.synced_at))", "CONCAT_WS('|', v.account_id, v.vc_store_id, v.asin)"},
 	dateColumn:      "DATE(v.synced_at)",
 	stableKeyColumn: "CONCAT_WS('|', v.account_id, v.vc_store_id, v.asin)",
-	updatedAtColumn: "GREATEST(v.synced_at, COALESCE(sales.latest_sync_at, v.synced_at), COALESCE(inventory.latest_sync_at, v.synced_at), COALESCE(traffic.latest_sync_at, v.synced_at), COALESCE(margin.latest_sync_at, v.synced_at), COALESCE(realtime.latest_sync_at, v.synced_at))",
+	updatedAtColumn: "GREATEST(v.synced_at, COALESCE(sales.latest_sync_at, v.synced_at), COALESCE(inventory.latest_sync_at, v.synced_at), COALESCE(traffic.latest_sync_at, v.synced_at), COALESCE(margin.latest_sync_at, v.synced_at), COALESCE(realtime.latest_sync_at, v.synced_at), COALESCE(ads.latest_sync_at, v.synced_at))",
 	stableKeyParts:  3,
 	fields: map[string]string{
 		"store_name":                    "s.store_name",
@@ -398,10 +420,10 @@ LEFT JOIN (
 		"inventory":                     "inventory.sellable_inventory",
 		"rating":                        "v.stars",
 		"reviews_count":                 "v.reviews_num",
-		"ad_orders_7d":                  "CAST(NULL AS SIGNED)",
-		"ad_spend_30d":                  "CAST(NULL AS DECIMAL(20,6))",
-		"ad_sales_30d":                  "CAST(NULL AS DECIMAL(20,6))",
-		"ad_spend_currency":             "CAST(NULL AS CHAR)",
+		"ad_orders_7d":                  "ads.ad_orders_7d",
+		"ad_spend_30d":                  "ads.ad_spend_30d",
+		"ad_sales_30d":                  "ads.ad_sales_30d",
+		"ad_spend_currency":             "ads.ad_spend_currency",
 		"sales_quantity_7d":             "sales.sales_quantity_7d",
 		"sales_quantity_30d":            "sales.sales_quantity_30d",
 		"sales_revenue_7d":              "sales.sales_revenue_7d",
@@ -409,7 +431,7 @@ LEFT JOIN (
 		"sales_sparkline_7d":            "CAST(NULL AS JSON)",
 		"sales_revenue_sparkline_7d":    "CAST(NULL AS JSON)",
 		"realtime_revenue_sparkline_7d": "CAST(NULL AS JSON)",
-		"ad_spend_sparkline_7d":         "CAST(NULL AS JSON)",
+		"ad_spend_sparkline_7d":         "ads.ad_spend_sparkline_7d",
 		"sellable_inventory":            "inventory.sellable_inventory",
 		"inbound_inventory":             "inventory.inbound_inventory",
 		"unfulfillable_inventory":       "inventory.unfulfillable_inventory",
@@ -422,8 +444,8 @@ LEFT JOIN (
 		"glance_views":                  "traffic.glance_views",
 		"net_ppm":                       "margin.net_ppm",
 		"latest_margin_date":            "margin.latest_date",
-		"latest_date":                   "COALESCE(sales.latest_date, inventory.latest_date, DATE(v.synced_at))",
-		"latest_sync_at":                "GREATEST(v.synced_at, COALESCE(sales.latest_sync_at, v.synced_at), COALESCE(inventory.latest_sync_at, v.synced_at), COALESCE(traffic.latest_sync_at, v.synced_at), COALESCE(margin.latest_sync_at, v.synced_at), COALESCE(realtime.latest_sync_at, v.synced_at))",
+		"latest_date":                   "COALESCE(sales.latest_date, ads.latest_date, inventory.latest_date, DATE(v.synced_at))",
+		"latest_sync_at":                "GREATEST(v.synced_at, COALESCE(sales.latest_sync_at, v.synced_at), COALESCE(inventory.latest_sync_at, v.synced_at), COALESCE(traffic.latest_sync_at, v.synced_at), COALESCE(margin.latest_sync_at, v.synced_at), COALESCE(realtime.latest_sync_at, v.synced_at), COALESCE(ads.latest_sync_at, v.synced_at))",
 		"sales_latest_date":             "sales.latest_date",
 		"sales_latest_sync_at":          "sales.latest_sync_at",
 		"vc_sales_covered_dates":        "CAST(NULL AS CHAR)",

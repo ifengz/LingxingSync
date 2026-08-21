@@ -64,6 +64,18 @@ func TestPageDatasetSchemasHaveStableKeys(t *testing.T) {
 	}
 }
 
+func TestVCLinksSchemaKeepsAdSparklineAsJSON(t *testing.T) {
+	schema, ok := SchemaFor("vc-links-v1")
+	if !ok {
+		t.Fatal("VC Links schema missing")
+	}
+	for _, column := range schema.Columns {
+		if column.Name == "ad_spend_sparkline_7d" && column.SQLType != "JSON" {
+			t.Fatalf("ad sparkline type=%q want JSON", column.SQLType)
+		}
+	}
+}
+
 func TestDatasetSchemaCreateTableCanRestrictPublishedFields(t *testing.T) {
 	schema, ok := SchemaFor(DatasetID)
 	if !ok {

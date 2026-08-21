@@ -138,7 +138,7 @@ func schemaType(name string) string {
 		return "VARCHAR(64)"
 	case name == "payments_date", name == "shipment_date", name == "reporting_date", name == "estimated_arrival_date", name == "hide_time":
 		return "VARCHAR(40)"
-	case name == "items":
+	case name == "items", name == "ad_spend_sparkline_7d":
 		return "JSON"
 	case name == "item_amount":
 		return "DECIMAL(18,4)"

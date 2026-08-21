@@ -24,7 +24,7 @@ LingxingSync 负责所有来自 Lingxing 的同步事实：店铺、产品、Lis
 | 页面/领域 | 可复用的 LingxingSync 事实 | 真正缺口 | 是否需要新物理表 |
 |---|---|---|---|
 | FBA/SC Links、Sales Trend、Products Overview、Profit Simulator | `ls_stores`、`ls_sc_products`、`ls_sc_listing`、`ls_sc_sales_report`、`ls_sc_sales_revenue`、`ls_fba_inventory`、`ls_sc_refunds`、`ls_sc_performance_daily`、`ls_ad_*` | `fba-links-v1` 已固定 SC Listing + 日维指标的页面行；其他页面继续复用原始事实/`listing-daily-v1` | 否，复用现有表 |
-| VC Links、移动端、VC 销售趋势 | `ls_vc_listing`、`ls_vc_sales_report`、`ls_vc_realtime_sales`、`ls_vc_traffic`、`ls_vc_inventory`、`ls_vc_margin`、`ls_ad_*` | `vc-links-v1` 已固定 VC 店铺 + ASIN 汇总；VC 交通仅发布领星实际返回的 `glanceViews` | 否，复用现有表 |
+| VC Links、移动端、VC 销售趋势 | `ls_vc_listing`、`ls_vc_sales_report`、`ls_vc_realtime_sales`、`ls_vc_traffic`、`ls_vc_inventory`、`ls_vc_margin`、`ls_ad_sp_product`、`ls_ad_sd_product` | `vc-links-v1` 按 VC Listing 的 ASIN 汇总 SP/SD 广告订单、花费、销售额和 7 日花费序列；HSA 暂不纳入；VC 交通仅发布领星实际返回的 `glanceViews` | 否，复用现有表 |
 | Products 管理与产品概览 | `ls_sc_products`、SC/VC Listing、店铺表 | 产品主档与本地配置/供应商/附件的责任边界；缺字段必须逐字段核验 | 否；本地配置仍由 polabel2 保存 |
 | Operations Log | 上述销售、库存、表现、广告、VC 流量/实时事实 | `operations-log-v1` 已发布日维领星事实；跟踪目标、备注、Spotter/手工历史仍是 polabel2 本地业务，LingxingSync 不伪造 | 否 |
 | Procurement Orders（VC PO） | `ls_vc_orders`、`ls_vc_po_details`、`vc-po-detail-v1` | 已有真实 PO 响应；固定 Reader 提供头字段并原样保留 `items` JSON，消费侧自行拆行 | 否，复用现有 raw 表 |
@@ -63,6 +63,6 @@ DF、Invoice 只能用 LingxingSync 自己的真实 probe 冻结字段、空值�
 
 ## 2026-08-21 用户确认的最小边界
 
-- VC 广告归因和广告 sparkline 没有 LingxingSync 已验证的 VC profile -> 店铺归属事实，继续在 `vc-links-v1` 返回 `NULL`；不得把 `ls_ad_*` 的 SC `sid` 猜作 VC 店铺。
+- VC 广告按 VC Listing 的 ASIN 汇总现有 SP/SD 原始事实，不要求先把 profile 区分成店铺；HSA 暂不纳入店铺维度分摊。广告结果只挂到相同账号+ASIN 的 VC Listing，不把 `sid` 当作 VC 店铺键。
 - PO 商品行继续保留在 `vc-po-detail-v1.items` 原始 JSON 中；不新增猜测行键、不使用 `JSON_TABLE` 拆行。下游如需行级展示，使用已发布 PO 对象中的 `items`。
 - 运营日志的跟踪目标、备注和人工历史继续由 polabel2 保留；`operations-log-v1` 只提供 LingxingSync 已同步的日维事实。
