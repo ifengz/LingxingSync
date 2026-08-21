@@ -4,8 +4,8 @@ import "testing"
 
 func TestCatalogExposesOnlyRegisteredDataProducts(t *testing.T) {
 	definitions := Definitions()
-	if len(definitions) != 9 {
-		t.Fatalf("definitions=%d, want 9", len(definitions))
+	if len(definitions) != 12 {
+		t.Fatalf("definitions=%d, want 12", len(definitions))
 	}
 
 	po, ok := DefinitionFor("vc-po-detail-v1")
@@ -44,6 +44,22 @@ func TestCatalogExposesOnlyRegisteredDataProducts(t *testing.T) {
 	}
 	if _, ok := DefinitionFor("user_entered_table"); ok {
 		t.Fatal("unregistered dataset must not be exposed")
+	}
+}
+
+func TestPageDatasetDefinitionsExposeSeparateContracts(t *testing.T) {
+	cases := []struct {
+		id, grain, source, field string
+	}{
+		{"fba-links-v1", "store + ASIN + listing_sku", "ls_sc_listing + listing_daily_metrics", "quantity_30d"},
+		{"vc-links-v1", "store + ASIN", "ls_vc_listing + ls_vc_sales_report + ls_vc_inventory + ls_vc_traffic + ls_vc_margin + ls_vc_realtime_sales", "sales_revenue_30d"},
+		{"operations-log-v1", "store + channel + ASIN + listing_sku + business_date", "listing_daily_metrics", "sales_units"},
+	}
+	for _, tc := range cases {
+		definition, ok := DefinitionFor(tc.id)
+		if !ok || definition.Grain != tc.grain || definition.Source != tc.source || !containsField(definition.Fields, tc.field) {
+			t.Fatalf("page definition %s=%+v found=%t", tc.id, definition, ok)
+		}
 	}
 }
 

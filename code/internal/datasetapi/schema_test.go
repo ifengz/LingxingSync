@@ -52,6 +52,18 @@ func TestVCPOSchemaUsesStableHeaderKeyAndRawItems(t *testing.T) {
 	}
 }
 
+func TestPageDatasetSchemasHaveStableKeys(t *testing.T) {
+	for _, id := range []string{"fba-links-v1", "vc-links-v1", "operations-log-v1"} {
+		schema, ok := SchemaFor(id)
+		if !ok {
+			t.Fatalf("schema %s missing", id)
+		}
+		if strings.Join(schema.PrimaryKey, ",") != "store,stable_key" {
+			t.Fatalf("schema %s primary key=%v", id, schema.PrimaryKey)
+		}
+	}
+}
+
 func TestDatasetSchemaCreateTableCanRestrictPublishedFields(t *testing.T) {
 	schema, ok := SchemaFor(DatasetID)
 	if !ok {

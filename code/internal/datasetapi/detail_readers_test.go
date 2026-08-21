@@ -120,6 +120,24 @@ func TestVersionedReadersExposeOnlyVerifiedCandidateMappings(t *testing.T) {
 	if got := vcPODetailDefinition.fields["items"]; got != "d.items" {
 		t.Fatalf("VC PO items mapping=%q", got)
 	}
+	for _, tc := range []struct {
+		id         string
+		definition detailReaderDefinition
+	}{
+		{"fba-links-v1", fbaLinksDefinition},
+		{"vc-links-v1", vcLinksDefinition},
+		{"operations-log-v1", operationsLogDefinition},
+	} {
+		definition, ok := DefinitionFor(tc.id)
+		if !ok {
+			t.Fatalf("dataset %s definition missing", tc.id)
+		}
+		for _, field := range definition.Fields {
+			if tc.definition.fields[field] == "" {
+				t.Fatalf("dataset %s field %s has no reader mapping", tc.id, field)
+			}
+		}
+	}
 }
 
 func TestVCPOReaderUsesDetailRowsAndSyncDate(t *testing.T) {
@@ -140,6 +158,29 @@ func TestVCPOReaderUsesDetailRowsAndSyncDate(t *testing.T) {
 	}
 	if len(page.Rows) != 1 || page.Rows[0].StableKey != "sc-us-1|store-a|LPO-1" || page.Rows[0].Values["items"] == nil {
 		t.Fatalf("VC PO row mismatch: %+v", page)
+	}
+}
+
+func TestPageReadersUseSeparateFixedSources(t *testing.T) {
+	cases := []struct {
+		name       string
+		definition detailReaderDefinition
+		fragments  []string
+		field      string
+	}{
+		{"fba", fbaLinksDefinition, []string{"ls_sc_listing l", "listing_daily_metrics"}, "quantity_30d"},
+		{"vc", vcLinksDefinition, []string{"ls_vc_listing v", "ls_vc_sales_report", "ls_vc_inventory"}, "sales_revenue_30d"},
+		{"operations", operationsLogDefinition, []string{"listing_daily_metrics m", "listing_dimensions d"}, "sales_units"},
+	}
+	for _, tc := range cases {
+		if tc.definition.fields[tc.field] == "" {
+			t.Fatalf("%s reader missing field %s", tc.name, tc.field)
+		}
+		for _, fragment := range tc.fragments {
+			if !strings.Contains(tc.definition.fromClause, fragment) {
+				t.Fatalf("%s reader source missing %q: %s", tc.name, fragment, tc.definition.fromClause)
+			}
+		}
 	}
 }
 

@@ -94,6 +94,24 @@ var definitions = map[string]Definition{
 		InitialCursor: "0|0|0", FixedFields: []string{"store", "record_date", "stable_key", "updated_at"},
 		Fields: []string{"vc_store_id", "local_po_number", "purchase_order_number", "purchase_order_date", "purchase_order_state", "payment_method", "total_price", "currency_code", "item_amount", "ship_window_start", "ship_window_end", "delivery_window_start", "delivery_window_end", "items", "seller_name", "purchase_order_type", "purchase_order_process_state", "ack_status", "ack_status_desc", "shipment_confirm_status", "shipment_label_status", "customer_order_number", "erp_warehouse_id", "erp_warehouse_name", "remark"},
 	},
+	"fba-links-v1": {
+		ID: "fba-links-v1", Name: "FBA Links 页面数据表", Kind: DatasetKindDetail,
+		Source: "ls_sc_listing + listing_daily_metrics", Grain: "store + ASIN + listing_sku",
+		InitialCursor: "0|0|0", FixedFields: []string{"store", "record_date", "stable_key", "updated_at"},
+		Fields: []string{"store_name", "country", "channel_type", "fulfillment_type", "asin", "parent_asin", "msku", "title", "brand", "image_url", "quantity_7d", "quantity_30d", "revenue_30d", "revenue_currency", "returns_30d", "inventory", "inbound_inventory", "reserved_inventory", "unfulfillable_inventory", "latest_inventory_date", "rating", "reviews_count", "ad_orders_7d", "ad_spend_30d", "ad_spend_currency", "account_ad_spend_30d", "account_ad_breakdown_30d", "sparkline_7d", "latest_date", "latest_sync_at", "revenue_rate_to_usd", "revenue_rate_date", "sibling_count", "sibling_skus", "visibility_status", "tag_names"},
+	},
+	"vc-links-v1": {
+		ID: "vc-links-v1", Name: "VC Links 页面数据表", Kind: DatasetKindDetail,
+		Source: "ls_vc_listing + ls_vc_sales_report + ls_vc_inventory + ls_vc_traffic + ls_vc_margin + ls_vc_realtime_sales", Grain: "store + ASIN",
+		InitialCursor: "0|0|0", FixedFields: []string{"store", "record_date", "stable_key", "updated_at"},
+		Fields: []string{"store_name", "country", "channel_type", "asin", "parent_asin", "msku", "title", "brand", "image_url", "quantity_7d", "quantity_30d", "revenue_30d", "revenue_currency", "returns_30d", "inventory", "rating", "reviews_count", "ad_orders_7d", "ad_spend_30d", "ad_sales_30d", "ad_spend_currency", "sales_quantity_7d", "sales_quantity_30d", "sales_revenue_7d", "sales_revenue_30d", "sales_sparkline_7d", "sales_revenue_sparkline_7d", "realtime_revenue_sparkline_7d", "ad_spend_sparkline_7d", "sellable_inventory", "inbound_inventory", "unfulfillable_inventory", "aged90_sellable_inventory", "unhealthy_inventory", "latest_inventory_date", "realtime_ordered_units", "realtime_ordered_revenue", "latest_realtime_end_at", "glance_views", "net_ppm", "latest_margin_date", "latest_date", "latest_sync_at", "sales_latest_date", "sales_latest_sync_at", "vc_sales_covered_dates", "visibility_status"},
+	},
+	"operations-log-v1": {
+		ID: "operations-log-v1", Name: "运营日志事实数据表", Kind: DatasetKindDetail,
+		Source: "listing_daily_metrics", Grain: "store + channel + ASIN + listing_sku + business_date",
+		InitialCursor: "0|0|0|0|1000-01-01", FixedFields: []string{"store", "record_date", "stable_key", "updated_at"},
+		Fields: []string{"channel_type", "asin", "listing_sku", "sales_units", "sales_amount", "returns_qty", "inventory_sellable", "inventory_inbound", "inventory_reserved", "inventory_unfulfillable", "sessions_total", "sessions_desktop", "sessions_mobile", "rating", "review_count", "sp_spend", "sp_sales", "sp_orders", "sd_spend", "sd_sales", "sd_orders", "hsa_spend", "hsa_sales", "hsa_orders", "sb_spend", "sb_sales", "sb_orders", "is_provisional", "is_verified"},
+	},
 }
 
 func Definitions() []Definition {

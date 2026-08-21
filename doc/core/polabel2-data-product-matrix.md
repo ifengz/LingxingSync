@@ -8,7 +8,7 @@
 
 - `code/migrations` 约 59 张唯一物理表，包含系统表、原始同步表、报告表和派生支持表；
 - `code/config.yaml` 已有 50 个 endpoint，目标表去重后约 24 张；
-- 当前固定数据目录只有少量版本，但这代表“对外发布合同”数量，不代表物理表数量；
+- 当前固定数据目录已按本轮四页补到 12 个版本，但这代表“对外发布合同”数量，不代表物理表数量；
 - polabel2 的多数页面是多个事实的组合读取，不应为每个页面复制一张宽表。
 
 因此本项目的最小路径是：先把已有 Lingxing 原始事实按固定领域合同发布，再只为经真实上游验证的缺失事实建表。不得把页面本地状态当作 Lingxing 原始缺口。
@@ -23,10 +23,10 @@ LingxingSync 负责所有来自 Lingxing 的同步事实：店铺、产品、Lis
 
 | 页面/领域 | 可复用的 LingxingSync 事实 | 真正缺口 | 是否需要新物理表 |
 |---|---|---|---|
-| FBA/SC Links、Sales Trend、Products Overview、Profit Simulator | `ls_stores`、`ls_sc_products`、`ls_sc_listing`、`ls_sc_sales_report`、`ls_sc_sales_revenue`、`ls_fba_inventory`、`ls_sc_refunds`、`ls_sc_performance_daily`、`ls_ad_*` | 固定跨表 Reader、日期覆盖和 0/null/未同步语义 | 否，优先复用现有表 |
-| VC Links、移动端、VC 销售趋势 | `ls_vc_listing`、`ls_vc_sales_report`、`ls_vc_realtime_sales`、`ls_vc_traffic`、`ls_vc_inventory`、`ls_vc_margin`、`ls_ad_*` | 固定 VC ASIN-store 粒度、广告 profile 绑定、窗口聚合和 coverage Reader | 通常否；先补 Reader/派生查询 |
+| FBA/SC Links、Sales Trend、Products Overview、Profit Simulator | `ls_stores`、`ls_sc_products`、`ls_sc_listing`、`ls_sc_sales_report`、`ls_sc_sales_revenue`、`ls_fba_inventory`、`ls_sc_refunds`、`ls_sc_performance_daily`、`ls_ad_*` | `fba-links-v1` 已固定 SC Listing + 日维指标的页面行；其他页面继续复用原始事实/`listing-daily-v1` | 否，复用现有表 |
+| VC Links、移动端、VC 销售趋势 | `ls_vc_listing`、`ls_vc_sales_report`、`ls_vc_realtime_sales`、`ls_vc_traffic`、`ls_vc_inventory`、`ls_vc_margin`、`ls_ad_*` | `vc-links-v1` 已固定 VC 店铺 + ASIN 汇总；VC 交通仅发布领星实际返回的 `glanceViews` | 否，复用现有表 |
 | Products 管理与产品概览 | `ls_sc_products`、SC/VC Listing、店铺表 | 产品主档与本地配置/供应商/附件的责任边界；缺字段必须逐字段核验 | 否；本地配置仍由 polabel2 保存 |
-| Operations Log | 上述销售、库存、表现、广告、VC 流量/实时事实 | 精确目标键的组合 Reader；跟踪记录、备注和 Spotter/手工历史仍是本地业务 | 否，除非确认新的上游事实 |
+| Operations Log | 上述销售、库存、表现、广告、VC 流量/实时事实 | `operations-log-v1` 已发布日维领星事实；跟踪目标、备注、Spotter/手工历史仍是 polabel2 本地业务，LingxingSync 不伪造 | 否 |
 | Procurement Orders（VC PO） | `ls_vc_orders`、`ls_vc_po_details`、`vc-po-detail-v1` | 已有真实 PO 响应；固定 Reader 提供头字段并原样保留 `items` JSON，消费侧自行拆行 | 否，复用现有 raw 表 |
 | Procurement DF、Invoice | 当前无 LingxingSync 原始表 | 必须取得真实列表/详情响应，确认字段、分页、唯一键和历史覆盖 | 未验证前不建表 |
 | Sync Center、Integrations | 店铺表、endpoint 配置和同步运行记录 | 固定健康/coverage Reader；不是页面复制一张业务宽表 | 通常否 |
@@ -59,4 +59,4 @@ DF、Invoice 只能用 LingxingSync 自己的真实 probe 冻结字段、空值�
 
 ## 当前结论
 
-不是“缺几十张业务表”。当前 PO 已完成最小固定发布层；DF/Invoice 仍未接入。后续只对有真实响应的领域继续补固定 Reader，未完成 writer 和生产落库回显前不宣称 100%。
+不是“缺几十张业务表”。本轮排除 Invoice；当前 PO、FBA Links、VC Links 和可由领星事实提供的运营日志日维已各有独立固定 Reader。DF、运营跟踪/备注等不是已验证的 LingxingSync 原始接口，仍由 polabel2 本地维护；未完成生产 token 授权和四页逐页落库回显前，不宣称 100%。

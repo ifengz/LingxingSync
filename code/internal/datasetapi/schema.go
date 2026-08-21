@@ -70,6 +70,18 @@ var schemas = map[string]Schema{
 		DatasetID: "vc-po-detail-v1", TableName: "vc_po_detail_v1", DataNote: "VC PO 逐单详情；一行一个店铺/本地 PO，record_date 使用 raw 详情同步时间的日期，items 保留上游 JSON，不拆造商品行。",
 		PrimaryKey: []string{"store", "stable_key"},
 	},
+	"fba-links-v1": {
+		DatasetID: "fba-links-v1", TableName: "fba_links_v1", DataNote: "FBA Links 页面固定行；销售/广告窗口来自 listing_daily_metrics，库存和 Listing 身份来自 SC 原始表。",
+		PrimaryKey: []string{"store", "stable_key"},
+	},
+	"vc-links-v1": {
+		DatasetID: "vc-links-v1", TableName: "vc_links_v1", DataNote: "VC Links 页面固定行；按 VC 店铺和 ASIN 汇总已同步的 VC Listing、销售、实时销售、库存、流量和毛利事实。",
+		PrimaryKey: []string{"store", "stable_key"},
+	},
+	"operations-log-v1": {
+		DatasetID: "operations-log-v1", TableName: "operations_log_v1", DataNote: "运营日志可由领星事实提供的日维指标；跟踪目标、备注和人工历史仍属于 polabel2 本地业务。",
+		PrimaryKey: []string{"store", "stable_key"},
+	},
 }
 
 func schemaColumns(columns []Column) []Column { return append([]Column(nil), columns...) }
@@ -176,6 +188,18 @@ func schemaType(name string) string {
 		return "VARCHAR(64)"
 	case name == "source_updated_at":
 		return "DATETIME(6)"
+	case name == "latest_sync_at":
+		return "DATETIME(6)"
+	case name == "quantity_7d", name == "quantity_30d", name == "returns_30d", name == "inventory", name == "inbound_inventory", name == "reserved_inventory", name == "unfulfillable_inventory", name == "reviews_count", name == "ad_orders_7d", name == "sales_quantity_7d", name == "sales_quantity_30d", name == "sellable_inventory", name == "aged90_sellable_inventory", name == "unhealthy_inventory", name == "realtime_ordered_units", name == "glance_views":
+		return "BIGINT"
+	case name == "revenue_30d", name == "ad_spend_30d", name == "sales_revenue_7d", name == "sales_revenue_30d", name == "realtime_ordered_revenue", name == "net_ppm":
+		return "DECIMAL(20,6)"
+	case name == "sales_units", name == "returns_qty", name == "inventory_sellable", name == "inventory_inbound", name == "inventory_reserved", name == "inventory_unfulfillable", name == "sessions_total", name == "sessions_desktop", name == "sessions_mobile", name == "review_count", name == "sp_orders", name == "sd_orders", name == "hsa_orders", name == "sb_orders":
+		return "BIGINT"
+	case name == "sales_amount", name == "sp_spend", name == "sp_sales", name == "sd_spend", name == "sd_sales", name == "hsa_spend", name == "hsa_sales", name == "sb_spend", name == "sb_sales", name == "rating":
+		return "DECIMAL(20,6)"
+	case name == "is_provisional", name == "is_verified":
+		return "TINYINT(1)"
 	case name == "inventory_currency", name == "currency", strings.HasSuffix(name, "_status"):
 		return "VARCHAR(255)"
 	case strings.Contains(name, "rate"), name == "rating", name == "sell_through", name == "historical_days_of_supply", name == "inventory_avg_lead_time_days":
