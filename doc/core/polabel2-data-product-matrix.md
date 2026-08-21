@@ -60,3 +60,9 @@ DF、Invoice 只能用 LingxingSync 自己的真实 probe 冻结字段、空值�
 ## 当前结论
 
 不是“缺几十张业务表”。本轮排除 Invoice；当前 PO、FBA Links、VC Links 和可由领星事实提供的运营日志日维已各有独立固定 Reader。DF、运营跟踪/备注等不是已验证的 LingxingSync 原始接口，仍由 polabel2 本地维护；未完成生产 token 授权和四页逐页落库回显前，不宣称 100%。
+
+## 2026-08-21 用户确认的最小边界
+
+- VC 广告归因和广告 sparkline 没有 LingxingSync 已验证的 VC profile -> 店铺归属事实，继续在 `vc-links-v1` 返回 `NULL`；不得把 `ls_ad_*` 的 SC `sid` 猜作 VC 店铺。
+- PO 商品行继续保留在 `vc-po-detail-v1.items` 原始 JSON 中；不新增猜测行键、不使用 `JSON_TABLE` 拆行。下游如需行级展示，使用已发布 PO 对象中的 `items`。
+- 运营日志的跟踪目标、备注和人工历史继续由 polabel2 保留；`operations-log-v1` 只提供 LingxingSync 已同步的日维事实。

@@ -161,6 +161,24 @@ func TestVCPOReaderUsesDetailRowsAndSyncDate(t *testing.T) {
 	}
 }
 
+func TestConfirmedPageBoundariesDoNotInventFacts(t *testing.T) {
+	if got := vcLinksDefinition.fields["ad_spend_30d"]; got != "CAST(NULL AS DECIMAL(20,6))" {
+		t.Fatalf("VC ad spend must remain NULL without a verified VC attribution source: %q", got)
+	}
+	if got := vcLinksDefinition.fields["ad_spend_sparkline_7d"]; got != "CAST(NULL AS JSON)" {
+		t.Fatalf("VC ad sparkline must remain NULL without a verified source: %q", got)
+	}
+	if strings.Contains(vcLinksDefinition.fromClause, "ls_ad_") {
+		t.Fatalf("VC Links must not infer VC ad attribution from SC ad raw tables: %s", vcLinksDefinition.fromClause)
+	}
+	if got := vcPODetailDefinition.fields["items"]; got != "d.items" {
+		t.Fatalf("PO item payload must remain the verified raw JSON object: %q", got)
+	}
+	if strings.Contains(vcPODetailDefinition.fromClause, "JSON_TABLE") {
+		t.Fatal("PO detail must not split items with an unverified line key")
+	}
+}
+
 func TestPageReadersUseSeparateFixedSources(t *testing.T) {
 	cases := []struct {
 		name       string
