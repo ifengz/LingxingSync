@@ -157,6 +157,8 @@ func (s *Server) newDatasetHandler(cfg *config.Config, definition datasetapi.Def
 		handler.SetReader(datasetapi.NewOrderShippingAddressDetailReader(s.dbx))
 	case "address-order-item-detail-v1", "address-order-item-detail-v2":
 		handler.SetReader(datasetapi.NewAddressOrderItemDetailReader(s.dbx))
+	case "vc-po-detail-v1":
+		handler.SetReader(datasetapi.NewVCPODetailReader(s.dbx))
 	}
 	return handler, nil
 }

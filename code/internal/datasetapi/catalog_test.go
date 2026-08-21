@@ -4,8 +4,18 @@ import "testing"
 
 func TestCatalogExposesOnlyRegisteredDataProducts(t *testing.T) {
 	definitions := Definitions()
-	if len(definitions) != 8 {
-		t.Fatalf("definitions=%d, want 8", len(definitions))
+	if len(definitions) != 9 {
+		t.Fatalf("definitions=%d, want 9", len(definitions))
+	}
+
+	po, ok := DefinitionFor("vc-po-detail-v1")
+	if !ok || po.Kind != DatasetKindDetail || po.Source != "ls_vc_orders + ls_vc_po_details" || po.Grain != "store + local_po_number" {
+		t.Fatalf("VC PO definition=%+v found=%t", po, ok)
+	}
+	for _, field := range []string{"vc_store_id", "local_po_number", "purchase_order_number", "purchase_order_state", "items", "seller_name", "purchase_order_type"} {
+		if !containsField(po.Fields, field) {
+			t.Fatalf("VC PO field %q is missing", field)
+		}
 	}
 
 	returns, ok := DefinitionFor("return-reason-detail-v1")

@@ -88,6 +88,12 @@ var definitions = map[string]Definition{
 		Fields:        []string{"amazon_order_id", "store_name", "marketplace", "purchase_date", "last_updated_date", "order_status", "asin", "sku", "product_name", "quantity", "currency", "item_price", "fulfillment_channel", "ship_country", "ship_state", "ship_city", "ship_postal_code", "ship_lat", "ship_lng", "source_store", "shipment_id", "shipment_item_id", "amazon_order_item_id", "source_updated_at"},
 		CatalogFields: []string{"amazon_order_id", "store_name", "marketplace", "purchase_date", "last_updated_date", "order_status", "asin", "sku", "product_name", "quantity", "currency", "item_price", "fulfillment_channel", "ship_country", "ship_state", "ship_city", "ship_postal_code", "ship_lat", "ship_lng", "source_store", "shipment_id", "shipment_item_id", "amazon_order_item_id", "source_updated_at", "payments_date", "shipment_date", "reporting_date", "estimated_arrival_date", "quantity_shipped", "item_tax", "shipping_price", "shipping_tax", "gift_wrap_price", "gift_wrap_tax", "ship_service_level", "item_promotion_discount", "ship_promotion_discount", "carrier", "tracking_number", "points_granted", "hide_time"},
 	},
+	"vc-po-detail-v1": {
+		ID: "vc-po-detail-v1", Name: "VC PO 订单明细表", Kind: DatasetKindDetail,
+		Source: "ls_vc_orders + ls_vc_po_details", Grain: "store + local_po_number",
+		InitialCursor: "0|0|0", FixedFields: []string{"store", "record_date", "stable_key", "updated_at"},
+		Fields: []string{"vc_store_id", "local_po_number", "purchase_order_number", "purchase_order_date", "purchase_order_state", "payment_method", "total_price", "currency_code", "item_amount", "ship_window_start", "ship_window_end", "delivery_window_start", "delivery_window_end", "items", "seller_name", "purchase_order_type", "purchase_order_process_state", "ack_status", "ack_status_desc", "shipment_confirm_status", "shipment_label_status", "customer_order_number", "erp_warehouse_id", "erp_warehouse_name", "remark"},
+	},
 }
 
 func Definitions() []Definition {

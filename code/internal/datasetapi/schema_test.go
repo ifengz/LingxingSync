@@ -33,6 +33,25 @@ func TestRegisteredDatasetSchemasCoverDefinitions(t *testing.T) {
 	}
 }
 
+func TestVCPOSchemaUsesStableHeaderKeyAndRawItems(t *testing.T) {
+	schema, ok := SchemaFor("vc-po-detail-v1")
+	if !ok {
+		t.Fatal("VC PO schema missing")
+	}
+	if strings.Join(schema.PrimaryKey, ",") != "store,stable_key" {
+		t.Fatalf("VC PO primary key=%v", schema.PrimaryKey)
+	}
+	ddl, err := schema.CreateTableSQL(nil)
+	if err != nil {
+		t.Fatalf("create SQL: %v", err)
+	}
+	for _, want := range []string{"`items` JSON", "`local_po_number` VARCHAR(64)", "PRIMARY KEY (`store`, `stable_key`)"} {
+		if !strings.Contains(ddl, want) {
+			t.Fatalf("VC PO DDL missing %q: %s", want, ddl)
+		}
+	}
+}
+
 func TestDatasetSchemaCreateTableCanRestrictPublishedFields(t *testing.T) {
 	schema, ok := SchemaFor(DatasetID)
 	if !ok {

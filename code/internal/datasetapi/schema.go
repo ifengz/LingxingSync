@@ -66,6 +66,10 @@ var schemas = map[string]Schema{
 		Columns:    detailSchemaColumns([]Column{{Name: "store", SQLType: "VARCHAR(64)", Nullable: false}, {Name: "record_date", SQLType: "DATE", Nullable: true}, {Name: "stable_key", SQLType: "VARCHAR(255)", Nullable: false}, {Name: "updated_at", SQLType: "DATETIME(6)", Nullable: false}}),
 		PrimaryKey: []string{"store", "stable_key"},
 	},
+	"vc-po-detail-v1": {
+		DatasetID: "vc-po-detail-v1", TableName: "vc_po_detail_v1", DataNote: "VC PO 逐单详情；一行一个店铺/本地 PO，record_date 使用 raw 详情同步时间的日期，items 保留上游 JSON，不拆造商品行。",
+		PrimaryKey: []string{"store", "stable_key"},
+	},
 }
 
 func schemaColumns(columns []Column) []Column { return append([]Column(nil), columns...) }
@@ -122,6 +126,30 @@ func schemaType(name string) string {
 		return "VARCHAR(64)"
 	case name == "payments_date", name == "shipment_date", name == "reporting_date", name == "estimated_arrival_date", name == "hide_time":
 		return "VARCHAR(40)"
+	case name == "items":
+		return "JSON"
+	case name == "item_amount":
+		return "DECIMAL(18,4)"
+	case name == "ack_status", name == "purchase_order_type", name == "purchase_order_process_state", name == "shipment_confirm_status", name == "shipment_label_status":
+		return "INT"
+	case name == "ack_status_desc":
+		return "VARCHAR(64)"
+	case name == "seller_name":
+		return "VARCHAR(128)"
+	case name == "erp_warehouse_id":
+		return "VARCHAR(32)"
+	case name == "erp_warehouse_name":
+		return "VARCHAR(128)"
+	case name == "remark":
+		return "VARCHAR(512)"
+	case name == "total_price":
+		return "VARCHAR(32)"
+	case name == "currency_code":
+		return "VARCHAR(8)"
+	case name == "vc_store_id":
+		return "VARCHAR(32)"
+	case name == "local_po_number", name == "purchase_order_number", name == "customer_order_number":
+		return "VARCHAR(64)"
 	case name == "quantity_shipped":
 		return "INT"
 	case name == "item_tax", name == "shipping_price", name == "shipping_tax", name == "gift_wrap_price", name == "gift_wrap_tax", name == "item_promotion_discount", name == "ship_promotion_discount", name == "points_granted":

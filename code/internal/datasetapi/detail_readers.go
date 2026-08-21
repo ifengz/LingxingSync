@@ -227,6 +227,45 @@ var fbaInventorySnapshotDefinition = detailReaderDefinition{
 	},
 }
 
+var vcPODetailDefinition = detailReaderDefinition{
+	fromClause: `ls_vc_po_details d
+LEFT JOIN ls_vc_orders o
+  ON o.account_id = d.account_id AND o.vc_store_id = d.vc_store_id AND o.local_po_number = d.local_po_number`,
+	storeColumn:     "d.vc_store_id",
+	baseColumns:     []string{"d.account_id", "d.vc_store_id", "''", "''", "DATE(d.synced_at)", "d.synced_at", "CONCAT_WS('|', d.account_id, d.vc_store_id, d.local_po_number)"},
+	dateColumn:      "DATE(d.synced_at)",
+	stableKeyColumn: "CONCAT_WS('|', d.account_id, d.vc_store_id, d.local_po_number)",
+	updatedAtColumn: "d.synced_at",
+	stableKeyParts:  3,
+	fields: map[string]string{
+		"vc_store_id":                  "d.vc_store_id",
+		"local_po_number":              "d.local_po_number",
+		"purchase_order_number":        "d.purchase_order_number",
+		"purchase_order_date":          "d.purchase_order_date",
+		"purchase_order_state":         "d.purchase_order_state",
+		"payment_method":               "d.payment_method",
+		"total_price":                  "d.total_price",
+		"currency_code":                "d.currency_code",
+		"item_amount":                  "d.item_amount",
+		"ship_window_start":            "d.ship_window_start",
+		"ship_window_end":              "d.ship_window_end",
+		"delivery_window_start":        "d.delivery_window_start",
+		"delivery_window_end":          "d.delivery_window_end",
+		"items":                        "d.items",
+		"seller_name":                  "o.seller_name",
+		"purchase_order_type":          "o.purchase_order_type",
+		"purchase_order_process_state": "o.purchase_order_process_state",
+		"ack_status":                   "o.ack_status",
+		"ack_status_desc":              "o.ack_status_desc",
+		"shipment_confirm_status":      "o.shipment_confirm_status",
+		"shipment_label_status":        "o.shipment_label_status",
+		"customer_order_number":        "o.customer_order_number",
+		"erp_warehouse_id":             "o.erp_warehouse_id",
+		"erp_warehouse_name":           "o.erp_warehouse_name",
+		"remark":                       "o.remark",
+	},
+}
+
 func NewReturnReasonDetailReader(db *sqlx.DB) *DetailSQLReader {
 	return newDetailSQLReader(db, returnReasonDetailDefinition)
 }
@@ -241,6 +280,10 @@ func NewAddressOrderItemDetailReader(db *sqlx.DB) *DetailSQLReader {
 
 func NewFBAInventorySnapshotReader(db *sqlx.DB) *DetailSQLReader {
 	return newDetailSQLReader(db, fbaInventorySnapshotDefinition)
+}
+
+func NewVCPODetailReader(db *sqlx.DB) *DetailSQLReader {
+	return newDetailSQLReader(db, vcPODetailDefinition)
 }
 
 func newDetailSQLReader(db *sqlx.DB, definition detailReaderDefinition) *DetailSQLReader {

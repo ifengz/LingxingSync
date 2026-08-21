@@ -117,6 +117,30 @@ func TestVersionedReadersExposeOnlyVerifiedCandidateMappings(t *testing.T) {
 			}
 		}
 	}
+	if got := vcPODetailDefinition.fields["items"]; got != "d.items" {
+		t.Fatalf("VC PO items mapping=%q", got)
+	}
+}
+
+func TestVCPOReaderUsesDetailRowsAndSyncDate(t *testing.T) {
+	updated := time.Date(2026, 8, 20, 3, 4, 5, 0, time.UTC)
+	queryer := &fixedQueryer{rows: &fixedRows{values: []any{
+		"sc-us-1", "store-a", "ASIN-1", "", "2026-08-20", updated, "sc-us-1|store-a|LPO-1",
+		"LPO-1", "PO-1", "Open", "{\"items\":[{\"asin\":\"ASIN-1\"}]}", "Store A", int64(1),
+	}}}
+	reader := &DetailSQLReader{queryer: queryer, definition: vcPODetailDefinition}
+	page, err := reader.Snapshot(context.Background(), Query{Store: "store-a", DateFrom: "2026-08-20", DateTo: "2026-08-20", Fields: []string{"local_po_number", "purchase_order_number", "purchase_order_state", "items", "seller_name", "purchase_order_type"}, PageSize: 1})
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	for _, want := range []string{"FROM ls_vc_po_details d", "LEFT JOIN ls_vc_orders o", "DATE(d.synced_at) BETWEEN ? AND ?", "d.vc_store_id IN (?)"} {
+		if !strings.Contains(queryer.query, want) {
+			t.Fatalf("VC PO query missing %q: %s", want, queryer.query)
+		}
+	}
+	if len(page.Rows) != 1 || page.Rows[0].StableKey != "sc-us-1|store-a|LPO-1" || page.Rows[0].Values["items"] == nil {
+		t.Fatalf("VC PO row mismatch: %+v", page)
+	}
 }
 
 func TestFBAInventorySnapshotReaderUsesHistoricalSnapshotDate(t *testing.T) {
