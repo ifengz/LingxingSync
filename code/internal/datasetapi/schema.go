@@ -70,6 +70,11 @@ var schemas = map[string]Schema{
 		DatasetID: "vc-po-detail-v1", TableName: "vc_po_detail_v1", DataNote: "VC PO 逐单详情；一行一个店铺/本地 PO，record_date 使用 raw 详情同步时间的日期，items 保留上游 JSON，不拆造商品行。",
 		PrimaryKey: []string{"store", "stable_key"},
 	},
+	"vc-po-lines-v1": {
+		DatasetID: "vc-po-lines-v1", TableName: "vc_po_lines_v1", DataNote: "VC PO 商品行；从已同步详情的 items 数组按已确认字段展开，一行一个商品，不改变原始 PO JSON。",
+		Columns:    detailSchemaColumns([]Column{{Name: "store", SQLType: "VARCHAR(64)", Nullable: false}, {Name: "record_date", SQLType: "DATE", Nullable: true}, {Name: "stable_key", SQLType: "VARCHAR(255)", Nullable: false}, {Name: "updated_at", SQLType: "DATETIME(6)", Nullable: false}}),
+		PrimaryKey: []string{"store", "stable_key"},
+	},
 	"fba-links-v1": {
 		DatasetID: "fba-links-v1", TableName: "fba_links_v1", DataNote: "FBA Links 页面固定行；销售/广告窗口来自 listing_daily_metrics，库存和 Listing 身份来自 SC 原始表。",
 		PrimaryKey: []string{"store", "stable_key"},
@@ -140,6 +145,8 @@ func schemaType(name string) string {
 		return "VARCHAR(40)"
 	case name == "items", name == "ad_spend_sparkline_7d":
 		return "JSON"
+	case name == "ordered_quantity", name == "received_quantity":
+		return "BIGINT"
 	case name == "item_amount":
 		return "DECIMAL(18,4)"
 	case name == "ack_status", name == "purchase_order_type", name == "purchase_order_process_state", name == "shipment_confirm_status", name == "shipment_label_status":

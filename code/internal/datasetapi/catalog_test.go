@@ -4,8 +4,8 @@ import "testing"
 
 func TestCatalogExposesOnlyRegisteredDataProducts(t *testing.T) {
 	definitions := Definitions()
-	if len(definitions) != 12 {
-		t.Fatalf("definitions=%d, want 12", len(definitions))
+	if len(definitions) != 13 {
+		t.Fatalf("definitions=%d, want 13", len(definitions))
 	}
 
 	po, ok := DefinitionFor("vc-po-detail-v1")
@@ -15,6 +15,15 @@ func TestCatalogExposesOnlyRegisteredDataProducts(t *testing.T) {
 	for _, field := range []string{"vc_store_id", "local_po_number", "purchase_order_number", "purchase_order_state", "items", "seller_name", "purchase_order_type"} {
 		if !containsField(po.Fields, field) {
 			t.Fatalf("VC PO field %q is missing", field)
+		}
+	}
+	poLines, ok := DefinitionFor("vc-po-lines-v1")
+	if !ok || poLines.Kind != DatasetKindDetail || poLines.Source != "ls_vc_po_details.items + ls_vc_orders" || poLines.Grain != "store + local_po_number + asin + msku" {
+		t.Fatalf("VC PO lines definition=%+v found=%t", poLines, ok)
+	}
+	for _, field := range []string{"vc_store_id", "local_po_number", "purchase_order_number", "asin", "msku", "sku", "item_name", "ordered_quantity", "received_quantity", "unit_price", "image_url"} {
+		if !containsField(poLines.Fields, field) {
+			t.Fatalf("VC PO lines field %q is missing", field)
 		}
 	}
 

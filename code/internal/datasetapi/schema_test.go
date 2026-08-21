@@ -52,6 +52,25 @@ func TestVCPOSchemaUsesStableHeaderKeyAndRawItems(t *testing.T) {
 	}
 }
 
+func TestVCPOLinesSchemaUsesCompositeLineKey(t *testing.T) {
+	schema, ok := SchemaFor("vc-po-lines-v1")
+	if !ok {
+		t.Fatal("VC PO lines schema missing")
+	}
+	if strings.Join(schema.PrimaryKey, ",") != "store,stable_key" {
+		t.Fatalf("VC PO lines primary key=%v", schema.PrimaryKey)
+	}
+	ddl, err := schema.CreateTableSQL(nil)
+	if err != nil {
+		t.Fatalf("create SQL: %v", err)
+	}
+	for _, want := range []string{"`asin` VARCHAR(255)", "`msku` VARCHAR(255)", "`ordered_quantity` BIGINT", "`received_quantity` BIGINT", "PRIMARY KEY (`store`, `stable_key`)"} {
+		if !strings.Contains(ddl, want) {
+			t.Fatalf("VC PO lines DDL missing %q: %s", want, ddl)
+		}
+	}
+}
+
 func TestPageDatasetSchemasHaveStableKeys(t *testing.T) {
 	for _, id := range []string{"fba-links-v1", "vc-links-v1", "operations-log-v1"} {
 		schema, ok := SchemaFor(id)

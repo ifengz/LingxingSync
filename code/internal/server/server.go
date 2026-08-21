@@ -159,6 +159,8 @@ func (s *Server) newDatasetHandler(cfg *config.Config, definition datasetapi.Def
 		handler.SetReader(datasetapi.NewAddressOrderItemDetailReader(s.dbx))
 	case "vc-po-detail-v1":
 		handler.SetReader(datasetapi.NewVCPODetailReader(s.dbx))
+	case "vc-po-lines-v1":
+		handler.SetReader(datasetapi.NewVCPOLinesReader(s.dbx))
 	case "fba-links-v1":
 		handler.SetReader(datasetapi.NewFBALinksReader(s.dbx))
 	case "vc-links-v1":

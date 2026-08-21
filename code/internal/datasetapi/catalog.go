@@ -94,6 +94,12 @@ var definitions = map[string]Definition{
 		InitialCursor: "0|0|0", FixedFields: []string{"store", "record_date", "stable_key", "updated_at"},
 		Fields: []string{"vc_store_id", "local_po_number", "purchase_order_number", "purchase_order_date", "purchase_order_state", "payment_method", "total_price", "currency_code", "item_amount", "ship_window_start", "ship_window_end", "delivery_window_start", "delivery_window_end", "items", "seller_name", "purchase_order_type", "purchase_order_process_state", "ack_status", "ack_status_desc", "shipment_confirm_status", "shipment_label_status", "customer_order_number", "erp_warehouse_id", "erp_warehouse_name", "remark"},
 	},
+	"vc-po-lines-v1": {
+		ID: "vc-po-lines-v1", Name: "VC PO 商品行表", Kind: DatasetKindDetail,
+		Source: "ls_vc_po_details.items + ls_vc_orders", Grain: "store + local_po_number + asin + msku",
+		InitialCursor: "0|0|0|0|0", FixedFields: []string{"store", "record_date", "stable_key", "updated_at"},
+		Fields: []string{"vc_store_id", "local_po_number", "purchase_order_number", "asin", "msku", "sku", "item_name", "ordered_quantity", "received_quantity", "unit_price", "image_url"},
+	},
 	"fba-links-v1": {
 		ID: "fba-links-v1", Name: "FBA Links 页面数据表", Kind: DatasetKindDetail,
 		Source: "ls_sc_listing + listing_daily_metrics", Grain: "store + ASIN + listing_sku",

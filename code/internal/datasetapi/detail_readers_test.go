@@ -120,6 +120,9 @@ func TestVersionedReadersExposeOnlyVerifiedCandidateMappings(t *testing.T) {
 	if got := vcPODetailDefinition.fields["items"]; got != "d.items" {
 		t.Fatalf("VC PO items mapping=%q", got)
 	}
+	if got := vcPOLinesDefinition.fields["ordered_quantity"]; got != "CAST(COALESCE(item.purchase_amount, item.qty_requested, item.requested_qty, item.request_qty, item.asn_quantity, item.asn_qty, item.ordered_qty, item.ordered_quantity, item.quantity) AS SIGNED)" {
+		t.Fatalf("VC PO line quantity mapping=%q", got)
+	}
 	for _, tc := range []struct {
 		id         string
 		definition detailReaderDefinition
@@ -137,6 +140,30 @@ func TestVersionedReadersExposeOnlyVerifiedCandidateMappings(t *testing.T) {
 				t.Fatalf("dataset %s field %s has no reader mapping", tc.id, field)
 			}
 		}
+	}
+}
+
+func TestVCPOLinesReaderExpandsVerifiedItemsWithStableLineKey(t *testing.T) {
+	updated := time.Date(2026, 8, 20, 3, 4, 5, 0, time.UTC)
+	queryer := &fixedQueryer{rows: &fixedRows{values: []any{
+		"sc-us-1", "store-a", "ASIN-1", "SKU-1", "2026-08-20", updated, "sc-us-1|store-a|LPO-1|ASIN-1|MSKU-1",
+		"LPO-1", "PO-1", "ASIN-1", "MSKU-1", "SKU-1", "Widget", int64(10), int64(3), "9.99", "https://img/1.jpg",
+	}}}
+	reader := &DetailSQLReader{queryer: queryer, definition: vcPOLinesDefinition}
+	page, err := reader.Snapshot(context.Background(), Query{Store: "store-a", DateFrom: "2026-08-20", DateTo: "2026-08-20", Fields: []string{"local_po_number", "purchase_order_number", "asin", "msku", "sku", "item_name", "ordered_quantity", "received_quantity", "unit_price", "image_url"}, PageSize: 1})
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	for _, want := range []string{"FROM ls_vc_po_details d", "JSON_TABLE", "d.items", "d.vc_store_id IN (?)", "DATE(d.synced_at) BETWEEN ? AND ?", "CONCAT_WS('|', d.account_id, d.vc_store_id, d.local_po_number", "item.asin"} {
+		if !strings.Contains(queryer.query, want) {
+			t.Fatalf("VC PO lines query missing %q: %s", want, queryer.query)
+		}
+	}
+	if strings.Contains(queryer.query, "ls_vc_orders") {
+		t.Fatalf("VC PO lines must read only the confirmed detail JSON source: %s", queryer.query)
+	}
+	if len(page.Rows) != 1 || page.Rows[0].StableKey != "sc-us-1|store-a|LPO-1|ASIN-1|MSKU-1" || page.Rows[0].Values["ordered_quantity"] != int64(10) {
+		t.Fatalf("VC PO line row mismatch: %+v", page)
 	}
 }
 

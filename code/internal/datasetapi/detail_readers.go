@@ -266,6 +266,61 @@ LEFT JOIN ls_vc_orders o
 	},
 }
 
+var vcPOLinesDefinition = detailReaderDefinition{
+	fromClause: `ls_vc_po_details d
+JOIN JSON_TABLE(
+  COALESCE(d.items, JSON_ARRAY()), '$[*]' COLUMNS (
+    asin VARCHAR(64) PATH '$.asin',
+    msku VARCHAR(255) PATH '$.msku',
+    local_sku VARCHAR(255) PATH '$.local_sku',
+    sku VARCHAR(255) PATH '$.sku',
+    item_name VARCHAR(512) PATH '$.item_name',
+    local_name VARCHAR(512) PATH '$.local_name',
+    title VARCHAR(512) PATH '$.title',
+    purchase_amount VARCHAR(64) PATH '$.purchase_amount',
+    qty_requested VARCHAR(64) PATH '$.qty_requested',
+    requested_qty VARCHAR(64) PATH '$.requested_qty',
+    request_qty VARCHAR(64) PATH '$.request_qty',
+    asn_quantity VARCHAR(64) PATH '$.asn_quantity',
+    asn_qty VARCHAR(64) PATH '$.asn_qty',
+    ordered_qty VARCHAR(64) PATH '$.ordered_qty',
+    ordered_quantity VARCHAR(64) PATH '$.ordered_quantity',
+    quantity VARCHAR(64) PATH '$.quantity',
+    qty_received VARCHAR(64) PATH '$.qty_received',
+    received_qty VARCHAR(64) PATH '$.received_qty',
+    received_quantity VARCHAR(64) PATH '$.received_quantity',
+    unit_price VARCHAR(64) PATH '$.unit_price',
+    deal_unit_price VARCHAR(64) PATH '$.deal_unit_price',
+    image_url VARCHAR(1024) PATH '$.image_url',
+    main_image_url VARCHAR(1024) PATH '$.main_image_url',
+    large_main_image_url VARCHAR(1024) PATH '$.large_main_image_url',
+    medium_main_image_url VARCHAR(1024) PATH '$.medium_main_image_url',
+    small_main_image_url VARCHAR(1024) PATH '$.small_main_image_url'
+  )
+) AS item ON NULLIF(item.asin, '') IS NOT NULL
+           AND COALESCE(NULLIF(item.msku, ''), NULLIF(item.local_sku, '')) IS NOT NULL
+`,
+	storeColumn:     "d.vc_store_id",
+	baseColumns:     []string{"d.account_id", "d.vc_store_id", "item.asin", "COALESCE(NULLIF(item.sku, ''), NULLIF(item.local_sku, ''))", "DATE(d.synced_at)", "d.synced_at", "CONCAT_WS('|', d.account_id, d.vc_store_id, d.local_po_number, item.asin, COALESCE(NULLIF(item.msku, ''), NULLIF(item.local_sku, '')))"},
+	dateColumn:      "DATE(d.synced_at)",
+	stableKeyColumn: "CONCAT_WS('|', d.account_id, d.vc_store_id, d.local_po_number, item.asin, COALESCE(NULLIF(item.msku, ''), NULLIF(item.local_sku, '')))",
+	updatedAtColumn: "d.synced_at",
+	stableKeyParts:  5,
+	fields: map[string]string{
+		"vc_store_id":           "d.vc_store_id",
+		"local_po_number":       "d.local_po_number",
+		"purchase_order_number": "d.purchase_order_number",
+		"asin":                  "item.asin",
+		"msku":                  "COALESCE(NULLIF(item.msku, ''), NULLIF(item.local_sku, ''))",
+		"sku":                   "COALESCE(NULLIF(item.sku, ''), NULLIF(item.local_sku, ''))",
+		"item_name":             "COALESCE(NULLIF(item.item_name, ''), NULLIF(item.local_name, ''), NULLIF(item.title, ''))",
+		"ordered_quantity":      "CAST(COALESCE(item.purchase_amount, item.qty_requested, item.requested_qty, item.request_qty, item.asn_quantity, item.asn_qty, item.ordered_qty, item.ordered_quantity, item.quantity) AS SIGNED)",
+		"received_quantity":     "CAST(COALESCE(item.qty_received, item.received_qty, item.received_quantity) AS SIGNED)",
+		"unit_price":            "COALESCE(NULLIF(item.unit_price, ''), NULLIF(item.deal_unit_price, ''))",
+		"image_url":             "COALESCE(NULLIF(item.image_url, ''), NULLIF(item.main_image_url, ''), NULLIF(item.large_main_image_url, ''), NULLIF(item.medium_main_image_url, ''), NULLIF(item.small_main_image_url, ''))",
+	},
+}
+
 var fbaLinksDefinition = detailReaderDefinition{
 	fromClause: `ls_sc_listing l
 JOIN ls_stores s
@@ -513,6 +568,10 @@ func NewFBAInventorySnapshotReader(db *sqlx.DB) *DetailSQLReader {
 
 func NewVCPODetailReader(db *sqlx.DB) *DetailSQLReader {
 	return newDetailSQLReader(db, vcPODetailDefinition)
+}
+
+func NewVCPOLinesReader(db *sqlx.DB) *DetailSQLReader {
+	return newDetailSQLReader(db, vcPOLinesDefinition)
 }
 
 func NewFBALinksReader(db *sqlx.DB) *DetailSQLReader {

@@ -27,7 +27,7 @@ LingxingSync 负责所有来自 Lingxing 的同步事实：店铺、产品、Lis
 | VC Links、移动端、VC 销售趋势 | `ls_vc_listing`、`ls_vc_sales_report`、`ls_vc_realtime_sales`、`ls_vc_traffic`、`ls_vc_inventory`、`ls_vc_margin`、`ls_ad_sp_product`、`ls_ad_sd_product` | `vc-links-v1` 按 VC Listing 的 ASIN 汇总 SP/SD 广告订单、花费、销售额和 7 日花费序列；HSA 暂不纳入；VC 交通仅发布领星实际返回的 `glanceViews` | 否，复用现有表 |
 | Products 管理与产品概览 | `ls_sc_products`、SC/VC Listing、店铺表 | 产品主档与本地配置/供应商/附件的责任边界；缺字段必须逐字段核验 | 否；本地配置仍由 polabel2 保存 |
 | Operations Log | 上述销售、库存、表现、广告、VC 流量/实时事实 | `operations-log-v1` 已发布日维领星事实；跟踪目标、备注、Spotter/手工历史仍是 polabel2 本地业务，LingxingSync 不伪造 | 否 |
-| Procurement Orders（VC PO） | `ls_vc_orders`、`ls_vc_po_details`、`vc-po-detail-v1` | 已有真实 PO 响应；固定 Reader 提供头字段并原样保留 `items` JSON，消费侧自行拆行 | 否，复用现有 raw 表 |
+| Procurement Orders（VC PO） | `ls_vc_orders`、`ls_vc_po_details`、`vc-po-detail-v1`、`vc-po-lines-v1` | PO 头按单发布，商品行从已确认的 `items[]` 字段直接展开；原始 JSON 同时保留 | 否，复用现有 raw 表 |
 | Procurement DF、Invoice | 当前无 LingxingSync 原始表 | 必须取得真实列表/详情响应，确认字段、分页、唯一键和历史覆盖 | 未验证前不建表 |
 | Sync Center、Integrations | 店铺表、endpoint 配置和同步运行记录 | 固定健康/coverage Reader；不是页面复制一张业务宽表 | 通常否 |
 | System Log、Users、Labels、箱规、物流计算 | 主要是 polabel2 本地表和人工输入 | 不属于 Lingxing 同步事实 | 否，不迁移为 Lingxing 原始表 |
@@ -42,10 +42,10 @@ LingxingSync 负责所有来自 Lingxing 的同步事实：店铺、产品、Lis
 2. 日销售与退货；
 3. 广告与表现；
 4. 库存与 VC 流量/实时/毛利；
-5. VC PO（已补 `vc-po-detail-v1` 固定 Reader）；
+5. VC PO（已补 `vc-po-detail-v1` 头数据集和 `vc-po-lines-v1` 商品行固定 Reader）；
 6. 同步运行与覆盖诊断。
 
-现有 raw 表优先复用，不按页面复制宽表。PO 已从真实响应确认，使用 `ls_vc_po_details.items` 原样 JSON 发布；DF/Invoice 在 probe 前不创建任何表。
+现有 raw 表优先复用，不按页面复制宽表。PO 已从真实响应确认，头数据集保留 `ls_vc_po_details.items` 原始 JSON，同时提供商品行固定数据集；DF/Invoice 在 probe 前不创建任何表。
 
 VC 库存和 VC 流量暂不发布：原始日期字段仍需统一可排序语义，库存真实样本也未完成核验。广告、销售日维的组合字段继续优先复用既有 `listing-daily-v1` 和 raw 表，不另建页面宽表。
 
@@ -64,5 +64,5 @@ DF、Invoice 只能用 LingxingSync 自己的真实 probe 冻结字段、空值�
 ## 2026-08-21 用户确认的最小边界
 
 - VC 广告按 VC Listing 的 ASIN 汇总现有 SP/SD 原始事实，不要求先把 profile 区分成店铺；HSA 暂不纳入店铺维度分摊。广告结果只挂到相同账号+ASIN 的 VC Listing，不把 `sid` 当作 VC 店铺键。
-- PO 商品行继续保留在 `vc-po-detail-v1.items` 原始 JSON 中；不新增猜测行键、不使用 `JSON_TABLE` 拆行。下游如需行级展示，使用已发布 PO 对象中的 `items`。
+- PO 商品行由 `vc-po-lines-v1` 直接提供一行一商品；行键使用已确认的账号+VC 店铺+local PO+ASIN+MSKU（MSKU 仅按上游已确认的 `local_sku` 回退），不新增物理 raw 表；`vc-po-detail-v1.items` 仍原样保留供追溯。
 - 运营日志的跟踪目标、备注和人工历史继续由 polabel2 保留；`operations-log-v1` 只提供 LingxingSync 已同步的日维事实。
