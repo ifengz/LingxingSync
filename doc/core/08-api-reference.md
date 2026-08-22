@@ -229,6 +229,18 @@ type PageParams struct {
 - 所有重试都必须重新经过同一个 `(quota_group, path)` 限流器；重试不能绕过限流器。
 - 达到对应最大次数后必须以 error 结束，不能把空数据或部分数据标记为 success。
 
+### 5.2 正式报告 seller 小时配额
+
+领星官方帮助中心《报告导出》明确：**每个 `seller_id` 每小时所有报告合计 6 次配额**，超出的任务排队到下一小时；这是 seller 维度总额度，不是每个 `report_type` 各 6 次。
+
+- 官方说明：[领星 ERP 报告导出](https://www.lingxing.com/help/article/Reportexport)
+- 该 6 次/小时规则适用于报告任务创建预算；任务进入排队不等于已经生成成功。
+- OpenAPI 各报告端点文档另标“令牌桶容量 1”，表示单端点并发/突发容量，不能把它解读成每小时 1 次：
+  - 创建：[`/basicOpen/report/create/reportExportTask`](https://apidoc.lingxing.com/docs/Statistics/reportCreateReportExportTask.md)
+  - 查询：[`/basicOpen/report/query/reportExportTask`](https://apidoc.lingxing.com/docs/Statistics/reportQueryReportExportTask.md)
+  - 下载链接续期：[`/basicOpen/report/amazonReportExportTask`](https://apidoc.lingxing.com/docs/Statistics/AmazonReportExportTask.md)
+- GitHub SDK 的 `0.6s/次、100 次/分钟`是业务 API 请求节奏，不替代 seller 报告的 6 次/小时创建配额。
+
 **限流的正确模型**（见 [09-endpoint-contract.md §格4](09-endpoint-contract.md)）：
 
 - 领星按 `(账号, path)` 共享配额；同账号下所有 appId 共用一个桶
@@ -295,6 +307,43 @@ type PageParams struct {
 ### 6.7 正式 Amazon 报告导出
 
 正式导出按官方 OpenAPI 合同执行三步：创建导出任务 → 查询异步状态 → 获取或续期下载链接。它按 `seller_id + report_type` 工作，不表示一份报告覆盖全部 `ls_*` 接口。
+
+官方三步路径：
+
+| 阶段 | 方法 | OpenAPI path | 必要主键 |
+|---|---|---|---|
+| 创建任务 | POST | `/basicOpen/report/create/reportExportTask` | `seller_id + report_type + region` |
+| 查询状态 | POST | `/basicOpen/report/query/reportExportTask` | `seller_id + task_id + region` |
+| 下载链接续期 | POST | `/basicOpen/report/amazonReportExportTask` | `seller_id + report_document_id + region` |
+
+本项目正式报告 E2E 固定顺序：
+
+1. 在 Ego Lite `sync` space 的同一生产 scope 先核对 `seller_id`、店铺、region、active task、最近一小时 seller 创建数和 6 次配额窗口。
+
+生产库的 `ls_report_export_tasks.created_at` 按 UTC 保存，phpMyAdmin 门禁使用同一 seller 的只读 SQL（把占位值替换为目标 seller）：
+
+```sql
+SELECT COUNT(*) AS created_last_hour
+FROM ls_report_export_tasks
+WHERE seller_id = '<seller_id>'
+  AND created_at >= UTC_TIMESTAMP() - INTERVAL 1 HOUR;
+
+SELECT COUNT(*) AS active_tasks
+FROM ls_report_export_tasks
+WHERE account_id = '<account_id>'
+  AND seller_id = '<seller_id>'
+  AND store_id = '<store_id>'
+  AND report_type = '<report_type>'
+  AND status IN ('PENDING', 'CREATING', 'IN_QUEUE', 'IN_PROGRESS', 'UNKNOWN', 'DONE');
+```
+
+`created_last_hour >= 6` 或 `active_tasks > 0` 时不创建；两者都通过也只创建一笔。
+
+2. 只创建一笔任务；记录 `report_task_id` 和 request id。遇到 active、配额不足、429、FATAL、CANCELLED 或 scope 不可用，立即停止，不创建替代任务。
+3. 持续查询同一 `task_id`，直到 `DONE`；`DONE` 后取得 `report_document_id`，必要时调用续期接口取得下载 URL。
+4. 下载真实文件，严格校验表头、列数、压缩格式和非零行；解析失败不能写 raw。
+5. 在同一任务事务内写入该报告专属 `ls_*` 原始表，计算 SHA256，并用授权 phpMyAdmin 只读 SQL 回读 `rows_imported`、raw 行数、行号/行 hash 唯一性。
+6. 只有下载、解析、SHA、raw 回读和该报告适用的对账全部通过，才把该类型登记为 `PASS`；raw-only 报告不伪造日维对账。
 
 - 每个已验证的正式报告合同使用自己的 `ls_*` 原始证据表，与 API 原始表分开。
 - 下载、解析、对账全部成功后，报告值才可优先进入 `listing_daily_metrics`；不得 UPDATE API 原始行。
