@@ -128,3 +128,9 @@ Amazon 源报表还有生成频率边界：日报通常不超过每 4 小时生�
 最终准绳仍是领星官方文档：[订单](https://apidoc.lingxing.com/docs/Sale/Orderlists.md)、[Listing](https://apidoc.lingxing.com/docs/Sale/Listing.md)、[退货](https://apidoc.lingxing.com/docs/SourceData/RefundOrders.md)、[销量日报](https://apidoc.lingxing.com/docs/Statistics/AsinDailyLists.md)、[产品表现](https://apidoc.lingxing.com/docs/Statistics/AsinListNew.md)、[SP 活动报表](https://apidoc.lingxing.com/docs/newAd/report/spCampaignReports)、[SP 商品报表](https://apidoc.lingxing.com/docs/newAd/report/spProductAdReports)、[SB/HSA 活动报表](https://apidoc.lingxing.com/docs/newAd/report/hsaCampaignReports)、[SD 活动报表](https://apidoc.lingxing.com/docs/newAd/report/sdCampaignReports)、[VC 销量](https://apidoc.lingxing.com/docs/Statistics/vcSalesList)、[VC 库存](https://apidoc.lingxing.com/docs/Statistics/vcInventoryList)、[报告创建](https://apidoc.lingxing.com/docs/Statistics/reportCreateReportExportTask.md)、[报告查询](https://apidoc.lingxing.com/docs/Statistics/reportQueryReportExportTask.md)、[链接续期](https://apidoc.lingxing.com/docs/Statistics/AmazonReportExportTask.md)。
 
 领星帮助中心还区分了网页下载能力：[跨站点广告下载](https://www.lingxing.com/help/article/downloadCenter) 是创建任务后由网页生成 Excel；[下载中心自动生成报告](https://www.lingxing.com/help/article/DownloadCenter1) 当前明确写的是利润报表。两者都不能当作通用第三方 API 合同，Sync 只接入上面的正式 OpenAPI 报告导出链路。
+
+## 8. 报告导出 seller 小时配额（2026-08-22）
+
+- 领星官方帮助中心《报告导出》明确：**每个 seller id 每小时所有报告合计 6 次配额**，超出的任务排队到下一小时；这是 seller 维度总额，不是每个 `report_type` 各 6 次。见 <https://www.lingxing.com/help/article/Reportexport>。
+- GitHub 交叉检索了 `SongKehao/lingxing-sdk`、`zach22-1999/lingxing-mcp`、`linkfox-ai/linkfox-skills`、`AresJef/LingXingApi`：它们实现/镜像报告创建、查询、续期路径及 OpenAPI 端点令牌桶容量 1，但没有发现独立的“6 次/小时”代码实现；因此 6 次/小时以领星官方帮助为准，GitHub 仓只作为路径与参数旁证。
+- `SongKehao/lingxing-sdk` 的约 0.6 秒/次、100 次/分钟属于业务 API 请求节奏，不是报告创建任务配额；不能用它替换 seller 6 次/小时规则。

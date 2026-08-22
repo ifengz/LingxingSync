@@ -21,8 +21,8 @@
 | AFN Inventory | `GET_AFN_INVENTORY_DATA` | PASS | audit 32，64 raw | inventory_sellable 已纠正并验证 |
 | AFN Inventory by Country | `GET_AFN_INVENTORY_DATA_BY_COUNTRY` | BLOCKED_SCOPE | 无生产 audit | 当前自营范围没有可用 EU SC 店铺，不能用 NA 替代 |
 | Storage Fee Charges | `GET_FBA_STORAGE_FEE_CHARGES_DATA` | PASS | audit 60，252 raw | raw-only |
-| Overage Fee Charges | `GET_FBA_OVERAGE_FEE_CHARGES_DATA` | BLOCKED_UPSTREAM | audits 78、80、88 均 CANCELLED | 当前自营 scope 的最新 audit 88 仍无 document、下载、SHA 或 raw；停止盲目重建 |
-| Long-term Storage Fee Charges | `GET_FBA_FULFILLMENT_LONGTERM_STORAGE_FEE_CHARGES_DATA` | BLOCKED_UPSTREAM | audit 75 现有 task | 创建成功，但同一 task 查询持续返回业务 429；无 document、下载、SHA 或 raw。2026-08-18 最新续查在 SQL 门禁结果不可读时停止，未重试 |
+| Overage Fee Charges | `GET_FBA_OVERAGE_FEE_CHARGES_DATA` | BLOCKED_UPSTREAM | audits 78、80、88、90 均 CANCELLED | 当前自营 scope 的最新 audit 90 仍无 document、下载、SHA 或 raw；停止盲目重建 |
+| Long-term Storage Fee Charges | `GET_FBA_FULFILLMENT_LONGTERM_STORAGE_FEE_CHARGES_DATA` | BLOCKED_UPSTREAM | audit 89，`progress_status=CANCELLED` | 2026-08-22 23:00 按正式月度窗口（31 天）创建；23:03 上游取消，无 document、下载、SHA 或 raw；临时配置已关闭，停止重试 |
 | Customer Shipment Replacements | `GET_FBA_FULFILLMENT_CUSTOMER_SHIPMENT_REPLACEMENT_DATA` | PASS | audit 66，1 raw | raw-only |
 | Reimbursements | `GET_FBA_REIMBURSEMENTS_DATA` | PASS | audit 62，62 raw | raw-only |
 | Stranded Inventory | `GET_STRANDED_INVENTORY_UI_DATA` | PASS | audit 76，1 raw | raw-only |
@@ -40,7 +40,7 @@
 - 当前 Runner 已接入：21 类。
 - 当前已闭合下载报告核验：18/21。Inventory Planning 使用当前 audit 87 严格 raw 核验闭合；旧 audit 82 从当前统计剔除；Customer Shipment Sales 的历史 PASS/最新 FATAL 双事实继续保留。
 - 待复验或未闭环：3 类，分别是 AFN Inventory by Country、Overage Fee Charges、Long-term Storage Fee Charges。
-- 若按“最新任务为 SUCCESS”计数，Customer Shipment Sales 的后续 FATAL 需要单独保留，因此是 17/21；这不抹掉 audit 16 的历史 PASS。
+- 若按“最新任务为 SUCCESS”计数，Customer Shipment Sales 的后续 FATAL 需要单独保留，因此是 17/21；这不抹掉 audit 16 的历史 PASS。Long-term audit 89 仍未闭合，不增加计数。
 
 ## 当前 Runner 之外的正式候选
 
