@@ -3,6 +3,7 @@ package datasetapi
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -550,6 +551,21 @@ JOIN listing_dimensions d ON d.id = m.listing_dimension_id`,
 	},
 }
 
+var operationsLogV2Definition = newOperationsLogV2Definition()
+
+func newOperationsLogV2Definition() detailReaderDefinition {
+	definition := operationsLogDefinition
+	definition.baseColumns = []string{"''", "d.store_id", "d.asin", "d.sku", "m.business_date", "m.updated_at", "CONCAT_WS('|', d.store_id, d.channel, COALESCE(NULLIF(d.asin, ''), '-'), COALESCE(NULLIF(d.sku, ''), '-'), DATE_FORMAT(m.business_date, '%Y-%m-%d'))"}
+	definition.stableKeyColumn = "CONCAT_WS('|', d.store_id, d.channel, COALESCE(NULLIF(d.asin, ''), '-'), COALESCE(NULLIF(d.sku, ''), '-'), DATE_FORMAT(m.business_date, '%Y-%m-%d'))"
+	definition.fields = make(map[string]string, len(operationsLogDefinition.fields)+2)
+	for field, column := range operationsLogDefinition.fields {
+		definition.fields[field] = column
+	}
+	definition.fields["identity_scope"] = "d.identity_scope"
+	definition.fields["verified_fields"] = "m.verified_fields"
+	return definition
+}
+
 func NewReturnReasonDetailReader(db *sqlx.DB) *DetailSQLReader {
 	return newDetailSQLReader(db, returnReasonDetailDefinition)
 }
@@ -584,6 +600,10 @@ func NewVCLinksReader(db *sqlx.DB) *DetailSQLReader {
 
 func NewOperationsLogReader(db *sqlx.DB) *DetailSQLReader {
 	return newDetailSQLReader(db, operationsLogDefinition)
+}
+
+func NewOperationsLogV2Reader(db *sqlx.DB) *DetailSQLReader {
+	return newDetailSQLReader(db, operationsLogV2Definition)
 }
 
 func newDetailSQLReader(db *sqlx.DB, definition detailReaderDefinition) *DetailSQLReader {
@@ -735,7 +755,29 @@ func scanDetailRow(rows SQLRows, fields []string) (Row, error) {
 		Values: make(map[string]any, len(fields)),
 	}
 	for i, field := range fields {
-		row.Values[field] = normalizeSQLValue(values[i])
+		value, err := normalizeDetailSQLValue(field, values[i])
+		if err != nil {
+			return Row{}, err
+		}
+		row.Values[field] = value
 	}
 	return row, nil
+}
+
+func normalizeDetailSQLValue(field string, value any) (any, error) {
+	if field != "verified_fields" {
+		return normalizeSQLValue(value), nil
+	}
+	text, ok := normalizeSQLValue(value).(string)
+	if !ok {
+		return nil, fmt.Errorf("verified_fields must be a JSON object")
+	}
+	verified := make(map[string]bool)
+	if err := json.Unmarshal([]byte(text), &verified); err != nil {
+		return nil, fmt.Errorf("verified_fields contains invalid JSON: %w", err)
+	}
+	if verified == nil {
+		return nil, fmt.Errorf("verified_fields must be a JSON object")
+	}
+	return verified, nil
 }

@@ -234,6 +234,56 @@ func TestPageReadersUseSeparateFixedSources(t *testing.T) {
 	}
 }
 
+func TestOperationsLogV2ReaderReturnsStoreScopeWithStructuredVerification(t *testing.T) {
+	for _, v2OnlyField := range []string{"identity_scope", "verified_fields"} {
+		if operationsLogDefinition.fields[v2OnlyField] != "" {
+			t.Fatalf("locked operations log v1 reader unexpectedly contains %q", v2OnlyField)
+		}
+	}
+	updated := time.Date(2026, 8, 15, 3, 4, 5, 0, time.UTC)
+	queryer := &fixedQueryer{rows: &fixedRows{values: []any{
+		"", "store-a", nil, nil, "2026-08-14", updated, "store-a|hsa|-|-|2026-08-14",
+		"hsa", "store", nil, nil, []byte(`{"hsa_spend":true}`),
+	}}}
+	reader := &DetailSQLReader{queryer: queryer, definition: operationsLogV2Definition}
+	page, err := reader.Snapshot(context.Background(), Query{
+		Store: "store-a", DateFrom: "2026-08-14", DateTo: "2026-08-14",
+		Fields: []string{"channel_type", "identity_scope", "asin", "listing_sku", "verified_fields"}, PageSize: 1,
+	})
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	for _, want := range []string{"d.identity_scope AS `identity_scope`", "m.verified_fields AS `verified_fields`", "COALESCE(NULLIF(d.asin, ''), '-')", "COALESCE(NULLIF(d.sku, ''), '-')"} {
+		if !strings.Contains(queryer.query, want) {
+			t.Fatalf("operations log v2 query missing %q: %s", want, queryer.query)
+		}
+	}
+	if len(page.Rows) != 1 || page.Rows[0].StableKey != "store-a|hsa|-|-|2026-08-14" || page.Rows[0].Values["channel_type"] != "hsa" || page.Rows[0].Values["identity_scope"] != "store" {
+		t.Fatalf("operations log v2 store-scoped row mismatch: %+v", page)
+	}
+	if page.Rows[0].Values["asin"] != nil || page.Rows[0].Values["listing_sku"] != nil {
+		t.Fatalf("store-scoped HSA identity must keep ASIN/SKU null: %+v", page.Rows[0].Values)
+	}
+	verified, ok := page.Rows[0].Values["verified_fields"].(map[string]bool)
+	if !ok || !verified["hsa_spend"] {
+		t.Fatalf("verified_fields=%#v, want structured object", page.Rows[0].Values["verified_fields"])
+	}
+}
+
+func TestOperationsLogV2ReaderRejectsMalformedVerificationJSON(t *testing.T) {
+	updated := time.Date(2026, 8, 15, 3, 4, 5, 0, time.UTC)
+	queryer := &fixedQueryer{rows: &fixedRows{values: []any{
+		"", "store-a", nil, nil, "2026-08-14", updated, "store-a|hsa|-|-|2026-08-14", []byte(`not-json`),
+	}}}
+	reader := &DetailSQLReader{queryer: queryer, definition: operationsLogV2Definition}
+	_, err := reader.Snapshot(context.Background(), Query{
+		Store: "store-a", DateFrom: "2026-08-14", DateTo: "2026-08-14", Fields: []string{"verified_fields"}, PageSize: 1,
+	})
+	if err == nil || !strings.Contains(err.Error(), "verified_fields") {
+		t.Fatalf("malformed verified_fields error=%v", err)
+	}
+}
+
 func TestFBAInventorySnapshotReaderUsesHistoricalSnapshotDate(t *testing.T) {
 	updated := time.Date(2026, 8, 15, 3, 4, 5, 0, time.UTC)
 	queryer := &fixedQueryer{rows: &fixedRows{values: []any{

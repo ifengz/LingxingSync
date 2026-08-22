@@ -4,8 +4,8 @@ import "testing"
 
 func TestCatalogExposesOnlyRegisteredDataProducts(t *testing.T) {
 	definitions := Definitions()
-	if len(definitions) != 13 {
-		t.Fatalf("definitions=%d, want 13", len(definitions))
+	if len(definitions) != 14 {
+		t.Fatalf("definitions=%d, want 14", len(definitions))
 	}
 
 	po, ok := DefinitionFor("vc-po-detail-v1")
@@ -68,6 +68,30 @@ func TestPageDatasetDefinitionsExposeSeparateContracts(t *testing.T) {
 		definition, ok := DefinitionFor(tc.id)
 		if !ok || definition.Grain != tc.grain || definition.Source != tc.source || !containsField(definition.Fields, tc.field) {
 			t.Fatalf("page definition %s=%+v found=%t", tc.id, definition, ok)
+		}
+	}
+}
+
+func TestOperationsLogV2PublishesVerificationAndIdentityContract(t *testing.T) {
+	v1, ok := DefinitionFor("operations-log-v1")
+	if !ok || v1.NextVersionID != "operations-log-v2" {
+		t.Fatalf("operations log v1 version metadata=%+v found=%t", v1, ok)
+	}
+	for _, v2OnlyField := range []string{"identity_scope", "verified_fields"} {
+		if containsField(v1.Fields, v2OnlyField) {
+			t.Fatalf("locked operations log v1 unexpectedly contains %q", v2OnlyField)
+		}
+	}
+	v2, ok := DefinitionFor("operations-log-v2")
+	if !ok {
+		t.Fatal("operations log v2 definition is missing")
+	}
+	if v2.ParentID != "operations-log-v1" || v2.Grain != "store + channel + identity_scope + optional ASIN + optional listing_sku + business_date" {
+		t.Fatalf("operations log v2 contract=%+v", v2)
+	}
+	for _, field := range []string{"identity_scope", "verified_fields"} {
+		if !containsField(v2.Fields, field) {
+			t.Fatalf("operations log v2 field %q is missing", field)
 		}
 	}
 }

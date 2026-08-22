@@ -221,6 +221,35 @@ func TestDatasetRoutesInjectSQLReaderWhenDBProvided(t *testing.T) {
 	}
 }
 
+func TestOperationsLogV2RouteInjectsDedicatedSQLReader(t *testing.T) {
+	rawToken := "operations-v2-token"
+	cfg := &config.Config{
+		Server: config.Server{Secret: "admin-secret"},
+		DatasetAPI: config.DatasetAPIConfig{
+			CursorSecret: "cursor-secret-for-server-test",
+			FieldAllowlists: map[string][]string{
+				"operations-log-v2": {"identity_scope", "verified_fields"},
+			},
+			Tokens: []config.DatasetToken{{
+				ID: "project-a", TokenHash: datasetapi.HashToken(rawToken), DatasetScopes: []string{"operations-log-v2"}, StoreScopes: []string{"store-a"},
+			}},
+		},
+	}
+	dbx, err := sqlx.Open("mysql", "invalid:invalid@tcp(127.0.0.1:1)/invalid?timeout=1ms")
+	if err != nil {
+		t.Fatalf("open test db: %v", err)
+	}
+	defer dbx.Close()
+	s := New(cfg, dbx, nil, nil, "", Assets{FS: renderTestFS, TemplateFS: "testdata", StaticFS: "testdata"}, nil, nil, nil, "")
+	req := httptest.NewRequest(http.MethodPost, datasetapi.SnapshotPathFor("operations-log-v2"), strings.NewReader(`{"store":"store-a","date_from":"2026-08-01","date_to":"2026-08-01"}`))
+	req.Header.Set("Authorization", "Bearer "+rawToken)
+	rec := httptest.NewRecorder()
+	s.withMiddleware(s.Routes()).ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("operations log v2 route must reach its SQL reader: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestRegisteredDetailDatasetRouteUsesBearerAuthentication(t *testing.T) {
 	rawToken := "return-reader-token"
 	cfg := &config.Config{

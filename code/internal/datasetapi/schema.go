@@ -87,6 +87,10 @@ var schemas = map[string]Schema{
 		DatasetID: "operations-log-v1", TableName: "operations_log_v1", DataNote: "运营日志可由领星事实提供的日维指标；跟踪目标、备注和人工历史仍属于 polabel2 本地业务。",
 		PrimaryKey: []string{"store", "stable_key"},
 	},
+	"operations-log-v2": {
+		DatasetID: "operations-log-v2", TableName: "operations_log_v2", DataNote: "运营日志事实 v2；identity_scope 标识店铺级或已明确分摊的商品级事实，verified_fields 是报告实际核验字段的 JSON 对象。",
+		PrimaryKey: []string{"store", "stable_key"},
+	},
 }
 
 func schemaColumns(columns []Column) []Column { return append([]Column(nil), columns...) }
@@ -143,8 +147,10 @@ func schemaType(name string) string {
 		return "VARCHAR(64)"
 	case name == "payments_date", name == "shipment_date", name == "reporting_date", name == "estimated_arrival_date", name == "hide_time":
 		return "VARCHAR(40)"
-	case name == "items", name == "ad_spend_sparkline_7d":
+	case name == "items", name == "ad_spend_sparkline_7d", name == "verified_fields":
 		return "JSON"
+	case name == "identity_scope":
+		return "VARCHAR(16)"
 	case name == "ordered_quantity", name == "received_quantity":
 		return "BIGINT"
 	case name == "item_amount":

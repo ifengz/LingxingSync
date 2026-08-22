@@ -95,6 +95,25 @@ func TestVCLinksSchemaKeepsAdSparklineAsJSON(t *testing.T) {
 	}
 }
 
+func TestOperationsLogV2SchemaKeepsVerificationAsJSON(t *testing.T) {
+	schema, ok := SchemaFor("operations-log-v2")
+	if !ok {
+		t.Fatal("operations log v2 schema missing")
+	}
+	wantTypes := map[string]string{"identity_scope": "VARCHAR(16)", "verified_fields": "JSON"}
+	for _, column := range schema.Columns {
+		if want, exists := wantTypes[column.Name]; exists {
+			if column.SQLType != want {
+				t.Fatalf("operations log v2 field %s type=%q want %q", column.Name, column.SQLType, want)
+			}
+			delete(wantTypes, column.Name)
+		}
+	}
+	if len(wantTypes) != 0 {
+		t.Fatalf("operations log v2 schema missing columns: %v", wantTypes)
+	}
+}
+
 func TestDatasetSchemaCreateTableCanRestrictPublishedFields(t *testing.T) {
 	schema, ok := SchemaFor(DatasetID)
 	if !ok {

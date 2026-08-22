@@ -116,7 +116,14 @@ var definitions = map[string]Definition{
 		ID: "operations-log-v1", Name: "运营日志事实数据表", Kind: DatasetKindDetail,
 		Source: "listing_daily_metrics", Grain: "store + channel + ASIN + listing_sku + business_date",
 		InitialCursor: "0|0|0|0|1000-01-01", FixedFields: []string{"store", "record_date", "stable_key", "updated_at"},
-		Fields: []string{"channel_type", "asin", "listing_sku", "sales_units", "sales_amount", "returns_qty", "inventory_sellable", "inventory_inbound", "inventory_reserved", "inventory_unfulfillable", "sessions_total", "sessions_desktop", "sessions_mobile", "rating", "review_count", "sp_spend", "sp_sales", "sp_orders", "sd_spend", "sd_sales", "sd_orders", "hsa_spend", "hsa_sales", "hsa_orders", "sb_spend", "sb_sales", "sb_orders", "is_provisional", "is_verified"},
+		Fields:        []string{"channel_type", "asin", "listing_sku", "sales_units", "sales_amount", "returns_qty", "inventory_sellable", "inventory_inbound", "inventory_reserved", "inventory_unfulfillable", "sessions_total", "sessions_desktop", "sessions_mobile", "rating", "review_count", "sp_spend", "sp_sales", "sp_orders", "sd_spend", "sd_sales", "sd_orders", "hsa_spend", "hsa_sales", "hsa_orders", "sb_spend", "sb_sales", "sb_orders", "is_provisional", "is_verified"},
+		NextVersionID: "operations-log-v2",
+	},
+	"operations-log-v2": {
+		ID: "operations-log-v2", Name: "运营日志事实数据表 v2", Kind: DatasetKindDetail,
+		Source: "listing_daily_metrics", Grain: "store + channel + identity_scope + optional ASIN + optional listing_sku + business_date", ParentID: "operations-log-v1",
+		InitialCursor: "0|0|0|0|1000-01-01", FixedFields: []string{"store", "record_date", "stable_key", "updated_at"},
+		Fields: []string{"channel_type", "identity_scope", "asin", "listing_sku", "sales_units", "sales_amount", "returns_qty", "inventory_sellable", "inventory_inbound", "inventory_reserved", "inventory_unfulfillable", "sessions_total", "sessions_desktop", "sessions_mobile", "rating", "review_count", "sp_spend", "sp_sales", "sp_orders", "sd_spend", "sd_sales", "sd_orders", "hsa_spend", "hsa_sales", "hsa_orders", "sb_spend", "sb_sales", "sb_orders", "is_provisional", "is_verified", "verified_fields"},
 	},
 }
 
