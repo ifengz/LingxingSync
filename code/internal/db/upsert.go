@@ -185,7 +185,7 @@ func normalizeUpsertValue(v any, jsonColumn bool) any {
 
 // buildUpsertColumns 把 allowedCols 规整成最终写入列：
 //   - 第一位永远是 "account_id"
-//   - 去掉 "synced_at"（DB 自管）
+//   - 去掉同步框架自管的时间列（DB 自管）
 //   - 去掉后续重复出现的 "account_id"
 //   - 保持 allowedCols 原始顺序（INSERT 列顺序稳定，便于排错）
 func buildUpsertColumns(allowedCols []string) []string {
@@ -196,7 +196,7 @@ func buildUpsertColumns(allowedCols []string) []string {
 		if c == "" {
 			continue
 		}
-		if c == "synced_at" {
+		if c == "synced_at" || c == "last_attempt_at" || c == "last_success_at" {
 			continue
 		}
 		if seen[c] {

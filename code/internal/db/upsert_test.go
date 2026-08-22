@@ -42,6 +42,14 @@ func TestBuildUpsertStatementDoesNotInventSyncedAtColumn(t *testing.T) {
 	}
 }
 
+func TestBuildUpsertColumnsPreservesStoreRunTimes(t *testing.T) {
+	cols := buildUpsertColumns([]string{"sid", "store_name", "synced_at", "last_attempt_at", "last_success_at"})
+	want := []string{"account_id", "sid", "store_name"}
+	if !reflect.DeepEqual(cols, want) {
+		t.Fatalf("store metadata columns = %#v, want %#v", cols, want)
+	}
+}
+
 func TestOnlyCurrentStateFBAInventoryUsesSnapshotTouch(t *testing.T) {
 	columns := []string{"account_id", "sid", "synced_at"}
 	if !shouldTouchSnapshot("ls_fba_inventory", columns) {
