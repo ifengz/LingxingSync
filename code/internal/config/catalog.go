@@ -303,6 +303,8 @@ var catalogEntries = []CatalogEntry{
 		Rate:              Rate{Bucket: 1, IntervalMs: 1000, MultiIntervalMs: 0, Dimension: "account+path"},
 		DefaultCron:       "0 5 * * *",
 		WindowDays:        1,
+		SingleDayWindow:   true,
+		DateOffsetDays:    1,
 		WindowStartField:  "startDate",
 		WindowEndField:    "endDate",
 		ExtraParams:       map[string]any{"view": "sourcing"},

@@ -86,6 +86,21 @@ func TestSingleDayWindowBuildsDailyCompensationRange(t *testing.T) {
 	}
 }
 
+func TestSingleDayWindowAppliesDateOffset(t *testing.T) {
+	w := &EndpointWorker{Endpoint: config.Endpoint{
+		WindowDays: 1, SingleDayWindow: true, DateOffsetDays: 1,
+		WindowStartField: "startDate", WindowEndField: "endDate",
+	}}
+	now := time.Date(2026, time.August, 22, 5, 0, 0, 0, time.UTC)
+	sets, err := w.paramSetsForAt(triggerReq{kind: "cron"}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sets) != 1 || sets[0]["startDate"] != "2026-08-21" || sets[0]["endDate"] != "2026-08-21" {
+		t.Fatalf("sets=%#v, want yesterday as an exact one-day range", sets)
+	}
+}
+
 func TestSingleDayWindowCrossesCalendarBoundaries(t *testing.T) {
 	tests := []struct {
 		name string

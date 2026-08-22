@@ -233,7 +233,7 @@ func TestCatalogIncludesVerifiedReportTemplates(t *testing.T) {
 			key: "vc_inventory", path: "/basicOpen/vc/report/inventory/list", table: "ls_vc_inventory",
 			ids: []string{"sid", "date", "asin"},
 			contract: func(ep Endpoint) bool {
-				return ep.WindowDays == 1 && ep.IterateByStore && ep.StoreType == "VC" &&
+				return ep.WindowDays == 1 && ep.SingleDayWindow && ep.DateOffsetDays == 1 && ep.IterateByStore && ep.StoreType == "VC" &&
 					ep.ExtraParams["view"] == "sourcing" &&
 					reflect.DeepEqual(ep.ForceInjectParams, []string{"sid"})
 			},

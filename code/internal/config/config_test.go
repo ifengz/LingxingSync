@@ -35,6 +35,51 @@ accounts:
 	}
 }
 
+func TestLoadNormalizesVCInventoryToYesterdaySingleDay(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	raw := `database:
+  host: 127.0.0.1
+  user: test
+  db: lingsync
+accounts:
+  - id: sc_us
+    app_key: key
+    app_secret: secret
+endpoints:
+  - name: vc_inventory_sc_us
+    account: sc_us
+    path: /basicOpen/vc/report/inventory/list
+    method: POST
+    table: ls_vc_inventory
+    record_id_fields: [sid, date, asin]
+    rate:
+      bucket: 1
+      interval_ms: 1000
+      dimension: account+path
+    cron: "0 5 * * *"
+    enabled: true
+    window_days: 1
+    single_day_window: false
+    date_offset_days: 0
+    window_start_field: startDate
+    window_end_field: endDate
+    iterate_by_store: true
+    store_param_name: sid
+    store_type: VC
+`
+	if err := os.WriteFile(path, []byte(raw), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := cfg.Endpoints[0]
+	if !got.SingleDayWindow || got.DateOffsetDays != 1 || got.WindowStartField != "startDate" || got.WindowEndField != "endDate" {
+		t.Fatalf("vc inventory contract = %+v, want yesterday single-day startDate/endDate", got)
+	}
+}
+
 func TestClassifyChangeTreatsConnectionCheckAsHot(t *testing.T) {
 	oldCfg := &Config{Accounts: []Account{{
 		ID: "sc_us", Name: "US", AppKey: "key", AppSecret: "secret",

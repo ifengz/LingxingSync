@@ -87,6 +87,14 @@ func retryDecision(ctx context.Context, path string, httpStatus, apiCode int, er
 		}
 		return true, lingxingRateLimitDelays[attempt]
 	}
+	// 部分 ERP 接口会以 HTTP 200 + code=500 返回明确的临时连接故障。
+	// 只按已观测到的文案重试，权限/参数类 code=500 仍立即失败。
+	if apiCode == 500 && strings.Contains(message, "请求连接异常") {
+		if attempt >= 2 {
+			return false, 0
+		}
+		return true, time.Duration(10*(attempt+1)) * time.Second
+	}
 	// VC PO occasionally returns HTTP 200 with business code 500 while the
 	// upstream order service is unstable. Retry only this known path, bounded.
 	if apiCode == 500 && strings.Contains(path, "/platformOrder/vcOrder") {

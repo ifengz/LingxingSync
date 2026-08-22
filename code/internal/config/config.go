@@ -230,9 +230,10 @@ type Endpoint struct {
 
 	// 单日期参数（报表类接口常见，如销量统计的 event_date）：与 WindowDays 的「范围」互补。
 	// DateField 非空时，baseParams 注入 DateField = 今天往前 DateOffsetDays 天的单个 YYYY-MM-DD。
-	// 通用机制，所有单日期接口共用，不给单个接口写死代码。DateField 空则整套机制不生效。
+	// single_day_window 时同样用它把逐日窗口整体向前偏移；DateOffsetDays=1 就是昨日。
+	// 通用机制，所有单日期接口共用，不给单个接口写死代码。DateField 空则单日期注入不生效。
 	DateField      string `yaml:"date_field"`       // 单日期参数名，如 "event_date"；空=不注入
-	DateOffsetDays int    `yaml:"date_offset_days"` // 往前几天：0=今天，1=昨天（报表通常取昨天，T+1 才齐）
+	DateOffsetDays int    `yaml:"date_offset_days"` // 往前几天：0=今天，1=昨天（单日期/单日窗口均适用）
 
 	// 多店铺迭代（宪法 §10）
 	IsStoreSource  bool     `yaml:"is_store_source"`  // true=店铺来源接口，启动优先同步
@@ -339,6 +340,19 @@ func Load(path string) (*Config, error) {
 	}
 	if c.Retention.CleanupCron == "" {
 		c.Retention.CleanupCron = "0 3 * * *"
+	}
+	for i := range c.Endpoints {
+		if c.Endpoints[i].Table == "ls_vc_inventory" && c.Endpoints[i].Path == "/basicOpen/vc/report/inventory/list" {
+			c.Endpoints[i].WindowDays = 1
+			c.Endpoints[i].SingleDayWindow = true
+			c.Endpoints[i].DateOffsetDays = 1
+			if c.Endpoints[i].WindowStartField == "" {
+				c.Endpoints[i].WindowStartField = "startDate"
+			}
+			if c.Endpoints[i].WindowEndField == "" {
+				c.Endpoints[i].WindowEndField = "endDate"
+			}
+		}
 	}
 	if err := validateDatasetAPI(c.DatasetAPI); err != nil {
 		return nil, err

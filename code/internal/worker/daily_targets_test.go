@@ -65,6 +65,21 @@ func TestProjectDailyFailsLoudForMissingPublisherOrProjectionError(t *testing.T)
 	}
 }
 
+func TestDailyProjectionFailureDoesNotChangeRawSyncResult(t *testing.T) {
+	// projectDaily 只负责拼表；它的错误由同步收尾记录 warning，不能回写成原始同步失败。
+	w := &EndpointWorker{Endpoint: config.Endpoint{Table: "ls_vc_sales_report"}, Account: config.Account{ID: "account-1"}}
+	w.SetDailyProjector(func(context.Context, string, []DailyProjectionTarget, time.Time) error {
+		return errors.New("listing daily unavailable")
+	})
+	err := w.projectDaily(context.Background(), []DailyProjectionTarget{{
+		Store: "store-1", Channel: "vc", Date: time.Date(2026, 8, 11, 0, 0, 0, 0, time.UTC),
+	}})
+	if err == nil || !strings.Contains(err.Error(), "listing daily unavailable") {
+		t.Fatalf("projectDaily error = %v", err)
+	}
+	// 该测试锁定职责：拼表函数仍报告自身错误，由调用方决定不污染同步状态。
+}
+
 func TestDailyProjectionDatesUseRequestDateAndSnapshotToday(t *testing.T) {
 	ep := config.Endpoint{DateField: "report_date"}
 	dates, err := dailyProjectionDates(ep, map[string]any{"report_date": "2026-08-11"}, time.Date(2026, 8, 12, 10, 0, 0, 0, time.FixedZone("CST", 8*60*60)))

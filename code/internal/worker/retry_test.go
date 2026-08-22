@@ -59,6 +59,8 @@ func TestRetryDelayClassifiesLingxingBusinessFailures(t *testing.T) {
 		{name: "performance frequent 103 is rate limited", path: "/bd/productPerformance/openApi/asinList", code: 103, err: api.NewFetchError(200, 103, "请勿频繁请求", 0, false), attempt: 0, wantRetry: true, wantDelay: 5 * time.Second},
 		{name: "VC PO business 500 is bounded temporary", path: "/basicOpen/platformOrder/vcOrderPo/detail", code: 500, err: errors.New("upstream unstable"), attempt: 0, wantRetry: true, wantDelay: 10 * time.Second},
 		{name: "VC PO business 500 stops after two retries", path: "/basicOpen/platformOrder/vcOrderPo/detail", code: 500, err: errors.New("upstream unstable"), attempt: 2, wantRetry: false},
+		{name: "request connection business 500 is bounded temporary", path: "/erp/sc/data/order/list", code: 500, err: api.NewFetchError(200, 500, "api error code=500 msg=\"请求连接异常,请稍后再试\" path=/erp/sc/data/order/list", 0, true), attempt: 0, wantRetry: true, wantDelay: 10 * time.Second},
+		{name: "permission business 500 is permanent", path: "/basicOpen/vc/report/sales/list", code: 500, err: api.NewFetchError(200, 500, "api error code=500 msg=\"获取权限店铺失败\" path=/basicOpen/vc/report/sales/list", 0, true), attempt: 0, wantRetry: false},
 		{name: "unauthorized is permanent", code: 2001004, err: errors.New("unauthorized"), attempt: 0, wantRetry: false},
 		{name: "ip whitelist is permanent", code: 3001002, err: errors.New("ip not permit"), attempt: 0, wantRetry: false},
 	}

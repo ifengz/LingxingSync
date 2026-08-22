@@ -273,7 +273,7 @@ dataset_api:
 # 参数形态（三选一或组合，喂给领星的业务参数）：
 #   window_days: N        >0 时注入 start_date/end_date（近 N 天范围，报表/订单类常用）
 #   date_field: "xxx"     非空时注入「单个日期」参数（如销量统计的 event_date）
-#   date_offset_days: N   配合 date_field：0=今天，1=昨天（报表通常取昨天，T+1 才齐）
+#   date_offset_days: N   配合 date_field 或 single_day_window：0=今天，1=昨天
 #   extra_params: {...}   固定业务参数（如 type: 1）
 # 重试为 worker 层固定策略（网络/429/5xx 指数退避，最多 3 次），无需在此配置。
 endpoints:

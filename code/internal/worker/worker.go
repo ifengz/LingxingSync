@@ -468,10 +468,10 @@ func (w *EndpointWorker) doSync(ctx context.Context, req triggerReq) {
 		}
 		if status == "success" {
 			if projectErr := w.projectDaily(syncCtx, dailyTargets); projectErr != nil {
-				status = "error"
-				finalErr = projectErr
-				_ = db.InsertTaskLog(w.DB, taskID, totalPages+1, 0, 0, 0, 0, "daily projection: "+projectErr.Error())
-				log.Printf("[worker:%s] 日维投影失败: %v", w.Endpoint.Name, projectErr)
+				// 原始同步与日维拼表是两个独立结果：领星数据已经成功落 ls_*，
+				// 拼表失败不能把本次同步改成 error，也不能触发上游重拉。
+				_ = db.InsertTaskLog(w.DB, taskID, totalPages+1, 0, 0, 0, 0, "daily projection warning: "+projectErr.Error())
+				log.Printf("[worker:%s] 日维拼表告警（原始同步仍成功）: %v", w.Endpoint.Name, projectErr)
 			}
 		}
 		if status == "error" {
@@ -928,7 +928,7 @@ func (w *EndpointWorker) paramSetsForAt(req triggerReq, now time.Time) ([]map[st
 		}
 	} else {
 		for offset := 0; offset < w.Endpoint.WindowDays; offset++ {
-			dates = append(dates, now.AddDate(0, 0, -offset))
+			dates = append(dates, now.AddDate(0, 0, -w.Endpoint.DateOffsetDays-offset))
 		}
 	}
 	sets := make([]map[string]any, 0, len(dates))
