@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS sync_tasks (
     id           BIGINT AUTO_INCREMENT PRIMARY KEY,
     endpoint     VARCHAR(64)  NOT NULL COMMENT '接口标识，如 sales_orders',
     account_id   VARCHAR(32)  NOT NULL COMMENT '领星账号 ID',
-    status       ENUM('pending','running','success','error','cancelled')
+    status       ENUM('pending','running','success','empty','error','cancelled')
                  NOT NULL DEFAULT 'pending',
     trigger_type ENUM('cron','manual') NOT NULL DEFAULT 'cron',
     started_at   DATETIME     NULL,

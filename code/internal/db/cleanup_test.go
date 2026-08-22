@@ -80,7 +80,7 @@ func TestCleanupOldRejectsNonPositiveRetention(t *testing.T) {
 }
 
 func TestCleanupTaskQueryOnlyDeletesTerminalRows(t *testing.T) {
-	for _, want := range []string{"status IN ('success','error','cancelled')", "ORDER BY created_at, id LIMIT ?"} {
+	for _, want := range []string{"status IN ('success','empty','error','cancelled')", "ORDER BY created_at, id LIMIT ?"} {
 		if !strings.Contains(cleanupTasksSQL, want) {
 			t.Fatalf("task cleanup query missing %q: %s", want, cleanupTasksSQL)
 		}

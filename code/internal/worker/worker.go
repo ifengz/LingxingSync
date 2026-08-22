@@ -41,9 +41,9 @@ type WorkerStatus struct {
 	Name         string     `json:"name"`
 	Display      string     `json:"display"`
 	AccountID    string     `json:"account_id"`
-	Status       string     `json:"status"` // idle|running|error|disabled
+	Status       string     `json:"status"` // idle|running|error|empty|disabled
 	LastRunAt    *time.Time `json:"last_run_at,omitempty"`
-	LastStatus   string     `json:"last_status,omitempty"` // 上次同步结果：success|error|cancelled
+	LastStatus   string     `json:"last_status,omitempty"` // 上次同步结果：success|empty|error|cancelled
 	LastRecords  int        `json:"last_records"`
 	NextRunAt    *time.Time `json:"next_run_at,omitempty"`
 	TodayRecords int        `json:"today_records"`
@@ -438,6 +438,11 @@ func (w *EndpointWorker) doSync(ctx context.Context, req triggerReq) {
 	totalPages := 0
 	dailyTargets := make([]DailyProjectionTarget, 0)
 	projectionNow := time.Now()
+	if w.Endpoint.IsStoreSource {
+		if err := db.MarkStoreSyncAttempt(w.DB, w.Account.ID); err != nil {
+			log.Printf("[worker:%s] 记录店铺同步尝试时间失败: %v", w.Endpoint.Name, err)
+		}
+	}
 
 	defer func() {
 		// 收尾：写 task 最终状态 + 更新快照。
@@ -456,6 +461,12 @@ func (w *EndpointWorker) doSync(ctx context.Context, req triggerReq) {
 		}
 		var finalErr error
 		if status == "success" {
+			if totalRecords == 0 && w.Endpoint.Table == "ls_vc_inventory" {
+				status = "empty"
+				finalErr = fmt.Errorf("上游返回空结果，需核验 VC 店铺 sid、view 和日期参数")
+			}
+		}
+		if status == "success" {
 			if projectErr := w.projectDaily(syncCtx, dailyTargets); projectErr != nil {
 				status = "error"
 				finalErr = projectErr
@@ -471,7 +482,12 @@ func (w *EndpointWorker) doSync(ctx context.Context, req triggerReq) {
 		if uerr := db.UpdateTask(w.DB, taskID, status, totalRecords, totalPages, finalErr); uerr != nil {
 			log.Printf("[worker:%s] UpdateTask(%d)=%s 失败: %v", w.Endpoint.Name, taskID, status, uerr)
 		}
-		w.finishSnapshot(status, totalRecords, status == "error")
+		if status == "success" && w.Endpoint.IsStoreSource {
+			if err := db.MarkStoreSyncSuccess(w.DB, w.Account.ID); err != nil {
+				log.Printf("[worker:%s] 记录店铺同步成功时间失败: %v", w.Endpoint.Name, err)
+			}
+		}
+		w.finishSnapshot(status, totalRecords, status == "error" || status == "empty")
 	}()
 	if w.Endpoint.Table == "ls_fba_inventory" {
 		if err := w.DB.GetContext(syncCtx, &projectionNow, "SELECT CURRENT_TIMESTAMP"); err != nil {
@@ -1231,7 +1247,7 @@ func (w *EndpointWorker) Status() WorkerStatus {
 		st = "disabled"
 	case w.running.Load():
 		st = "running"
-	case w.lastStatus == "error":
+	case w.lastStatus == "error" || w.lastStatus == "empty":
 		st = "error"
 	case w.lastStatus == "success":
 		st = "idle"

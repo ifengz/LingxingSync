@@ -53,6 +53,7 @@
         <select x-model="filters.status" @change="filters.page=1; load()" class="ui-control">
           <option value="">全部</option>
           <option value="success">成功</option>
+          <option value="empty">需核验（空结果）</option>
           <option value="running">运行中</option>
           <option value="error">失败</option>
           <option value="cancelled">已取消</option>
@@ -120,7 +121,7 @@
               <td class="text-xs text-slate-500" x-text="t.trigger_type"></td>
               <td>
                 <span :class="statusClass(t.status)" class="ui-badge">
-                  <span :class="t.status==='success' ? 'bg-emerald-500' : t.status==='error' ? 'bg-red-500' : t.status==='running' ? 'bg-blue-500' : 'bg-slate-400'" class="ui-badge-dot"></span>
+                  <span :class="t.status==='success' ? 'bg-emerald-500' : t.status==='empty' ? 'bg-amber-500' : t.status==='error' ? 'bg-red-500' : t.status==='running' ? 'bg-blue-500' : 'bg-slate-400'" class="ui-badge-dot"></span>
                   <span x-text="statusText(t.status)"></span>
                 </span>
               </td>
@@ -130,7 +131,7 @@
                 <!-- T4：行内 取消/重试（仅单条）。@click.stop 防止冒泡触发 openDetail -->
                 <button x-show="t.status === 'running'" @click.stop="cancelRow(t)"
                         class="ui-btn ui-btn-danger ui-btn-sm">取消</button>
-                <button x-show="t.status === 'error'" @click.stop="retryRow(t)"
+                <button x-show="t.status === 'error' || t.status === 'empty'" @click.stop="retryRow(t)"
                         class="ui-btn ui-btn-ghost ui-btn-sm">重试</button>
               </td>
               <td class="ui-cell-right">

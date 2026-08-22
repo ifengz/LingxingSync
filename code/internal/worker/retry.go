@@ -87,6 +87,14 @@ func retryDecision(ctx context.Context, path string, httpStatus, apiCode int, er
 		}
 		return true, lingxingRateLimitDelays[attempt]
 	}
+	// VC PO occasionally returns HTTP 200 with business code 500 while the
+	// upstream order service is unstable. Retry only this known path, bounded.
+	if apiCode == 500 && strings.Contains(path, "/platformOrder/vcOrder") {
+		if attempt >= 2 {
+			return false, 0
+		}
+		return true, time.Duration(10*(attempt+1)) * time.Second
+	}
 	if apiCode == 103 {
 		if attempt >= len(lingxingTemporaryDelays) {
 			return false, 0

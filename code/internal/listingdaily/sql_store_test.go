@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-sql-driver/mysql"
 	"github.com/jmoiron/sqlx"
 )
 
@@ -39,6 +40,15 @@ func TestMetricsForPersistenceUseOneNormalizedKeyOrder(t *testing.T) {
 	}
 	if !reflect.DeepEqual(input, inputBefore) {
 		t.Fatalf("input slice was mutated: %#v", input)
+	}
+}
+
+func TestRetryableLocalTxErrorOnlyMatchesLockErrors(t *testing.T) {
+	if !retryableLocalTxError(&mysql.MySQLError{Number: 1205}) || !retryableLocalTxError(&mysql.MySQLError{Number: 1213}) {
+		t.Fatal("lock wait and deadlock errors must be retried")
+	}
+	if retryableLocalTxError(&mysql.MySQLError{Number: 1062}) {
+		t.Fatal("duplicate key must not be retried")
 	}
 }
 

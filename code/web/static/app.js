@@ -1099,6 +1099,7 @@ window.logsPage = function () {
     statusClass(s) {
       switch (s) {
         case 'success': return 'bg-emerald-50 text-emerald-700';
+        case 'empty': return 'bg-amber-50 text-amber-700';
         case 'running': return 'bg-blue-50 text-blue-700';
         case 'error': return 'bg-red-50 text-red-700';
         case 'cancelled': return 'bg-slate-100 text-slate-500';
@@ -1106,7 +1107,7 @@ window.logsPage = function () {
       }
     },
     statusText(s) {
-      return ({ success: '成功', running: '运行中', error: '失败', cancelled: '已取消' })[s] || s;
+      return ({ success: '成功', empty: '需核验（空结果）', running: '运行中', error: '失败', cancelled: '已取消' })[s] || s;
     },
     openDetail(task) {
       // 把整个 task 交给详情抽屉组件（用全局事件解耦两个 x-data）。
@@ -1166,7 +1167,7 @@ window.taskDetail = function () {
       this.detail = logs || [];
       // 重新触发仅在失败态显示：task 状态为 error，或任一页带 error_raw
       const st = this.currentTask && this.currentTask.status;
-      this.canRetry = st === 'error' || this.detail.some(l => l.error_raw);
+      this.canRetry = st === 'error' || st === 'empty' || this.detail.some(l => l.error_raw);
     },
     async retry() {
       // currentTask 由 openDetail 事件注入；endpoint 是触发同步的必填路径参数

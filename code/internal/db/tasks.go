@@ -125,7 +125,7 @@ VALUES (?, ?, 'running', ?, NOW())
 
 // UpdateTask 由 Worker 在任务结束时调用，写终态。
 //
-//   - status: "success" / "error"（调用方决定）
+//   - status: "success" / "empty" / "error"（调用方决定）
 //   - records / pages: 累计落库行数、拉取页数
 //   - errMsg: nil → error_message=NULL；非 nil → 用 .Error() 全文，不截断
 //
@@ -165,6 +165,32 @@ func CancelTask(db *sqlx.DB, id int64) error {
 		return fmt.Errorf("db.CancelTask: 取消 sync_tasks id=%d 失败: %w", id, err)
 	}
 	return nil
+}
+
+// RecoverStaleRunningTasks closes tasks left running by process interruption.
+// It is a bounded age check, not a heartbeat or lease protocol.
+func RecoverStaleRunningTasks(db *sqlx.DB, olderThan time.Duration) (int64, error) {
+	if olderThan <= 0 {
+		return 0, fmt.Errorf("db.RecoverStaleRunningTasks: olderThan 必须 > 0")
+	}
+	hours := int(olderThan / time.Hour)
+	if hours < 1 {
+		hours = 1
+	}
+	const q = `UPDATE sync_tasks
+SET status = 'error', finished_at = NOW(),
+    error_message = COALESCE(NULLIF(error_message, ''), 'stale running task recovered after process interruption')
+WHERE status = 'running'
+  AND COALESCE(started_at, created_at) < DATE_SUB(NOW(), INTERVAL ? HOUR)`
+	result, err := db.Exec(q, hours)
+	if err != nil {
+		return 0, fmt.Errorf("db.RecoverStaleRunningTasks: 回收 running 任务失败: %w", err)
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("db.RecoverStaleRunningTasks: 读取回收数量失败: %w", err)
+	}
+	return count, nil
 }
 
 // InsertTaskLog 写一条页级证据到 sync_task_logs。
@@ -469,16 +495,19 @@ func SaveStoreSelection(db *sqlx.DB, accountID string, allSIDs, enabledSIDs []st
 // StoreSummary 是配置页展示的一条本地店铺摘要。SyncedAt 是本地最近写入时间，
 // 不代表上游领星的实时店铺状态。
 type StoreSummary struct {
-	SID           string    `db:"sid" json:"sid"`
-	StoreType     string    `db:"store_type" json:"store_type"`
-	StoreName     string    `db:"store_name" json:"store_name"`
-	ProfileID     string    `db:"profile_id" json:"profile_id"`
-	SellerID      string    `db:"seller_id" json:"seller_id"`
-	MarketplaceID string    `db:"marketplace_id" json:"marketplace_id"`
-	Country       string    `db:"country" json:"country"`
-	Status        string    `db:"status" json:"status"`
-	HasAdsSetting bool      `db:"has_ads_setting" json:"has_ads_setting"`
-	SyncedAt      time.Time `db:"synced_at" json:"synced_at"`
+	SID             string     `db:"sid" json:"sid"`
+	StoreType       string     `db:"store_type" json:"store_type"`
+	StoreName       string     `db:"store_name" json:"store_name"`
+	ProfileID       string     `db:"profile_id" json:"profile_id"`
+	SellerID        string     `db:"seller_id" json:"seller_id"`
+	MarketplaceID   string     `db:"marketplace_id" json:"marketplace_id"`
+	Country         string     `db:"country" json:"country"`
+	Status          string     `db:"status" json:"status"`
+	HasAdsSetting   bool       `db:"has_ads_setting" json:"has_ads_setting"`
+	SyncedAt        time.Time  `db:"synced_at" json:"synced_at"`
+	LastAttemptAt   *time.Time `db:"last_attempt_at" json:"last_attempt_at"`
+	LastSuccessAt   *time.Time `db:"last_success_at" json:"last_success_at"`
+	SourceUpdatedAt *time.Time `db:"source_updated_at" json:"source_updated_at"`
 	// Enabled 不来自 ls_stores（db:"-" 让 sqlx 跳过），由 handler 结合 store_sync_selection 注解：
 	// 该账号从未保存选择 → 全部 true（默认全勾）；已保存 → 仅 enabled=1 的店铺为 true。
 	Enabled bool `db:"-" json:"enabled"`
@@ -497,7 +526,7 @@ SELECT s.sid,
        COALESCE(s.country, '') AS country,
        COALESCE(s.status, '') AS status,
        s.has_ads_setting,
-       s.synced_at
+       s.synced_at, s.last_attempt_at, s.last_success_at, s.gmt_modified AS source_updated_at
 FROM ls_stores s
 LEFT JOIN vc_store_profiles p
   ON p.account_id = s.account_id AND p.sid = s.sid AND s.store_type = 'VC'
@@ -516,6 +545,20 @@ ORDER BY CASE WHEN s.store_type = 'VC' THEN 0 ELSE 1 END, s.store_name, s.sid`
 		}
 	}
 	return items, last, nil
+}
+
+func MarkStoreSyncAttempt(db *sqlx.DB, accountID string) error {
+	if _, err := db.Exec("UPDATE ls_stores SET last_attempt_at = CURRENT_TIMESTAMP WHERE account_id = ?", accountID); err != nil {
+		return fmt.Errorf("db.MarkStoreSyncAttempt: account=%s: %w", accountID, err)
+	}
+	return nil
+}
+
+func MarkStoreSyncSuccess(db *sqlx.DB, accountID string) error {
+	if _, err := db.Exec("UPDATE ls_stores SET last_success_at = CURRENT_TIMESTAMP WHERE account_id = ?", accountID); err != nil {
+		return fmt.Errorf("db.MarkStoreSyncSuccess: account=%s: %w", accountID, err)
+	}
+	return nil
 }
 
 // SaveVCStoreProfile 保存或清除人工确认的 VC 广告 Profile ID。
@@ -543,7 +586,7 @@ const (
 	cleanupMaxBatches = 100
 
 	cleanupTaskLogsSQL = "DELETE FROM sync_task_logs WHERE created_at < DATE_SUB(NOW(), INTERVAL ? DAY) ORDER BY created_at, id LIMIT ?"
-	cleanupTasksSQL    = "DELETE FROM sync_tasks WHERE created_at < DATE_SUB(NOW(), INTERVAL ? DAY) AND status IN ('success','error','cancelled') ORDER BY created_at, id LIMIT ?"
+	cleanupTasksSQL    = "DELETE FROM sync_tasks WHERE created_at < DATE_SUB(NOW(), INTERVAL ? DAY) AND status IN ('success','empty','error','cancelled') ORDER BY created_at, id LIMIT ?"
 )
 
 // CleanupResult 是一次 retention 清理的有界执行摘要。

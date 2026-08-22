@@ -38,6 +38,7 @@ type Scheduler struct {
 	connectionCheck    func(context.Context, string) error
 	customerReturnsRun func(context.Context, reportexport.Request) (reportexport.Result, error)
 	now                func() time.Time
+	recoverStale       func(*sqlx.DB, time.Duration) (int64, error)
 	ctx                context.Context
 
 	// mu 保护 cfg 与 entries：Start 时单线程写入本无需加锁，但 Rebuild（热加载）
@@ -69,6 +70,7 @@ func NewScheduler(cfg *config.Config, reg *Registry, dbx *sqlx.DB, connectionChe
 		cleanupOld:        db.CleanupOld,
 		connectionCheck:   connectionCheck,
 		now:               time.Now,
+		recoverStale:      db.RecoverStaleRunningTasks,
 		entries:           make(map[cron.EntryID]*EndpointWorker),
 		connectionEntries: make(map[cron.EntryID]struct{}),
 		reportEntries:     make(map[cron.EntryID]struct{}),
@@ -88,6 +90,17 @@ func (s *Scheduler) SetCustomerReturnsRunner(run func(context.Context, reportexp
 // 注册失败（cron 表达式非法）立即返回 error（启动期 fail-loud）。
 func (s *Scheduler) Start(ctx context.Context) error {
 	s.ctx = ctx
+	if s.dbx != nil {
+		recover := s.recoverStale
+		if recover == nil {
+			recover = db.RecoverStaleRunningTasks
+		}
+		if count, err := recover(s.dbx, 6*time.Hour); err != nil {
+			log.Printf("[scheduler] 回收 stale running 任务失败: %v", err)
+		} else if count > 0 {
+			log.Printf("[scheduler] 已回收 stale running 任务: %d", count)
+		}
+	}
 	// 1. 每个 endpoint 一个 cron 任务（注册逻辑与 Rebuild 共用，见 registerEndpointJobsLocked）
 	s.mu.Lock()
 	err := s.registerEndpointJobsLocked(s.cfg)
@@ -114,6 +127,13 @@ func (s *Scheduler) Start(ctx context.Context) error {
 			return fmt.Errorf("注册 retention cron 失败 spec=%q: %w", cleanupCron, err)
 		}
 	}
+	// Keep recovery in the existing scheduler. This is a bounded SQL sweep,
+	// not a heartbeat or a second worker system.
+	if _, err := s.cron.AddFunc("@every 5m", func() {
+		s.runStaleRecovery(ctx)
+	}); err != nil {
+		return fmt.Errorf("注册 stale running 回收任务失败: %w", err)
+	}
 
 	s.cron.Start()
 
@@ -121,6 +141,22 @@ func (s *Scheduler) Start(ctx context.Context) error {
 	s.backfillNextRuns()
 
 	return nil
+}
+
+func (s *Scheduler) runStaleRecovery(ctx context.Context) {
+	if ctx.Err() != nil || s.dbx == nil {
+		return
+	}
+	recover := s.recoverStale
+	if recover == nil {
+		recover = db.RecoverStaleRunningTasks
+	}
+	count, err := recover(s.dbx, 6*time.Hour)
+	if err != nil {
+		log.Printf("[scheduler] stale running 回收失败: %v", err)
+	} else if count > 0 {
+		log.Printf("[scheduler] stale running 已回收: %d", count)
+	}
 }
 
 func (s *Scheduler) registerReportJobsLocked(cfg *config.Config) error {

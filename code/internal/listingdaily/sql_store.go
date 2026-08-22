@@ -4,16 +4,25 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
+	"time"
 
+	"github.com/go-sql-driver/mysql"
 	"github.com/jmoiron/sqlx"
 )
 
 // SQLStore is the concrete, transaction-scoped publisher for listing daily facts.
 // It never reads or mutates ls_* raw evidence tables.
 type SQLStore struct{ DB *sqlx.DB }
+
+// All listing fact writers share one short in-process critical section. The
+// transaction itself remains small and a second attempt only reuses rows
+// already fetched from Lingxing; it never re-requests upstream data.
+var publishMu sync.Mutex
 
 var _ ReconciliationStore = SQLStore{}
 
@@ -48,6 +57,26 @@ func (s SQLStore) persistBatch(ctx context.Context, rows []Metric, audits []Reco
 		return nil
 	}
 	rows = metricsForPersistence(rows)
+	publishMu.Lock()
+	defer publishMu.Unlock()
+	for attempt := 0; attempt <= 1; attempt++ {
+		err := s.persistBatchOnce(ctx, rows, audits)
+		if err == nil {
+			return nil
+		}
+		if attempt == 1 || !retryableLocalTxError(err) {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(250 * time.Millisecond):
+		}
+	}
+	return nil
+}
+
+func (s SQLStore) persistBatchOnce(ctx context.Context, rows []Metric, audits []ReconciliationAudit) error {
 	tx, err := s.DB.BeginTxx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("listing daily: begin publish transaction: %w", err)
@@ -65,6 +94,14 @@ func (s SQLStore) persistBatch(ctx context.Context, rows []Metric, audits []Reco
 		return fmt.Errorf("listing daily: commit publish transaction: %w", err)
 	}
 	return nil
+}
+
+func retryableLocalTxError(err error) bool {
+	var mysqlErr *mysql.MySQLError
+	if !errors.As(err, &mysqlErr) {
+		return false
+	}
+	return mysqlErr.Number == 1205 || mysqlErr.Number == 1213
 }
 
 func metricsForPersistence(rows []Metric) []Metric {

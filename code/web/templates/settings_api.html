@@ -89,7 +89,7 @@
         <p class="mt-1 text-sm text-slate-500">
           店铺 <span class="font-medium text-slate-700" x-text="storeSummary.total || 0"></span> 个
           <span class="text-slate-300">|</span>
-          最近本地写入 <span x-text="fmtTime(storeSummary.last_synced_at)"></span>
+          最近数据变化 <span x-text="fmtTime(storeSummary.last_synced_at)"></span>
         </p>
       </div>
       <div class="flex flex-wrap gap-2">
@@ -227,7 +227,7 @@
                   </td>
                   <td class="px-4 py-3 text-slate-600" x-text="store.country || '-'"></td>
                   <td class="px-4 py-3 text-slate-600" x-text="storeStatusText(store.status)"></td>
-                  <td class="px-4 py-3 text-slate-500" x-text="fmtTime(store.synced_at)"></td>
+                  <td class="px-4 py-3 text-slate-500"><span class="block" x-text="'尝试 ' + fmtTime(store.last_attempt_at)"></span><span class="block" x-text="'变化 ' + fmtTime(store.synced_at)"></span><span class="block" x-text="'成功 ' + fmtTime(store.last_success_at)"></span></td>
                   <td class="px-4 py-3 text-right">
                     <input type="checkbox" x-model="storeSel[store.sid]"
                            class="h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-600 cursor-pointer">
