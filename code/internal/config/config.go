@@ -666,7 +666,7 @@ func (c *Config) QuotaGroupOf(accountID string) string {
 	return accountID
 }
 
-// limiterKey 组装运行时限流器 key = (quota_group, path)，与 worker.LimiterRegistry
+// limiterKey 组装接口限流器 key = (quota_group, path)，与 worker.LimiterRegistry
 // 内部的 key 拼法保持一致（quotaGroup + "|" + path），保证「配置校验」与「运行时共享桶」
 // 判定同一件事。
 func (c *Config) limiterKey(e Endpoint) string {

@@ -113,7 +113,7 @@ var catalogEntries = []CatalogEntry{
 		Method:        "GET",
 		Table:         "ls_stores",
 		RecordIDs:     []string{"sid"},
-		Rate:          Rate{Bucket: 5, IntervalMs: 200, MultiIntervalMs: 0, Dimension: "account+path"},
+		Rate:          Rate{Bucket: 5, IntervalMs: 1000, MultiIntervalMs: 0, Dimension: "account+path"},
 		DefaultCron:   "*/30 * * * *",
 		IsStoreSource: true,
 	},

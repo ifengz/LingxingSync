@@ -24,6 +24,8 @@ type SQLStore struct{ DB *sqlx.DB }
 // already fetched from Lingxing; it never re-requests upstream data.
 var publishMu sync.Mutex
 
+const localTxRetryLimit = 3
+
 var _ ReconciliationStore = SQLStore{}
 
 func (s SQLStore) Persist(ctx context.Context, rows []Metric) error {
@@ -59,18 +61,18 @@ func (s SQLStore) persistBatch(ctx context.Context, rows []Metric, audits []Reco
 	rows = metricsForPersistence(rows)
 	publishMu.Lock()
 	defer publishMu.Unlock()
-	for attempt := 0; attempt <= 1; attempt++ {
+	for attempt := 0; attempt <= localTxRetryLimit; attempt++ {
 		err := s.persistBatchOnce(ctx, rows, audits)
 		if err == nil {
 			return nil
 		}
-		if attempt == 1 || !retryableLocalTxError(err) {
+		if attempt == localTxRetryLimit || !retryableLocalTxError(err) {
 			return err
 		}
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(250 * time.Millisecond):
+		case <-time.After(time.Duration(50*(attempt+1)) * time.Millisecond):
 		}
 	}
 	return nil

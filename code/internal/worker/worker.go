@@ -5,7 +5,8 @@
 //   - §5 主循环：select trigger/cancel/ctx.Done，每次执行 doSync。
 //   - §5 panic 隔离：doSync 外层 defer recover，只 recover 自己，绝不传播，
 //     recover 后 worker 继续等下一次触发（不让一个接口的崩溃拖垮全局）。
-//   - §6 限流：每次 client.Fetch 前 limiter.Wait，按 (quota_group, path) 共享桶。
+//   - §6 限流：每次 client.Fetch 前 limiter.Wait，先过 quota_group 总桶，再过
+//     (quota_group, path) 接口桶。
 //   - §10 多店铺迭代：IterateByStore 时对每个 sid 跑一次，店铺间 sleep multi_interval_ms。
 //   - 单写者原则：只有 worker 自己写它的 sync_tasks 状态行（通过 db.UpdateTask）。
 //
@@ -128,7 +129,7 @@ type InventorySnapshotter func(context.Context, string, []DailyProjectionTarget)
 // 未来用途；当前实现恒为 nil，调用方仍应检查（签名稳定，便于以后收紧）。
 //
 // 例外：endpoint.Probe=true 时跳过建表断言（探测模式，表尚未建，仅摸字段名）。
-// 限流器从 Limiters 注册表取（同 (quota_group, path) 共享）。
+// 限流器从 Limiters 注册表取（同 quota_group 共享总桶，同 (quota_group, path) 共享接口桶）。
 func New(ep config.Endpoint, acc config.Account, client *api.Client, dbx *sqlx.DB, reg *LimiterRegistry) (*EndpointWorker, error) {
 	var cols []string
 	var jsonCols map[string]bool

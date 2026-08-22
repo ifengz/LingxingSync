@@ -17,7 +17,9 @@ import (
 	"time"
 )
 
-// Limiter 是单接口的限流器。
+const businessQuotaIntervalMs = 600
+
+// Limiter 是一个接口限流器；由 LimiterRegistry 创建的实例还会先经过同账号总桶。
 //
 // 字段全部用 mu 保护：因为同一个 (quota_group, path) 的桶会被多个 worker（同分组
 // 不同账号、或同账号同 path）共享，必须线程安全。
@@ -35,6 +37,10 @@ type Limiter struct {
 
 	// bucket=1 专用：上次放行时刻，用于强制串行间隔。
 	lastFire time.Time
+
+	// accountLimiter is set only for endpoint limiters created by a registry.
+	// Directly constructed limiters remain standalone for focused callers/tests.
+	accountLimiter *Limiter
 }
 
 // NewLimiter 构造一个限流器。
@@ -62,6 +68,15 @@ func NewLimiter(bucket, intervalMs int) *Limiter {
 //   - bucket=1（强制串行）：算距上次放行的间隔，不足则 sleep 差额。
 //   - bucket>1（token bucket）：补充令牌（按经过时间线性补），不足则 sleep 到下一个令牌补出。
 func (l *Limiter) Wait(ctx context.Context) error {
+	if l.accountLimiter != nil {
+		if err := l.accountLimiter.Wait(ctx); err != nil {
+			return err
+		}
+	}
+	return l.waitLocal(ctx)
+}
+
+func (l *Limiter) waitLocal(ctx context.Context) error {
 	// 先快速路径：尝试一次抢令牌
 	if l.tryAcquire() {
 		return nil
@@ -182,15 +197,17 @@ func (l *Limiter) refillLocked(now time.Time) {
 	l.lastFill = now
 }
 
-// LimiterRegistry 按 key 复用 Limiter，保证同 (quota_group, path) 共用一个桶。
+// LimiterRegistry 按 key 复用 Limiter：同 quota_group 共用业务总桶，同
+// (quota_group, path) 再共用接口桶。
 type LimiterRegistry struct {
-	mu sync.Mutex
-	m  map[string]*Limiter
+	mu             sync.Mutex
+	m              map[string]*Limiter
+	accountBuckets map[string]*Limiter
 }
 
 // NewLimiterRegistry 构造空注册表。
 func NewLimiterRegistry() *LimiterRegistry {
-	return &LimiterRegistry{m: make(map[string]*Limiter)}
+	return &LimiterRegistry{m: make(map[string]*Limiter), accountBuckets: make(map[string]*Limiter)}
 }
 
 // Get 返回 key 对应的 Limiter；不存在则用 (bucket, intervalMs) 新建。
@@ -201,9 +218,13 @@ func (r *LimiterRegistry) Get(quotaGroup, path string, bucket, intervalMs int) *
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if l, ok := r.m[key]; ok {
+		if l.accountLimiter == nil {
+			l.accountLimiter = r.accountBucketLocked(quotaGroup)
+		}
 		return l
 	}
 	l := NewLimiter(bucket, intervalMs)
+	l.accountLimiter = r.accountBucketLocked(quotaGroup)
 	r.m[key] = l
 	return l
 }
@@ -221,12 +242,24 @@ func (r *LimiterRegistry) UpdateOrCreate(quotaGroup, path string, bucket, interv
 	l, ok := r.m[key]
 	if !ok {
 		l = NewLimiter(bucket, intervalMs)
+		l.accountLimiter = r.accountBucketLocked(quotaGroup)
 		r.m[key] = l
+	} else if l.accountLimiter == nil {
+		l.accountLimiter = r.accountBucketLocked(quotaGroup)
 	}
 	r.mu.Unlock()
 
 	if ok {
 		l.Update(bucket, intervalMs)
 	}
+	return l
+}
+
+func (r *LimiterRegistry) accountBucketLocked(quotaGroup string) *Limiter {
+	if l, ok := r.accountBuckets[quotaGroup]; ok {
+		return l
+	}
+	l := NewLimiter(1, businessQuotaIntervalMs)
+	r.accountBuckets[quotaGroup] = l
 	return l
 }

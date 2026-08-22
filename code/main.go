@@ -194,7 +194,7 @@ func main() {
 	// 3. 构造 Worker（每「账号+接口」一个）
 	registry := worker.NewRegistry()
 	clients := api.NewClientRegistry(cfg.Accounts, *baseURL)
-	limiterReg := worker.NewLimiterRegistry() // 限流器按 (quota_group, path) 共享
+	limiterReg := worker.NewLimiterRegistry() // 总桶按 quota_group、接口桶按 (quota_group, path) 共享
 	dailyReader := listingdaily.SQLSourceReader{DB: dbx}
 	dailyStore := listingdaily.SQLStore{DB: dbx}
 	dailyProject := func(ctx context.Context, accountID string, targets []worker.DailyProjectionTarget, today time.Time) error {

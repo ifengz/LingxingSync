@@ -288,7 +288,7 @@ endpoints:
     is_store_source: true               # 宪法 §10：启动优先同步
     rate:
       bucket: 5
-      interval_ms: 200
+      interval_ms: 1000
       multi_interval_ms: 0
       dimension: "account+path"
     cron: "*/30 * * * *"
