@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -268,57 +270,24 @@ LEFT JOIN ls_vc_orders o
 }
 
 var vcPOLinesDefinition = detailReaderDefinition{
-	fromClause: `ls_vc_po_details d
-JOIN JSON_TABLE(
-  COALESCE(d.items, JSON_ARRAY()), '$[*]' COLUMNS (
-    asin VARCHAR(64) PATH '$.asin',
-    msku VARCHAR(255) PATH '$.msku',
-    local_sku VARCHAR(255) PATH '$.local_sku',
-    sku VARCHAR(255) PATH '$.sku',
-    item_name VARCHAR(512) PATH '$.item_name',
-    local_name VARCHAR(512) PATH '$.local_name',
-    title VARCHAR(512) PATH '$.title',
-    purchase_amount VARCHAR(64) PATH '$.purchase_amount',
-    qty_requested VARCHAR(64) PATH '$.qty_requested',
-    requested_qty VARCHAR(64) PATH '$.requested_qty',
-    request_qty VARCHAR(64) PATH '$.request_qty',
-    asn_quantity VARCHAR(64) PATH '$.asn_quantity',
-    asn_qty VARCHAR(64) PATH '$.asn_qty',
-    ordered_qty VARCHAR(64) PATH '$.ordered_qty',
-    ordered_quantity VARCHAR(64) PATH '$.ordered_quantity',
-    quantity VARCHAR(64) PATH '$.quantity',
-    qty_received VARCHAR(64) PATH '$.qty_received',
-    received_qty VARCHAR(64) PATH '$.received_qty',
-    received_quantity VARCHAR(64) PATH '$.received_quantity',
-    unit_price VARCHAR(64) PATH '$.unit_price',
-    deal_unit_price VARCHAR(64) PATH '$.deal_unit_price',
-    image_url VARCHAR(1024) PATH '$.image_url',
-    main_image_url VARCHAR(1024) PATH '$.main_image_url',
-    large_main_image_url VARCHAR(1024) PATH '$.large_main_image_url',
-    medium_main_image_url VARCHAR(1024) PATH '$.medium_main_image_url',
-    small_main_image_url VARCHAR(1024) PATH '$.small_main_image_url'
-  )
-) AS item ON NULLIF(item.asin, '') IS NOT NULL
-           AND COALESCE(NULLIF(item.msku, ''), NULLIF(item.local_sku, '')) IS NOT NULL
-`,
+	sourceTable:     "ls_vc_po_details",
+	alias:           "d",
 	storeColumn:     "d.vc_store_id",
-	baseColumns:     []string{"d.account_id", "d.vc_store_id", "item.asin", "COALESCE(NULLIF(item.sku, ''), NULLIF(item.local_sku, ''))", "DATE(d.synced_at)", "d.synced_at", "CONCAT_WS('|', d.account_id, d.vc_store_id, d.local_po_number, item.asin, COALESCE(NULLIF(item.msku, ''), NULLIF(item.local_sku, '')))"},
 	dateColumn:      "DATE(d.synced_at)",
-	stableKeyColumn: "CONCAT_WS('|', d.account_id, d.vc_store_id, d.local_po_number, item.asin, COALESCE(NULLIF(item.msku, ''), NULLIF(item.local_sku, '')))",
 	updatedAtColumn: "d.synced_at",
 	stableKeyParts:  5,
 	fields: map[string]string{
-		"vc_store_id":           "d.vc_store_id",
-		"local_po_number":       "d.local_po_number",
-		"purchase_order_number": "d.purchase_order_number",
-		"asin":                  "item.asin",
-		"msku":                  "COALESCE(NULLIF(item.msku, ''), NULLIF(item.local_sku, ''))",
-		"sku":                   "COALESCE(NULLIF(item.sku, ''), NULLIF(item.local_sku, ''))",
-		"item_name":             "COALESCE(NULLIF(item.item_name, ''), NULLIF(item.local_name, ''), NULLIF(item.title, ''))",
-		"ordered_quantity":      "CAST(COALESCE(item.purchase_amount, item.qty_requested, item.requested_qty, item.request_qty, item.asn_quantity, item.asn_qty, item.ordered_qty, item.ordered_quantity, item.quantity) AS SIGNED)",
-		"received_quantity":     "CAST(COALESCE(item.qty_received, item.received_qty, item.received_quantity) AS SIGNED)",
-		"unit_price":            "COALESCE(NULLIF(item.unit_price, ''), NULLIF(item.deal_unit_price, ''))",
-		"image_url":             "COALESCE(NULLIF(item.image_url, ''), NULLIF(item.main_image_url, ''), NULLIF(item.large_main_image_url, ''), NULLIF(item.medium_main_image_url, ''), NULLIF(item.small_main_image_url, ''))",
+		"vc_store_id":           "vc_store_id",
+		"local_po_number":       "local_po_number",
+		"purchase_order_number": "purchase_order_number",
+		"asin":                  "asin",
+		"msku":                  "msku",
+		"sku":                   "sku",
+		"item_name":             "item_name",
+		"ordered_quantity":      "ordered_quantity",
+		"received_quantity":     "received_quantity",
+		"unit_price":            "unit_price",
+		"image_url":             "image_url",
 	},
 }
 
@@ -586,8 +555,255 @@ func NewVCPODetailReader(db *sqlx.DB) *DetailSQLReader {
 	return newDetailSQLReader(db, vcPODetailDefinition)
 }
 
-func NewVCPOLinesReader(db *sqlx.DB) *DetailSQLReader {
-	return newDetailSQLReader(db, vcPOLinesDefinition)
+func NewVCPOLinesReader(db *sqlx.DB) *VCPOLinesReader {
+	if db == nil {
+		return &VCPOLinesReader{}
+	}
+	return &VCPOLinesReader{queryer: sqlxQueryer{db: db}}
+}
+
+// VCPOLinesReader reads the raw PO JSON and expands it in Go. The production
+// MySQL instance does not support JSON_TABLE, so expansion must not be part of
+// the SQL contract.
+type VCPOLinesReader struct {
+	queryer SQLQueryer
+}
+
+type vcPORawDetail struct {
+	accountID           string
+	storeID             string
+	localPONumber       string
+	purchaseOrderNumber string
+	updatedAt           time.Time
+	items               []byte
+}
+
+func (r *VCPOLinesReader) Snapshot(ctx context.Context, query Query) (Page, error) {
+	if query.DateFrom == "" || query.DateTo == "" {
+		return Page{}, fmt.Errorf("snapshot date range is required")
+	}
+	return r.read(ctx, query, true)
+}
+
+func (r *VCPOLinesReader) Changes(ctx context.Context, query Query) (Page, error) {
+	if query.Cursor == nil {
+		return Page{}, fmt.Errorf("changes cursor is required")
+	}
+	if !validVCPOLineStableKey(query.Cursor.StableKey) {
+		return Page{}, fmt.Errorf("detail cursor stable key is invalid")
+	}
+	return r.read(ctx, query, false)
+}
+
+func (r *VCPOLinesReader) read(ctx context.Context, query Query, snapshot bool) (Page, error) {
+	if r == nil || r.queryer == nil {
+		return Page{}, fmt.Errorf("registered VC PO lines reader is not configured")
+	}
+	if query.PageSize < 1 {
+		return Page{}, fmt.Errorf("positive page size is required")
+	}
+	fields, err := selectVCPOLineFields(query.Fields)
+	if err != nil {
+		return Page{}, err
+	}
+	where, args := appendStoreFilter(nil, nil, "d.vc_store_id", query)
+	if snapshot {
+		where = append(where, "DATE(d.synced_at) BETWEEN ? AND ?")
+		args = append(args, query.DateFrom, query.DateTo)
+	}
+	if query.Cursor != nil {
+		where = append(where, "d.synced_at >= ?")
+		args = append(args, query.Cursor.UpdatedAt)
+	}
+	queryText := "SELECT d.account_id, d.vc_store_id, d.local_po_number, d.purchase_order_number, d.synced_at, d.items FROM ls_vc_po_details d"
+	if len(where) > 0 {
+		queryText += " WHERE " + strings.Join(where, " AND ")
+	}
+	queryText += " ORDER BY d.synced_at ASC, d.account_id ASC, d.vc_store_id ASC, d.local_po_number ASC"
+	rows, err := r.queryer.Query(ctx, queryText, args...)
+	if err != nil {
+		return Page{}, err
+	}
+	defer rows.Close()
+
+	lineRows := make([]Row, 0)
+	for rows.Next() {
+		var accountID, storeID, localPO, purchaseOrder sql.NullString
+		var updatedAt sql.NullTime
+		var rawItems any
+		if err := rows.Scan(&accountID, &storeID, &localPO, &purchaseOrder, &updatedAt, &rawItems); err != nil {
+			return Page{}, err
+		}
+		if !accountID.Valid || !storeID.Valid || !localPO.Valid || !updatedAt.Valid {
+			return Page{}, fmt.Errorf("VC PO detail row has invalid identity or synced_at")
+		}
+		items, err := decodeVCPOLineItems(rawItems)
+		if err != nil {
+			return Page{}, fmt.Errorf("decode VC PO items for %s: %w", localPO.String, err)
+		}
+		raw := vcPORawDetail{accountID: accountID.String, storeID: storeID.String, localPONumber: localPO.String, purchaseOrderNumber: purchaseOrder.String, updatedAt: updatedAt.Time.UTC()}
+		for _, item := range items {
+			line, ok := buildVCPOLineRow(raw, item, fields)
+			if !ok {
+				continue
+			}
+			if query.Cursor != nil && !afterVCPOLineCursor(line, *query.Cursor) {
+				continue
+			}
+			lineRows = append(lineRows, line)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return Page{}, err
+	}
+	sort.Slice(lineRows, func(i, j int) bool {
+		if lineRows[i].UpdatedAt.Equal(lineRows[j].UpdatedAt) {
+			return lineRows[i].StableKey < lineRows[j].StableKey
+		}
+		return lineRows[i].UpdatedAt.Before(lineRows[j].UpdatedAt)
+	})
+	page := Page{Rows: lineRows}
+	if len(page.Rows) > query.PageSize {
+		page.HasMore = true
+		page.Rows = page.Rows[:query.PageSize]
+		last := page.Rows[len(page.Rows)-1]
+		page.Next = &CursorKey{UpdatedAt: last.UpdatedAt, StableKey: last.StableKey}
+	}
+	return page, nil
+}
+
+func selectVCPOLineFields(fields []string) ([]string, error) {
+	selected := make([]string, 0, len(fields))
+	seen := make(map[string]struct{}, len(fields))
+	for _, field := range fields {
+		if _, ok := vcPOLinesDefinition.fields[field]; !ok {
+			return nil, fmt.Errorf("dataset field %q is not supported by registered VC PO lines reader", field)
+		}
+		if _, ok := seen[field]; ok {
+			return nil, fmt.Errorf("dataset field %q is duplicated", field)
+		}
+		seen[field] = struct{}{}
+		selected = append(selected, field)
+	}
+	return selected, nil
+}
+
+func validVCPOLineStableKey(stableKey string) bool {
+	parts := strings.Split(stableKey, "|")
+	if len(parts) != 5 {
+		return false
+	}
+	for _, part := range parts {
+		if part == "" {
+			return false
+		}
+	}
+	return true
+}
+
+func decodeVCPOLineItems(value any) ([]map[string]any, error) {
+	var raw []byte
+	switch v := value.(type) {
+	case nil:
+		return nil, nil
+	case []byte:
+		raw = v
+	case string:
+		raw = []byte(v)
+	case json.RawMessage:
+		raw = v
+	default:
+		return nil, fmt.Errorf("unsupported items value %T", value)
+	}
+	if len(strings.TrimSpace(string(raw))) == 0 || string(raw) == "null" {
+		return nil, nil
+	}
+	decoder := json.NewDecoder(strings.NewReader(string(raw)))
+	decoder.UseNumber()
+	var items []map[string]any
+	if err := decoder.Decode(&items); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+func buildVCPOLineRow(raw vcPORawDetail, item map[string]any, fields []string) (Row, bool) {
+	asin := jsonString(item, "asin")
+	msku := firstJSONString(item, "msku", "local_sku")
+	if asin == "" || msku == "" {
+		return Row{}, false
+	}
+	sku := firstJSONString(item, "sku", "local_sku")
+	stableKey := strings.Join([]string{raw.accountID, raw.storeID, raw.localPONumber, asin, msku}, "|")
+	values := make(map[string]any, len(fields))
+	for _, field := range fields {
+		switch field {
+		case "vc_store_id":
+			values[field] = raw.storeID
+		case "local_po_number":
+			values[field] = raw.localPONumber
+		case "purchase_order_number":
+			values[field] = raw.purchaseOrderNumber
+		case "asin":
+			values[field] = asin
+		case "msku":
+			values[field] = msku
+		case "sku":
+			values[field] = sku
+		case "item_name":
+			values[field] = firstJSONString(item, "item_name", "local_name", "title")
+		case "ordered_quantity":
+			values[field] = firstJSONInt(item, "purchase_amount", "qty_requested", "requested_qty", "request_qty", "asn_quantity", "asn_qty", "ordered_qty", "ordered_quantity", "quantity")
+		case "received_quantity":
+			values[field] = firstJSONInt(item, "qty_received", "received_qty", "received_quantity")
+		case "unit_price":
+			values[field] = firstJSONString(item, "unit_price", "deal_unit_price")
+		case "image_url":
+			values[field] = firstJSONString(item, "image_url", "main_image_url", "large_main_image_url", "medium_main_image_url", "small_main_image_url")
+		}
+	}
+	return Row{AccountID: raw.accountID, Store: raw.storeID, ASIN: asin, SKU: sku, BusinessDate: raw.updatedAt.Format("2006-01-02"), UpdatedAt: raw.updatedAt, StableKey: stableKey, FixedValues: map[string]any{"store": raw.storeID, "record_date": raw.updatedAt.Format("2006-01-02"), "stable_key": stableKey, "updated_at": raw.updatedAt.Format(time.RFC3339Nano)}, Values: values}, true
+}
+
+func afterVCPOLineCursor(row Row, cursor CursorKey) bool {
+	if row.UpdatedAt.After(cursor.UpdatedAt) {
+		return true
+	}
+	return row.UpdatedAt.Equal(cursor.UpdatedAt) && row.StableKey > cursor.StableKey
+}
+
+func jsonString(item map[string]any, key string) string {
+	value, ok := item[key]
+	if !ok || value == nil {
+		return ""
+	}
+	return strings.TrimSpace(fmt.Sprint(value))
+}
+
+func firstJSONString(item map[string]any, keys ...string) string {
+	for _, key := range keys {
+		if value := jsonString(item, key); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func firstJSONInt(item map[string]any, keys ...string) any {
+	for _, key := range keys {
+		value := jsonString(item, key)
+		if value == "" {
+			continue
+		}
+		parsed, err := strconv.ParseInt(value, 10, 64)
+		if err == nil {
+			return parsed
+		}
+		if number, err := strconv.ParseFloat(value, 64); err == nil && number == float64(int64(number)) {
+			return int64(number)
+		}
+	}
+	return nil
 }
 
 func NewFBALinksReader(db *sqlx.DB) *DetailSQLReader {
