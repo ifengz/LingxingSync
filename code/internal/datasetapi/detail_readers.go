@@ -547,6 +547,331 @@ func NewAddressOrderItemDetailReader(db *sqlx.DB) *DetailSQLReader {
 	return newDetailSQLReader(db, addressOrderItemDetailDefinition)
 }
 
+// FBMAddressOrderItemDetailReader expands the verified MultiPlat order shape:
+// one raw order contains item_info[] and one order-level address_info object.
+// It never fabricates a shipment key; global_item_no is the upstream item key.
+type FBMAddressOrderItemDetailReader struct{ queryer SQLQueryer }
+
+func NewFBMAddressOrderItemDetailReader(db *sqlx.DB) *FBMAddressOrderItemDetailReader {
+	if db == nil {
+		return &FBMAddressOrderItemDetailReader{}
+	}
+	return &FBMAddressOrderItemDetailReader{queryer: sqlxQueryer{db: db}}
+}
+
+func (r *FBMAddressOrderItemDetailReader) Snapshot(ctx context.Context, query Query) (Page, error) {
+	if query.DateFrom == "" || query.DateTo == "" {
+		return Page{}, fmt.Errorf("snapshot date range is required")
+	}
+	return r.read(ctx, query, true)
+}
+
+func (r *FBMAddressOrderItemDetailReader) Changes(ctx context.Context, query Query) (Page, error) {
+	if query.Cursor == nil {
+		return Page{}, fmt.Errorf("changes cursor is required")
+	}
+	if query.Cursor.StableKey == "" {
+		return Page{}, fmt.Errorf("detail cursor stable key is invalid")
+	}
+	return r.read(ctx, query, false)
+}
+
+func (r *FBMAddressOrderItemDetailReader) read(ctx context.Context, query Query, snapshot bool) (Page, error) {
+	if r == nil || r.queryer == nil {
+		return Page{}, fmt.Errorf("registered FBM detail SQL reader is not configured")
+	}
+	if query.PageSize < 1 {
+		return Page{}, fmt.Errorf("positive page size is required")
+	}
+	where, args := appendStoreFilter(nil, nil, "o.store_id", query)
+	if snapshot {
+		where = append(where, "FROM_UNIXTIME(o.global_purchase_time) BETWEEN ? AND ?")
+		args = append(args, query.DateFrom, query.DateTo)
+	}
+	if query.Cursor != nil {
+		where = append(where, "o.synced_at >= ?")
+		args = append(args, query.Cursor.UpdatedAt)
+	}
+	queryText := "SELECT o.account_id, o.store_id, o.store_name, o.global_order_no, o.status, o.update_time, o.global_purchase_time, o.amount_currency, o.item_info, o.address_info, o.platform_info, o.synced_at FROM ls_mp_fbm_orders o"
+	if len(where) > 0 {
+		queryText += " WHERE " + strings.Join(where, " AND ")
+	}
+	queryText += " ORDER BY o.synced_at ASC, o.global_order_no ASC"
+	rows, err := r.queryer.Query(ctx, queryText, args...)
+	if err != nil {
+		return Page{}, err
+	}
+	defer rows.Close()
+	selected, err := fbmSelectedFields(query.Fields)
+	if err != nil {
+		return Page{}, err
+	}
+	all := make([]Row, 0)
+	for rows.Next() {
+		var accountID, storeID, storeName, globalOrderNo, status, updateTime, amountCurrency sql.NullString
+		var purchaseTime any
+		var itemRaw, addressRaw, platformRaw any
+		var syncedAt sql.NullTime
+		if err := rows.Scan(&accountID, &storeID, &storeName, &globalOrderNo, &status, &updateTime, &purchaseTime, &amountCurrency, &itemRaw, &addressRaw, &platformRaw, &syncedAt); err != nil {
+			return Page{}, err
+		}
+		if !accountID.Valid || !storeID.Valid || !globalOrderNo.Valid || !syncedAt.Valid {
+			return Page{}, fmt.Errorf("FBM order row has invalid identity or synced_at")
+		}
+		items, err := decodeFBMObjects(itemRaw)
+		if err != nil {
+			return Page{}, fmt.Errorf("decode FBM item_info for %s: %w", globalOrderNo.String, err)
+		}
+		address, err := decodeFBMObject(addressRaw)
+		if err != nil {
+			return Page{}, fmt.Errorf("decode FBM address_info for %s: %w", globalOrderNo.String, err)
+		}
+		platforms, err := decodeFBMObjects(platformRaw)
+		if err != nil {
+			return Page{}, fmt.Errorf("decode FBM platform_info for %s: %w", globalOrderNo.String, err)
+		}
+		platform := firstFBMObject(platforms)
+		purchaseDate := fbmUnixDate(purchaseTime)
+		for _, item := range items {
+			globalItemNo := fbmJSONString(item, "global_item_no")
+			if globalItemNo == "" {
+				return Page{}, fmt.Errorf("FBM order %s item has empty global_item_no", globalOrderNo.String)
+			}
+			stableKey := globalItemNo
+			if query.Cursor != nil && !fbmAfterCursor(syncedAt.Time, stableKey, *query.Cursor) {
+				continue
+			}
+			row := buildFBMAddressRow(accountID.String, storeID.String, storeName.String, globalOrderNo.String, status.String, updateTime.String, purchaseDate, amountCurrency.String, item, address, platform, syncedAt.Time.UTC(), selected)
+			all = append(all, row)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return Page{}, err
+	}
+	sort.SliceStable(all, func(i, j int) bool {
+		if all[i].UpdatedAt.Equal(all[j].UpdatedAt) {
+			return all[i].StableKey < all[j].StableKey
+		}
+		return all[i].UpdatedAt.Before(all[j].UpdatedAt)
+	})
+	page := Page{Rows: all}
+	if len(page.Rows) > query.PageSize {
+		page.HasMore = true
+		page.Rows = page.Rows[:query.PageSize]
+		last := page.Rows[len(page.Rows)-1]
+		page.Next = &CursorKey{UpdatedAt: last.UpdatedAt, StableKey: last.StableKey}
+	}
+	return page, nil
+}
+
+var fbmDetailFields = map[string]struct{}{
+	"store_id": {}, "store_name": {}, "marketplace": {}, "amazon_order_id": {}, "amazon_order_item_id": {}, "source_order_item_no": {}, "purchase_date": {}, "last_updated_date": {}, "order_status": {}, "asin": {}, "sku": {}, "product_name": {}, "quantity": {}, "currency": {}, "item_price": {}, "fulfillment_channel": {}, "ship_country": {}, "ship_state": {}, "ship_city": {}, "ship_postal_code": {}, "ship_lat": {}, "ship_lng": {}, "source_store": {}, "source_global_order_no": {}, "source_global_item_no": {}, "source_updated_at": {},
+}
+
+func fbmSelectedFields(fields []string) ([]string, error) {
+	selected := make([]string, 0, len(fields))
+	seen := make(map[string]struct{}, len(fields))
+	for _, field := range fields {
+		if _, ok := fbmDetailFields[field]; !ok {
+			return nil, fmt.Errorf("dataset field %q is not supported by registered FBM detail reader", field)
+		}
+		if _, ok := seen[field]; ok {
+			return nil, fmt.Errorf("dataset field %q is duplicated", field)
+		}
+		seen[field] = struct{}{}
+		selected = append(selected, field)
+	}
+	return selected, nil
+}
+
+func buildFBMAddressRow(accountID, storeID, storeName, globalOrderNo, status, updateTime, purchaseDate, currency string, item, address, platform map[string]any, updatedAt time.Time, fields []string) Row {
+	globalItemNo := fbmJSONString(item, "global_item_no")
+	values := make(map[string]any, len(fields))
+	for _, field := range fields {
+		values[field] = fbmFieldValue(field, storeID, storeName, globalOrderNo, status, updateTime, purchaseDate, currency, item, address, platform, updatedAt)
+	}
+	return Row{AccountID: accountID, Store: storeID, BusinessDate: fbmDatePart(purchaseDate), UpdatedAt: updatedAt, StableKey: globalItemNo, FixedValues: map[string]any{"store": storeID, "record_date": fbmDatePart(purchaseDate), "stable_key": globalItemNo, "updated_at": updatedAt.Format(time.RFC3339Nano)}, Values: values}
+}
+
+func fbmFieldValue(field, storeID, storeName, globalOrderNo, status, updateTime, purchaseDate, currency string, item, address, platform map[string]any, updatedAt time.Time) any {
+	switch field {
+	case "store_id", "source_store":
+		return storeID
+	case "store_name":
+		return storeName
+	case "marketplace":
+		return fbmJSONString(platform, "store_Country_code")
+	case "amazon_order_id":
+		return fbmJSONString(platform, "platform_order_no")
+	case "amazon_order_item_id":
+		return nil
+	case "source_order_item_no":
+		return fbmJSONString(item, "order_item_no")
+	case "purchase_date":
+		return purchaseDate
+	case "last_updated_date":
+		return updateTime
+	case "order_status":
+		return status
+	case "asin":
+		return fbmJSONString(item, "product_no")
+	case "sku":
+		return fbmFirstJSONString(item, "local_sku", "msku")
+	case "product_name":
+		return fbmFirstJSONString(item, "local_product_name", "title", "item_from_name")
+	case "quantity":
+		return fbmJSONValue(item, "quantity")
+	case "currency":
+		return currency
+	case "item_price":
+		return fbmFirstJSONValue(item, "item_price_amount", "unit_price_amount")
+	case "fulfillment_channel":
+		return "FBM"
+	case "ship_country":
+		return fbmJSONString(address, "receiver_country_code")
+	case "ship_state":
+		return fbmJSONString(address, "state_or_region")
+	case "ship_city":
+		return fbmJSONString(address, "city")
+	case "ship_postal_code":
+		return fbmJSONString(address, "postal_code")
+	case "ship_lat", "ship_lng":
+		return nil
+	case "source_global_order_no":
+		return globalOrderNo
+	case "source_global_item_no":
+		return fbmJSONString(item, "global_item_no")
+	case "source_updated_at":
+		return updatedAt.Format(time.RFC3339Nano)
+	default:
+		return nil
+	}
+}
+
+func fbmAfterCursor(updatedAt time.Time, stableKey string, cursor CursorKey) bool {
+	return updatedAt.After(cursor.UpdatedAt) || (updatedAt.Equal(cursor.UpdatedAt) && stableKey > cursor.StableKey)
+}
+
+func decodeFBMObjects(value any) ([]map[string]any, error) {
+	if value == nil {
+		return nil, nil
+	}
+	var raw []byte
+	switch v := value.(type) {
+	case []byte:
+		raw = v
+	case string:
+		raw = []byte(v)
+	case json.RawMessage:
+		raw = v
+	default:
+		return nil, fmt.Errorf("unsupported JSON value %T", value)
+	}
+	if strings.TrimSpace(string(raw)) == "" || string(raw) == "null" {
+		return nil, nil
+	}
+	decoder := json.NewDecoder(strings.NewReader(string(raw)))
+	decoder.UseNumber()
+	var result []map[string]any
+	if err := decoder.Decode(&result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func decodeFBMObject(value any) (map[string]any, error) {
+	if value == nil {
+		return map[string]any{}, nil
+	}
+	var raw []byte
+	switch v := value.(type) {
+	case []byte:
+		raw = v
+	case string:
+		raw = []byte(v)
+	case json.RawMessage:
+		raw = v
+	default:
+		return nil, fmt.Errorf("unsupported JSON value %T", value)
+	}
+	if strings.TrimSpace(string(raw)) == "" || string(raw) == "null" {
+		return map[string]any{}, nil
+	}
+	decoder := json.NewDecoder(strings.NewReader(string(raw)))
+	decoder.UseNumber()
+	var result map[string]any
+	if err := decoder.Decode(&result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func firstFBMObject(values []map[string]any) map[string]any {
+	if len(values) == 0 {
+		return map[string]any{}
+	}
+	return values[0]
+}
+
+func fbmJSONString(value map[string]any, key string) string {
+	if v, ok := value[key]; ok && v != nil {
+		return strings.TrimSpace(fmt.Sprint(v))
+	}
+	return ""
+}
+func fbmFirstJSONString(value map[string]any, keys ...string) string {
+	for _, key := range keys {
+		if text := fbmJSONString(value, key); text != "" {
+			return text
+		}
+	}
+	return ""
+}
+func fbmJSONValue(value map[string]any, key string) any {
+	if v, ok := value[key]; ok {
+		return v
+	}
+	return nil
+}
+func fbmFirstJSONValue(value map[string]any, keys ...string) any {
+	for _, key := range keys {
+		if v := fbmJSONValue(value, key); v != nil && fbmJSONString(value, key) != "" {
+			return v
+		}
+	}
+	return nil
+}
+func fbmUnixDate(value any) string {
+	seconds, ok := fbmInt64(value)
+	if !ok || seconds <= 0 {
+		return ""
+	}
+	return time.Unix(seconds, 0).UTC().Format(time.RFC3339)
+}
+
+func fbmInt64(value any) (int64, bool) {
+	switch v := value.(type) {
+	case int64:
+		return v, true
+	case int:
+		return int64(v), true
+	case []byte:
+		parsed, err := strconv.ParseInt(string(v), 10, 64)
+		return parsed, err == nil
+	case string:
+		parsed, err := strconv.ParseInt(v, 10, 64)
+		return parsed, err == nil
+	default:
+		return 0, false
+	}
+}
+func fbmDatePart(value string) string {
+	if len(value) >= len("2006-01-02") {
+		return value[:len("2006-01-02")]
+	}
+	return ""
+}
+
 func NewFBAInventorySnapshotReader(db *sqlx.DB) *DetailSQLReader {
 	return newDetailSQLReader(db, fbaInventorySnapshotDefinition)
 }

@@ -81,6 +81,12 @@ var definitions = map[string]Definition{
 		CatalogFields: []string{"amazon_order_id", "store_name", "marketplace", "purchase_date", "last_updated_date", "order_status", "asin", "sku", "product_name", "quantity", "currency", "item_price", "fulfillment_channel", "ship_country", "ship_state", "ship_city", "ship_postal_code", "ship_lat", "ship_lng", "source_store", "shipment_id", "shipment_item_id", "amazon_order_item_id", "source_updated_at", "payments_date", "shipment_date", "reporting_date", "estimated_arrival_date", "quantity_shipped", "item_tax", "shipping_price", "shipping_tax", "gift_wrap_price", "gift_wrap_tax", "ship_service_level", "item_promotion_discount", "ship_promotion_discount", "carrier", "tracking_number", "points_granted", "hide_time"},
 		NextVersionID: "address-order-item-detail-v2",
 	},
+	"fbm-address-order-item-detail-v1": {
+		ID: "fbm-address-order-item-detail-v1", Name: "FBM Address 订单商品配送明细表", Kind: DatasetKindDetail,
+		Source: "ls_mp_fbm_orders + item_info + address_info + platform_info", Grain: "store_id + global_item_no",
+		InitialCursor: "0|0", FixedFields: []string{"store", "record_date", "stable_key", "updated_at"},
+		Fields: []string{"store_id", "store_name", "marketplace", "amazon_order_id", "amazon_order_item_id", "source_order_item_no", "purchase_date", "last_updated_date", "order_status", "asin", "sku", "product_name", "quantity", "currency", "item_price", "fulfillment_channel", "ship_country", "ship_state", "ship_city", "ship_postal_code", "ship_lat", "ship_lng", "source_store", "source_global_order_no", "source_global_item_no", "source_updated_at"},
+	},
 	"address-order-item-detail-v2": {
 		ID: "address-order-item-detail-v2", Name: "Address 订单商品配送明细表 v2", Kind: DatasetKindDetail,
 		Source: "ls_sc_fba_order_addresses + ls_sales_orders + ls_sc_order_details + ls_stores", Grain: "store + shipment_id + shipment_item_id", ParentID: "address-order-item-detail-v1",

@@ -4,8 +4,8 @@ import "testing"
 
 func TestCatalogExposesOnlyRegisteredDataProducts(t *testing.T) {
 	definitions := Definitions()
-	if len(definitions) != 14 {
-		t.Fatalf("definitions=%d, want 14", len(definitions))
+	if len(definitions) != 15 {
+		t.Fatalf("definitions=%d, want 15", len(definitions))
 	}
 
 	po, ok := DefinitionFor("vc-po-detail-v1")
@@ -49,6 +49,15 @@ func TestCatalogExposesOnlyRegisteredDataProducts(t *testing.T) {
 	for _, field := range []string{"store_name", "marketplace", "last_updated_date", "order_status", "asin", "quantity", "fulfillment_channel", "ship_country", "ship_state", "ship_city", "ship_postal_code", "source_updated_at"} {
 		if !containsField(address.Fields, field) {
 			t.Fatalf("address order item field %q is missing", field)
+		}
+	}
+	fbm, ok := DefinitionFor("fbm-address-order-item-detail-v1")
+	if !ok || fbm.Source != "ls_mp_fbm_orders + item_info + address_info + platform_info" || fbm.Grain != "store_id + global_item_no" {
+		t.Fatalf("FBM address definition=%+v found=%t", fbm, ok)
+	}
+	for _, field := range []string{"marketplace", "fulfillment_channel", "ship_country", "ship_state", "ship_city", "ship_postal_code", "ship_lat", "ship_lng", "source_global_item_no"} {
+		if !containsField(fbm.Fields, field) {
+			t.Fatalf("FBM address field %q is missing", field)
 		}
 	}
 	if _, ok := DefinitionFor("user_entered_table"); ok {

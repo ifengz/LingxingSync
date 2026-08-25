@@ -295,6 +295,45 @@ endpoints:
     enabled: true
     window_days: 0
 
+  # 多平台 FBM 订单原始接口：订单级 address_info 与商品级 item_info 原样落 ls_mp_fbm_orders。
+  # start_time/end_time 必须是 Unix 秒；worker 会按 WindowStartField/WindowEndField 动态注入。
+  - name: mp_fbm_orders
+    display: "多平台 FBM 订单"
+    account: "sc_us"
+    path: "/pb/mp/order/v2/list"
+    method: "POST"
+    table: "ls_mp_fbm_orders"
+    record_id_fields: ["store_id", "global_order_no"]
+    rate:
+      bucket: 10
+      interval_ms: 1000
+      multi_interval_ms: 0
+      dimension: "account+path"
+    cron: "*/30 * * * *"
+    enabled: false
+    window_days: 30
+    window_start_field: "start_time"
+    window_end_field: "end_time"
+    extra_params:
+      date_type: "update_time"
+
+  # 多平台店铺映射原始接口：保留 store_id 与可用的 sid，不猜测空 sid。
+  - name: mp_store_mappings
+    display: "多平台店铺映射"
+    account: "sc_us"
+    path: "/pb/mp/shop/v2/getSellerList"
+    method: "POST"
+    table: "ls_mp_store_mappings"
+    record_id_fields: ["store_id"]
+    rate:
+      bucket: 10
+      interval_ms: 1000
+      multi_interval_ms: 0
+      dimension: "account+path"
+    cron: "*/30 * * * *"
+    enabled: false
+    window_days: 0
+
   - name: sc_inventory
     display: "SC FBA 库存"
     account: "sc_us"

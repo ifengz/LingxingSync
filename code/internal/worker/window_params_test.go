@@ -1,6 +1,7 @@
 package worker
 
 import (
+	"strconv"
 	"testing"
 	"time"
 
@@ -89,6 +90,28 @@ func TestBaseParamsNoWindowWhenZero(t *testing.T) {
 	for _, key := range []string{"start_date", "end_date", "startDate", "endDate"} {
 		if _, ok := params[key]; ok {
 			t.Errorf("WindowDays=0 不应注入 %q，实际参数=%v", key, params)
+		}
+	}
+}
+
+func TestBaseParamsUsesUnixSecondsForUnixWindowFields(t *testing.T) {
+	w := &EndpointWorker{Endpoint: config.Endpoint{
+		WindowDays:       30,
+		WindowStartField: "start_time",
+		WindowEndField:   "end_time",
+	}}
+	params := w.baseParams()
+	for _, key := range []string{"start_time", "end_time"} {
+		value, ok := params[key]
+		if !ok {
+			t.Fatalf("missing %q in params=%v", key, params)
+		}
+		seconds, ok := value.(string)
+		if !ok {
+			t.Fatalf("%q type=%T, want string", key, value)
+		}
+		if _, err := strconv.ParseInt(seconds, 10, 64); err != nil {
+			t.Fatalf("%q=%q is not decimal Unix seconds: %v", key, seconds, err)
 		}
 	}
 }

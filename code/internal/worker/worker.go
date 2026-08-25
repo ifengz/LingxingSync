@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"log"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -869,8 +870,15 @@ func (w *EndpointWorker) baseParams() map[string]any {
 		// 参数名可配：领星各接口命名不统一——SC/VC 订单用蛇形 start_date/end_date，
 		// VC 报表族（sales/realtimeSales/traffic/inventory）用驼峰 startDate/endDate。
 		// 曾经这里硬编码蛇形，导致 4 个 VC 报表始终 400「参数有误」。
-		params[w.Endpoint.WindowStartFieldOrDefault()] = start.Format("2006-01-02")
-		params[w.Endpoint.WindowEndFieldOrDefault()] = now.Format("2006-01-02")
+		startField := w.Endpoint.WindowStartFieldOrDefault()
+		endField := w.Endpoint.WindowEndFieldOrDefault()
+		if startField == "start_time" || endField == "end_time" {
+			params[startField] = strconv.FormatInt(start.Unix(), 10)
+			params[endField] = strconv.FormatInt(now.Unix(), 10)
+		} else {
+			params[startField] = start.Format("2006-01-02")
+			params[endField] = now.Format("2006-01-02")
+		}
 	}
 	// 单日期注入（报表类接口，如销量统计 event_date）：今天往前 DateOffsetDays 天。
 	// 与上面的 window 范围互补；DateField 空则不生效。通用机制，不给单接口写死代码。

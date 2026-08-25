@@ -85,6 +85,29 @@ func TestAddressOrderItemReaderUsesOnlyFixedSourceJoin(t *testing.T) {
 	}
 }
 
+func TestFBMAddressOrderItemReaderExpandsOrderItemWithOrderAddress(t *testing.T) {
+	updated := time.Date(2026, 8, 25, 3, 4, 5, 0, time.UTC)
+	queryer := &fixedQueryer{rows: &fixedRows{values: []any{
+		"sc-us-1", "MP-STORE-1", "Store A", "GLOBAL-ORDER-1", "2", "2026-08-25T03:00:00Z", int64(1787626800), "USD",
+		[]byte(`[{"global_item_no":"GLOBAL-ITEM-1","order_item_no":"ORDER-ITEM-1","product_no":"ASIN-1","msku":"SKU-1","title":"Widget","quantity":2,"item_price_amount":"9.99"}]`),
+		[]byte(`{"receiver_country_code":"US","state_or_region":"CA","city":"Los Angeles","postal_code":"00123"}`),
+		[]byte(`[{"platform_order_no":"111-2222222-3333333","store_Country_code":"US"}]`), updated,
+	}}}
+	reader := &FBMAddressOrderItemDetailReader{queryer: queryer}
+	page, err := reader.Snapshot(context.Background(), Query{Store: "MP-STORE-1", DateFrom: "2026-08-25", DateTo: "2026-08-25", Fields: []string{"amazon_order_id", "source_order_item_no", "asin", "sku", "quantity", "fulfillment_channel", "ship_country", "ship_state", "ship_city", "ship_postal_code", "ship_lat"}, PageSize: 10})
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	for _, want := range []string{"FROM ls_mp_fbm_orders o", "FROM_UNIXTIME(o.global_purchase_time) BETWEEN ? AND ?", "o.store_id IN (?)", "o.item_info", "o.address_info"} {
+		if !strings.Contains(queryer.query, want) {
+			t.Fatalf("FBM query missing %q: %s", want, queryer.query)
+		}
+	}
+	if len(page.Rows) != 1 || page.Rows[0].StableKey != "GLOBAL-ITEM-1" || page.Rows[0].Values["amazon_order_id"] != "111-2222222-3333333" || page.Rows[0].Values["source_order_item_no"] != "ORDER-ITEM-1" || page.Rows[0].Values["fulfillment_channel"] != "FBM" || page.Rows[0].Values["ship_postal_code"] != "00123" || page.Rows[0].Values["ship_lat"] != nil {
+		t.Fatalf("FBM address row mismatch: %+v", page)
+	}
+}
+
 func TestVersionedReadersExposeOnlyVerifiedCandidateMappings(t *testing.T) {
 	for _, tc := range []struct {
 		name   string

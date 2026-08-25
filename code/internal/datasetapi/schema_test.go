@@ -144,6 +144,22 @@ func TestAddressOrderItemSchemaKeepsCompositeDownstreamKey(t *testing.T) {
 	}
 }
 
+func TestFBMAddressOrderItemSchemaKeepsUpstreamItemKey(t *testing.T) {
+	schema, ok := SchemaFor("fbm-address-order-item-detail-v1")
+	if !ok {
+		t.Fatal("FBM address order item schema missing")
+	}
+	ddl, err := schema.CreateTableSQL(nil)
+	if err != nil {
+		t.Fatalf("create SQL: %v", err)
+	}
+	for _, want := range []string{"`source_global_item_no` VARCHAR(128)", "`ship_country` CHAR(2)", "`ship_postal_code` VARCHAR(32)", "`ship_lat` DECIMAL(10,7)", "PRIMARY KEY (`store`, `stable_key`)", "KEY `idx_updated_at` (`updated_at`)"} {
+		if !strings.Contains(ddl, want) {
+			t.Fatalf("FBM address DDL missing %q: %s", want, ddl)
+		}
+	}
+}
+
 func TestVersionedSchemasContainCandidateColumnsWithFixedTypes(t *testing.T) {
 	cases := []struct {
 		datasetID, field, sqlType string

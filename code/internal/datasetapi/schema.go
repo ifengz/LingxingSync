@@ -47,7 +47,12 @@ var schemas = map[string]Schema{
 		PrimaryKey: []string{"store", "stable_key"},
 	},
 	"address-order-item-detail-v1": {
-		DatasetID: "address-order-item-detail-v1", TableName: "address_order_item_detail_v1", DataNote: "订单配送商品行；marketplace 由店铺接口的 marketplace_id 映射为 US/AU/JP，AFN/MFN 映射为 FBA/FBM。ship_lat/ship_lng 为历史兼容字段，保持 NULL。",
+		DatasetID: "address-order-item-detail-v1", TableName: "address_order_item_detail_v1", DataNote: "FBA 订单配送商品行；marketplace 由店铺接口的 marketplace_id 映射为 US/AU/JP，fulfillment_channel 固定为 FBA。ship_lat/ship_lng 为历史兼容字段，保持 NULL。",
+		Columns:    detailSchemaColumns([]Column{{Name: "store", SQLType: "VARCHAR(64)", Nullable: false}, {Name: "record_date", SQLType: "DATE", Nullable: true}, {Name: "stable_key", SQLType: "VARCHAR(255)", Nullable: false}, {Name: "updated_at", SQLType: "DATETIME(6)", Nullable: false}}),
+		PrimaryKey: []string{"store", "stable_key"},
+	},
+	"fbm-address-order-item-detail-v1": {
+		DatasetID: "fbm-address-order-item-detail-v1", TableName: "fbm_address_order_item_detail_v1", DataNote: "FBM 订单商品配送明细；商品稳定键直接使用领星 global_item_no，地址来自订单级 address_info，坐标上游不提供保持 NULL。",
 		Columns:    detailSchemaColumns([]Column{{Name: "store", SQLType: "VARCHAR(64)", Nullable: false}, {Name: "record_date", SQLType: "DATE", Nullable: true}, {Name: "stable_key", SQLType: "VARCHAR(255)", Nullable: false}, {Name: "updated_at", SQLType: "DATETIME(6)", Nullable: false}}),
 		PrimaryKey: []string{"store", "stable_key"},
 	},
@@ -201,6 +206,8 @@ func schemaType(name string) string {
 		return "VARCHAR(64)"
 	case name == "source_updated_at":
 		return "DATETIME(6)"
+	case name == "source_global_order_no", name == "source_global_item_no", name == "source_order_item_no", name == "amazon_order_id", name == "amazon_order_item_id":
+		return "VARCHAR(128)"
 	case name == "latest_sync_at":
 		return "DATETIME(6)"
 	case name == "quantity_7d", name == "quantity_30d", name == "returns_30d", name == "inventory", name == "inbound_inventory", name == "reserved_inventory", name == "unfulfillable_inventory", name == "reviews_count", name == "ad_orders_7d", name == "sales_quantity_7d", name == "sales_quantity_30d", name == "sellable_inventory", name == "aged90_sellable_inventory", name == "unhealthy_inventory", name == "realtime_ordered_units", name == "glance_views":
