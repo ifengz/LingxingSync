@@ -78,3 +78,22 @@ func TestSyncTemplateLabelsAmazonFulfilledShipments(t *testing.T) {
 		t.Fatal("同步页缺少 Amazon FBA 履约发货明细标签")
 	}
 }
+
+func TestSyncTemplateUsesAccountScopeForReportExports(t *testing.T) {
+	raw, err := os.ReadFile("../../web/templates/sync_manage.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(raw)
+	if !strings.Contains(source, "保存配置") {
+		t.Fatal("正式报表保存操作缺少保存配置按钮")
+	}
+	if strings.Contains(source, "账号范围") {
+		t.Fatal("正式报表页面不应引入账号范围文案")
+	}
+	for _, removed := range []string{"selectAllReportStores()", "toggleReportStore(store.sid)", "reportBatch.store_sids"} {
+		if strings.Contains(source, removed) {
+			t.Fatalf("正式报表页不应保留店铺选择: %q", removed)
+		}
+	}
+}

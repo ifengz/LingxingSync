@@ -77,6 +77,7 @@ type pageData struct {
 	EndpointNames  []string
 	AccountIDs     []string
 	AccountOptions []pageAccountOption
+	ReportTypes    []string
 }
 
 type pageAccountOption struct {
@@ -109,6 +110,7 @@ func (s *Server) newPageData(active string) pageData {
 		EndpointNames:  names,
 		AccountIDs:     ids,
 		AccountOptions: accountOptions,
+		ReportTypes:    availableReportExportTypes(),
 	}
 }
 

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"lingxing-sync/internal/config"
+	"lingxing-sync/internal/db"
 	"lingxing-sync/internal/reportexport"
 )
 
@@ -44,6 +45,17 @@ type fixedReportStatusReader struct {
 func (r *fixedReportStatusReader) Latest(_ context.Context, accountID, storeID, reportType string) (reportExportStatusOut, error) {
 	r.accountID, r.storeID, r.reportType = accountID, storeID, reportType
 	return r.status, r.err
+}
+
+type fixedReportStoreScopeReader struct {
+	stores    []db.StoreSummary
+	err       error
+	accountID string
+}
+
+func (r *fixedReportStoreScopeReader) Stores(_ context.Context, accountID string) ([]db.StoreSummary, error) {
+	r.accountID = accountID
+	return r.stores, r.err
 }
 
 func TestDailyPreviewRouteRequiresDatesAndForwardsFixedFilters(t *testing.T) {
@@ -145,6 +157,66 @@ func TestReportExportConfigPutPersistsOnlyCustomerReturns(t *testing.T) {
 	s.apiPutReportExportConfig(unknown, httptest.NewRequest(http.MethodPut, "/api/report-exports/config", strings.NewReader(`{"report_exports":[{"type":"sales","enabled":false}]}`)))
 	if unknown.Code != http.StatusBadRequest || !strings.Contains(unknown.Body.String(), "不支持") {
 		t.Fatalf("unknown type status=%d body=%s", unknown.Code, unknown.Body.String())
+	}
+}
+
+func TestReportExportConfigPutExpandsEnabledReportToAccountSCStoreScope(t *testing.T) {
+	cfg := validReportTestConfig()
+	store := config.NewStore(t.TempDir()+"/config.yaml", cfg)
+	scope := &fixedReportStoreScopeReader{stores: []db.StoreSummary{
+		{SID: "1001", StoreType: "SC", SellerID: "SELLER-1", MarketplaceID: "MKT-1"},
+		{SID: "1002", StoreType: "SC", SellerID: "SELLER-2", MarketplaceID: "MKT-2"},
+	}}
+	s := &Server{cfg: cfg, store: store, reportStoreScope: scope}
+	body := `{"report_exports":[{"type":"fba_customer_returns","enabled":true,"account":"sc_us","region":"na","cron":"0 4 * * *","window_days":3}]}`
+	rec := httptest.NewRecorder()
+
+	s.apiPutReportExportConfig(rec, httptest.NewRequest(http.MethodPut, "/api/report-exports/config", strings.NewReader(body)))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unscoped report config status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	reports := store.Current().ReportExports
+	if len(reports) != 2 || reports[0].StoreID != "1001" || reports[1].StoreID != "1002" {
+		t.Fatalf("report store scope=%+v, want global selected SC stores 1001 and 1002", reports)
+	}
+	if scope.accountID != "sc_us" || reports[0].SellerID != "SELLER-1" || reports[1].MarketplaceIDs[0] != "MKT-2" {
+		t.Fatalf("report scope metadata=%+v account=%q", reports, scope.accountID)
+	}
+}
+
+func TestReportExportConfigPutRejectsEnabledReportWithoutSelectedSCStore(t *testing.T) {
+	cfg := validReportTestConfig()
+	store := config.NewStore(t.TempDir()+"/config.yaml", cfg)
+	s := &Server{cfg: cfg, store: store, reportStoreScope: &fixedReportStoreScopeReader{}}
+	body := `{"report_exports":[{"type":"fba_customer_returns","enabled":true,"account":"sc_us","region":"na","cron":"0 4 * * *","window_days":3}]}`
+	rec := httptest.NewRecorder()
+
+	s.apiPutReportExportConfig(rec, httptest.NewRequest(http.MethodPut, "/api/report-exports/config", strings.NewReader(body)))
+
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "没有已选 SC 店铺") {
+		t.Fatalf("empty global SC scope status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if len(store.Current().ReportExports) != 0 {
+		t.Fatalf("failed enabled scope save must not persist reports: %+v", store.Current().ReportExports)
+	}
+}
+
+func TestReportExportConfigPutKeepsDisabledAccountScope(t *testing.T) {
+	cfg := validReportTestConfig()
+	store := config.NewStore(t.TempDir()+"/config.yaml", cfg)
+	s := &Server{cfg: cfg, store: store}
+	body := `{"report_exports":[{"type":"fba_customer_returns","enabled":false,"account":"sc_us","region":"na","cron":"0 4 * * *","window_days":3}]}`
+	rec := httptest.NewRecorder()
+
+	s.apiPutReportExportConfig(rec, httptest.NewRequest(http.MethodPut, "/api/report-exports/config", strings.NewReader(body)))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("disabled account scope status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	reports := store.Current().ReportExports
+	if len(reports) != 1 || reports[0].Enabled || reports[0].StoreID != "" {
+		t.Fatalf("disabled account scope=%+v, want one disabled no-store config", reports)
 	}
 }
 

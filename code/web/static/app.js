@@ -257,7 +257,7 @@ window.syncManage = function () {
     catalogBatchKeys: [],
     reportExportConfigs: [],
     reportAvailableTypes: ['fba_customer_returns'],
-    reportBatch: { type: 'fba_customer_returns', account: '', store_sids: [], region: 'na', cron: '0 4 * * *', window_days: 3, enabled: true },
+    reportBatch: { type: 'fba_customer_returns', account: '', region: 'na', cron: '0 4 * * *', window_days: 3, enabled: true },
     reportStatuses: {},
     reportExportLoading: false,
     reportExportSaving: false,
@@ -335,7 +335,7 @@ window.syncManage = function () {
         this.reportExportConfigs = Array.isArray(response.report_exports) ? response.report_exports.slice() : [];
         this.reportAvailableTypes = Array.isArray(response.available_types) && response.available_types.length ? response.available_types.slice() : ['fba_customer_returns'];
         this.reportStatuses = {};
-        const statuses = await Promise.all(this.reportExportConfigs.map(async row => {
+        const statuses = await Promise.all(this.reportExportConfigs.filter(row => row.store_id).map(async row => {
           const query = new URLSearchParams({ type: row.type || 'fba_customer_returns', account: row.account, store_id: row.store_id });
           const status = await window.apiGet('/api/report-exports/status?' + query.toString());
           return [this.reportScopeKey(row), status];
@@ -370,51 +370,24 @@ window.syncManage = function () {
       if (differences.error) return '—';
       return differences[name] === null || differences[name] === undefined ? 0 : differences[name];
     },
-    async selectReportAccount(account) {
-      this.reportBatch.account = account;
-      this.reportBatch.store_sids = [];
-      if (account) await this.ensureStores(account);
-    },
-    toggleReportStore(sid) {
-      const selected = this.reportBatch.store_sids;
-      const index = selected.indexOf(sid);
-      if (index >= 0) selected.splice(index, 1);
-      else selected.push(sid);
-    },
-    selectAllReportStores() {
-      const slot = this.storesByAccount[this.reportBatch.account];
-      if (!slot || !slot.loaded) return;
-      const valid = slot.items.filter(store => store.store_type === 'SC' && store.seller_id && store.marketplace_id).map(store => store.sid);
-      this.reportBatch.store_sids = this.reportBatch.store_sids.length === valid.length ? [] : valid;
-    },
+    selectReportAccount(account) { this.reportBatch.account = account; },
     async saveReportExportBatch() {
       if (this.reportExportSaving) return;
       const account = this.reportBatch.account;
-      const slot = this.storesByAccount[account];
-      const selected = new Set(this.reportBatch.store_sids);
-      const stores = slot && slot.loaded ? slot.items.filter(store => selected.has(store.sid)) : [];
-      if (!account || !stores.length) {
-        this.reportExportError = '请选择账号和至少一个店铺';
-        return;
-      }
-      const incomplete = stores.filter(store => store.store_type !== 'SC' || !store.seller_id || !store.marketplace_id);
-      if (incomplete.length) {
-        this.reportExportError = '所选店铺缺少 Seller ID 或 Marketplace ID：' + incomplete.map(store => store.store_name || store.sid).join('、');
+      if (!account) {
+        this.reportExportError = '请选择账号';
         return;
       }
       const reportType = this.reportBatch.type || 'fba_customer_returns';
-      const existingScopes = new Set(stores.map(store => [reportType, account, store.sid].join('|')));
-      const keep = this.reportExportConfigs.filter(row => !existingScopes.has([row.type, row.account, row.store_id].join('|')));
-      const additions = stores.map(store => ({
-        type: reportType, enabled: !!this.reportBatch.enabled, account,
-        seller_id: store.seller_id, store_id: store.sid, region: this.reportBatch.region,
-        marketplace_ids: [store.marketplace_id], cron: this.reportBatch.cron,
-        window_days: Number(this.reportBatch.window_days),
-      }));
+      const keep = this.reportExportConfigs.filter(row => row.type !== reportType || row.account !== account);
+      const addition = {
+        type: reportType, enabled: !!this.reportBatch.enabled, account, region: this.reportBatch.region,
+        cron: this.reportBatch.cron, window_days: Number(this.reportBatch.window_days),
+      };
       this.reportExportSaving = true;
       this.reportExportError = '';
       try {
-        const result = await window.apiPut('/api/report-exports/config', { report_exports: keep.concat(additions) });
+        const result = await window.apiPut('/api/report-exports/config', { report_exports: keep.concat(addition) });
         window.toast('success', (result && result.message) || '正式报表配置已保存');
         await this.loadReportExport();
       } catch (error) {
@@ -973,11 +946,15 @@ window.logsPage = function () {
   // 从 URL query 预填筛选（同步中心点击单元格跳转过来）
   const q = new URLSearchParams(window.location.search);
   return {
+    activeTab: ['sync', 'report', 'reconciliation'].includes(q.get('tab')) ? q.get('tab') : 'sync',
     tasks: [],
+    reportTasks: [],
+    reconciliations: [],
     total: 0,
     endpointNames: (window.__PAGE__ && window.__PAGE__.endpointNames) || [],
     accountIDs: (window.__PAGE__ && window.__PAGE__.accountIDs) || [],
     accountOptions: (window.__PAGE__ && window.__PAGE__.accountOptions) || [],
+    reportTypes: (window.__PAGE__ && window.__PAGE__.reportTypes) || [],
     polling: null,        // T3：5s 轮询句柄
     refreshing: false,    // 手动刷新按钮态（转圈 + 禁用）
     requesting: false,    // 请求互斥，避免轮询和手动刷新重叠
@@ -987,8 +964,10 @@ window.logsPage = function () {
     dateRangeError: '',
     filters: {
       endpoint: q.get('endpoint') || '',
+      report_type: q.get('type') || '',
       account: q.get('account') || '',
       status: q.get('status') || '',
+      audit_id: q.get('audit_id') || '',
       date_from: q.get('date_from') || '',
       date_to: q.get('date_to') || '',
       page: 1,
@@ -999,7 +978,7 @@ window.logsPage = function () {
       // T3：每 5s 轮询当前筛选条件下的 load()。
       // 关键：不复位 filters.page —— 分页停留在用户所在页，不跳回第 1 页。
       // 轮询失败由 load 内的 toastError 静默吞掉。
-      this.polling = setInterval(() => this.load(), 5000);
+      this.polling = setInterval(() => { if (this.activeTab === 'sync') this.load(); }, 5000);
     },
     destroy() {
       // Alpine 组件卸载时清 timer，避免切页泄漏
@@ -1011,6 +990,8 @@ window.logsPage = function () {
       this.requesting = true;
       this.refreshing = showFeedback;
       try {
+        if (this.activeTab === 'report') return await this.loadReportHistory();
+        if (this.activeTab === 'reconciliation') return await this.loadReconciliations();
         const params = new URLSearchParams();
         for (const k of ['endpoint', 'account', 'status', 'date_from', 'date_to', 'page', 'page_size']) {
           const v = this.filters[k];
@@ -1030,6 +1011,42 @@ window.logsPage = function () {
     },
     refreshList() {
       return this.load(true);
+    },
+    async switchTab(tab) {
+      if (this.activeTab === tab) return;
+      this.activeTab = tab;
+      this.filters.page = 1;
+      this.filters.status = '';
+      this.filters.audit_id = '';
+      await this.load();
+    },
+    async loadReportHistory() {
+      const params = this.historyParams(['audit_id', 'account', 'report_type', 'status', 'date_from', 'date_to', 'page', 'page_size']);
+      const d = await window.apiGet('/api/report-exports/history?' + params.toString()).catch(window.toastError);
+      if (!d) return;
+      this.reportTasks = d.items || [];
+      this.total = d.total || 0;
+      this.lastUpdatedAt = this.nowText();
+    },
+    async loadReconciliations() {
+      const params = this.historyParams(['audit_id', 'account', 'report_type', 'status', 'date_from', 'date_to', 'page', 'page_size']);
+      const d = await window.apiGet('/api/report-reconciliations?' + params.toString()).catch(window.toastError);
+      if (!d) return;
+      this.reconciliations = d.items || [];
+      this.total = d.total || 0;
+      this.lastUpdatedAt = this.nowText();
+    },
+    historyParams(keys) {
+      const params = new URLSearchParams();
+      for (const key of keys) {
+        const field = key === 'report_type' ? 'report_type' : key;
+        const value = this.filters[field];
+        if (value !== '' && value != null) params.set(key === 'report_type' ? 'type' : key, value);
+      }
+      return params;
+    },
+    nowText() {
+      return new Date().toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
     },
     accountLabel(id) {
       const account = this.accountOptions.find(item => item.id === id);
@@ -1108,6 +1125,26 @@ window.logsPage = function () {
     },
     statusText(s) {
       return ({ success: '成功', empty: '需核验（空结果）', running: '运行中', error: '失败', cancelled: '已取消' })[s] || s;
+    },
+    reportTypeLabel(type) {
+      return {
+        fba_customer_returns: 'FBA 退货',
+        fba_customer_shipment_sales: 'FBA 发货销售',
+        fba_myi_unsuppressed_inventory: 'FBA 库存',
+        fba_myi_all_inventory: 'FBA 全库存',
+        fba_reserved_inventory: 'FBA 预留库存',
+        afn_inventory: 'AFN 库存',
+      }[type] || type;
+    },
+    reportStatusText(status) {
+      return ({ SUCCESS: '成功', ERROR: '失败', FATAL: '失败', CANCELLED: '已取消', PENDING: '等待创建', CREATING: '创建中', IN_QUEUE: '队列中', IN_PROGRESS: '下载中', DONE: '待下载', UNKNOWN: '未知', matched: '已匹配', corrected: '已修正', failed: '失败' })[status] || status;
+    },
+    openReportAudit(auditID) {
+      this.activeTab = 'report';
+      this.filters.page = 1;
+      this.filters.audit_id = String(auditID);
+      this.filters.status = '';
+      this.load();
     },
     openDetail(task) {
       // 把整个 task 交给详情抽屉组件（用全局事件解耦两个 x-data）。

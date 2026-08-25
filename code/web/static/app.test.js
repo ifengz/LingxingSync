@@ -297,6 +297,27 @@ const confirmation = sandbox.window.syncConfirm('删除账号？', '确认');
 root.confirmResolve(true);
 confirmation.then((accepted) => assert.equal(accepted, true));
 
+// 正式报告保存不再从页面读取店铺；请求只带共同配置，后端按账号全局店铺选择展开。
+{
+  const report = sandbox.window.syncManage();
+  report.reportExportConfigs = [{
+    type: 'fba_customer_returns', enabled: true, account: 'sc_us', seller_id: 'SELLER-OLD',
+    store_id: 'OLD', region: 'na', marketplace_ids: ['OLD-MKT'], cron: '0 4 * * *', window_days: 3,
+  }];
+  report.reportBatch = { type: 'fba_customer_returns', account: 'sc_us', region: 'na', cron: '0 5 * * *', window_days: 7, enabled: true };
+  let request = null;
+  sandbox.window.apiPut = (url, body) => {
+    request = { url, body };
+    return Promise.resolve({ message: '已保存' });
+  };
+  report.loadReportExport = async () => {};
+  void report.saveReportExportBatch();
+  assert.equal(JSON.stringify(request), JSON.stringify({
+    url: '/api/report-exports/config',
+    body: { report_exports: [{ type: 'fba_customer_returns', enabled: true, account: 'sc_us', region: 'na', cron: '0 5 * * *', window_days: 7 }] },
+  }));
+}
+
 void (async () => {
   // 数据表选择由 URL 驱动：无参数默认第一张已发布表，有效参数恢复（包括未发布 v2），无效参数回退并清除。
   {
@@ -722,36 +743,27 @@ void (async () => {
     assert.equal(report.reportDifferenceFor(report.reportExportConfigs[0], 'database_missing'), 1);
   }
 
-  // 报表检验批量配置：选一次账号和共同参数，勾多个店铺后生成多条固定报告配置。
+  // 报表检验仅提交共同参数；店铺范围、Seller ID 和 Marketplace ID 全部由后端按账号全局选择解析。
   {
     const report = sandbox.window.syncManage();
     report.reportExportConfigs = [{
       type: 'fba_customer_returns', enabled: true, account: 'sc_us', seller_id: 'SELLER-OLD',
       store_id: 'OLD', region: 'na', marketplace_ids: ['OLD-MKT'], cron: '0 4 * * *', window_days: 3,
     }];
-    report.reportBatch = { account: 'sc_us', store_sids: [], region: 'na', cron: '0 5 * * *', window_days: 7, enabled: true };
-    report.storesByAccount = { sc_us: { loaded: true, selected: {}, query: '', items: [
-      { sid: '1001', store_type: 'SC', seller_id: 'SELLER-1', marketplace_id: 'MKT-1', store_name: '美国店' },
-      { sid: '1002', store_type: 'SC', seller_id: 'SELLER-2', marketplace_id: 'MKT-2', store_name: '加拿大店' },
-      { sid: '2001', store_type: 'VC', seller_id: 'SELLER-VC', marketplace_id: 'MKT-VC', store_name: 'VC 店' },
-    ] } };
-    report.selectAllReportStores();
-    assert.deepEqual(report.reportBatch.store_sids, ['1001', '1002'], 'FBA 退货报表只能选择 SC 店铺');
+    report.reportBatch = { type: 'fba_customer_returns', account: 'sc_us', region: 'na', cron: '0 5 * * *', window_days: 7, enabled: true };
     let put = null;
     sandbox.window.apiPut = async (url, body) => { put = { url, body }; return { message: '已保存' }; };
     report.loadReportExport = async () => {};
     await report.saveReportExportBatch();
     assert.equal(put.url, '/api/report-exports/config');
-    assert.equal(put.body.report_exports.length, 3);
-    assert.deepEqual(put.body.report_exports.slice(1).map(row => [row.store_id, row.seller_id, row.marketplace_ids[0], row.cron, row.window_days]), [
-      ['1001', 'SELLER-1', 'MKT-1', '0 5 * * *', 7],
-      ['1002', 'SELLER-2', 'MKT-2', '0 5 * * *', 7],
-    ]);
+    assert.equal(put.body.report_exports.length, 1);
+    assert.equal(JSON.stringify(put.body.report_exports[0]), JSON.stringify({
+      type: 'fba_customer_returns', enabled: true, account: 'sc_us', region: 'na', cron: '0 5 * * *', window_days: 7,
+    }));
 
     report.reportBatch.type = 'fba_customer_shipment_sales';
-    report.reportBatch.store_sids = ['1001'];
     await report.saveReportExportBatch();
-    assert.equal(put.body.report_exports.find(row => row.store_id === '1001').type, 'fba_customer_shipment_sales');
+    assert.equal(put.body.report_exports[0].type, 'fba_customer_shipment_sales');
     report.reportBatch.type = 'fba_customer_returns';
 
     report.reportStatuses[report.reportScopeKey(report.reportExportConfigs[0])] = {
@@ -883,6 +895,35 @@ void (async () => {
   assert.match(logs.filters.date_to, /^\d{4}-\d{2}-\d{2}$/);
   assert.equal(logs.filters.page, 1);
   assert.equal(dateRangeLoads, 1);
+
+  // 三张日志卡各自读取真实历史表；核对记录通过报告审计号回到对应下载记录。
+  sandbox.window.__PAGE__ = { reportTypes: ['fba_customer_returns'] };
+  const historyLogs = sandbox.window.logsPage();
+  historyLogs.filters.account = 'sc_us';
+  historyLogs.filters.report_type = 'fba_customer_returns';
+  historyLogs.filters.date_from = '2026-08-01';
+  historyLogs.filters.date_to = '2026-08-25';
+  const historyCalls = [];
+  sandbox.window.apiGet = async (url) => {
+    historyCalls.push(url);
+    if (url.startsWith('/api/report-exports/history?')) return { items: [{ report_audit_id: 93 }], total: 1 };
+    if (url.startsWith('/api/report-reconciliations?')) return { items: [{ report_audit_id: 93, business_date: '2026-08-24' }], total: 1 };
+    throw new Error('unexpected history URL ' + url);
+  };
+  await historyLogs.switchTab('report');
+  assert.equal(historyCalls[0], '/api/report-exports/history?account=sc_us&type=fba_customer_returns&date_from=2026-08-01&date_to=2026-08-25&page=1&page_size=20');
+  await historyLogs.switchTab('reconciliation');
+  assert.equal(historyCalls[1], '/api/report-reconciliations?account=sc_us&type=fba_customer_returns&date_from=2026-08-01&date_to=2026-08-25&page=1&page_size=20');
+  historyLogs.openReportAudit(93);
+  assert.equal(historyCalls[2], '/api/report-exports/history?audit_id=93&account=sc_us&type=fba_customer_returns&date_from=2026-08-01&date_to=2026-08-25&page=1&page_size=20');
+
+  {
+    const logsTemplate = fs.readFileSync(__dirname + '/../templates/logs.html', 'utf8');
+    assert.match(logsTemplate, /接口同步数据/);
+    assert.match(logsTemplate, /接口下载报告/);
+    assert.match(logsTemplate, /核对数据/);
+    assert.match(logsTemplate, /openReportAudit\(row\.report_audit_id\)/);
+  }
 
   sandbox.window.__PAGE__ = { accountOptions: [{ id: 'sc_us_1', name: '美国自营' }] };
   const namedLogs = sandbox.window.logsPage();

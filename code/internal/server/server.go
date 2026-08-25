@@ -53,14 +53,16 @@ type Server struct {
 	assets     Assets // 注入的 web/ 静态资源（embed.FS）
 
 	// 配置读写 + 热加载/重启依赖（宪法 §7.5）
-	store        *config.ConfigStore     // config.yaml 线程安全读写 + 变更分类
-	sched        *worker.Scheduler       // 热加载时 Rebuild cron
-	limiters     *worker.LimiterRegistry // rate 变化时 UpdateOrCreate
-	configPath   string                  // config.yaml 路径（消息展示用）
-	datasetAPI   *datasetapi.Handler     // listing-daily-v1 兼容入口
-	datasetAPIs  map[string]*datasetapi.Handler
-	dailyPreview dailyPreviewReader // 固定日维预览查询
-	reportStatus reportStatusReader // 正式报表任务与对账状态
+	store            *config.ConfigStore     // config.yaml 线程安全读写 + 变更分类
+	sched            *worker.Scheduler       // 热加载时 Rebuild cron
+	limiters         *worker.LimiterRegistry // rate 变化时 UpdateOrCreate
+	configPath       string                  // config.yaml 路径（消息展示用）
+	datasetAPI       *datasetapi.Handler     // listing-daily-v1 兼容入口
+	datasetAPIs      map[string]*datasetapi.Handler
+	dailyPreview     dailyPreviewReader     // 固定日维预览查询
+	reportStatus     reportStatusReader     // 正式报表任务与对账状态
+	reportStoreScope reportStoreScopeReader // 正式报表复用账号级店铺选择
+	reportHistory    reportHistoryReader    // 正式报告下载与核对历史
 
 	// pages: 页面名 → 该页专属的已解析模板树。
 	// 关键解耦：每页一棵独立模板树（layout + 该页 partial），这样各页的
@@ -103,6 +105,8 @@ func New(cfg *config.Config, dbx *sqlx.DB, reg *worker.Registry, clients *api.Cl
 	if dbx != nil {
 		s.dailyPreview = sqlDailyPreviewReader{db: dbx}
 		s.reportStatus = sqlReportStatusReader{db: dbx}
+		s.reportStoreScope = sqlReportStoreScopeReader{db: dbx}
+		s.reportHistory = sqlReportHistoryReader{db: dbx}
 	}
 	s.datasetAPIs = make(map[string]*datasetapi.Handler)
 	for _, definition := range datasetapi.Definitions() {
@@ -344,6 +348,8 @@ func (s *Server) Routes() *http.ServeMux {
 	mux.HandleFunc("GET /api/egress-ip", s.apiEgressIP)
 	mux.HandleFunc("GET /api/tasks", s.apiTasks)
 	mux.HandleFunc("GET /api/tasks/{id}/logs", s.apiTaskLogs)
+	mux.HandleFunc("GET /api/report-exports/history", s.apiReportHistory)
+	mux.HandleFunc("GET /api/report-reconciliations", s.apiReportReconciliations)
 
 	// ---- API 路由：触发同步 ----
 	mux.HandleFunc("POST /api/sync/{name}", s.apiSyncTrigger)

@@ -12,6 +12,7 @@ import (
 	"github.com/jmoiron/sqlx"
 
 	"lingxing-sync/internal/config"
+	"lingxing-sync/internal/db"
 	"lingxing-sync/internal/reportexport"
 )
 
@@ -322,9 +323,78 @@ func (s *Server) apiPutReportExportConfig(w http.ResponseWriter, r *http.Request
 			errJSON(w, http.StatusBadRequest, "不支持的正式报表类型")
 			return
 		}
-		snap.ReportExports = append(snap.ReportExports, reportExportFromDTO(report))
+		exports, err := s.expandReportExportScope(r.Context(), report)
+		if err != nil {
+			errJSON(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		snap.ReportExports = append(snap.ReportExports, exports...)
 	}
 	s.applyConfigWrite(w, old, snap, "正式报表配置已保存")
+}
+
+type reportStoreScopeReader interface {
+	Stores(context.Context, string) ([]db.StoreSummary, error)
+}
+
+type sqlReportStoreScopeReader struct{ db *sqlx.DB }
+
+func (r sqlReportStoreScopeReader) Stores(_ context.Context, accountID string) ([]db.StoreSummary, error) {
+	if r.db == nil {
+		return nil, fmt.Errorf("正式报表店铺范围数据库未配置")
+	}
+	sids, err := db.QueryEnabledSIDsForAccount(r.db, accountID, "SC")
+	if err != nil {
+		return nil, err
+	}
+	items, _, err := db.ListStoresForAccount(r.db, accountID)
+	if err != nil {
+		return nil, err
+	}
+	bySID := make(map[string]db.StoreSummary, len(items))
+	for _, item := range items {
+		bySID[item.SID] = item
+	}
+	stores := make([]db.StoreSummary, 0, len(sids))
+	for _, sid := range sids {
+		item, ok := bySID[sid]
+		if !ok || item.StoreType != "SC" {
+			return nil, fmt.Errorf("已选 SC 店铺 %q 的店铺目录不一致", sid)
+		}
+		stores = append(stores, item)
+	}
+	return stores, nil
+}
+
+func (s *Server) expandReportExportScope(ctx context.Context, report reportExportConfigDTO) ([]config.ReportExport, error) {
+	if strings.TrimSpace(report.StoreID) != "" {
+		return []config.ReportExport{reportExportFromDTO(report)}, nil
+	}
+	if !report.Enabled {
+		return []config.ReportExport{reportExportFromDTO(report)}, nil
+	}
+	if s.reportStoreScope == nil {
+		return nil, fmt.Errorf("正式报表店铺范围未初始化")
+	}
+	stores, err := s.reportStoreScope.Stores(ctx, report.Account)
+	if err != nil {
+		return nil, fmt.Errorf("读取账号店铺范围: %w", err)
+	}
+	if len(stores) == 0 {
+		return nil, fmt.Errorf("账号 %s 没有已选 SC 店铺，不能启用正式报表", report.Account)
+	}
+	exports := make([]config.ReportExport, 0, len(stores))
+	for _, store := range stores {
+		if strings.TrimSpace(store.SellerID) == "" || strings.TrimSpace(store.MarketplaceID) == "" {
+			return nil, fmt.Errorf("已选 SC 店铺 %s 缺 Seller ID 或 Marketplace ID", store.SID)
+		}
+		export := report
+		export.SellerID = store.SellerID
+		export.StoreID = store.SID
+		export.MarketplaceIDs = []string{store.MarketplaceID}
+		exports = append(exports, reportExportFromDTO(export))
+	}
+	return exports, nil
 }
 
 type reportExportTaskOut struct {
