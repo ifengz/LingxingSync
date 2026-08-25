@@ -21,9 +21,10 @@
           ?
         </button>
         <span id="sync-modified-time-tip" role="tooltip"
-              class="pointer-events-none invisible fixed left-4 right-4 top-44 z-40 w-auto rounded-md border border-slate-200 bg-slate-900 px-3 py-2 text-xs font-normal leading-5 text-white opacity-0 shadow-lg transition group-hover:visible group-hover:opacity-100 group-focus-within:visible group-focus-within:opacity-100 sm:absolute sm:left-full sm:right-auto sm:top-1/2 sm:ml-2 sm:w-96 sm:-translate-y-1/2">
+              class="pointer-events-none invisible fixed left-4 right-4 top-44 z-40 w-auto rounded-md border border-slate-200 bg-slate-900 px-3 py-2 text-xs font-normal leading-5 text-white opacity-0 shadow-lg transition group-hover:visible group-hover:opacity-100 group-focus-within:visible group-focus-within:opacity-100 sm:absolute sm:left-full sm:right-auto sm:top-1/2 sm:ml-2 sm:w-96 sm:-translate-y-[40px]">
           <span class="block">支持按修改时间补拉：订单、Listing、FBA 退货、VC PO。</span>
           <span class="block">销量、Performance、SP、SD、HSA、VC 销量/库存按业务日期重拉最近范围。</span>
+          <span class="block">raw-only：这类报告目前只能下载留档。它还没有完整映射到下游日维表的“店铺 + ASIN + 日期”行，无法判断具体差异并更新哪一行，因此不能用来核算或覆盖日维数据。</span>
         </span>
       </span>
     </div>
@@ -301,6 +302,33 @@
             </span>
           </label>
         </div>
+
+        <section class="overflow-hidden rounded-md border border-slate-200">
+          <div class="border-b border-slate-200 bg-slate-50 px-3 py-2">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <h3 class="text-xs font-bold text-slate-700">接口 / 数据表核验矩阵</h3>
+              <span class="text-[11px] text-slate-400">“已启用核验”按当前正式报表 Cron 配置计算</span>
+            </div>
+          </div>
+          <div class="overflow-x-auto">
+            <table class="w-full min-w-[1080px] text-xs" data-report-coverage-matrix>
+              <thead class="border-b border-slate-200 text-left text-slate-400">
+                <tr><th class="px-3 py-2">接口</th><th class="px-3 py-2">数据表</th><th class="px-3 py-2">是否有报表下载</th><th class="px-3 py-2">是否能核验</th><th class="px-3 py-2">是否已启用核验</th></tr>
+              </thead>
+              <tbody class="divide-y divide-slate-100">
+                <template x-for="row in reportCoverageRows()" :key="row.type">
+                  <tr>
+                    <td class="px-3 py-2 font-mono text-[11px] text-slate-700" x-text="row.interface"></td>
+                    <td class="px-3 py-2 font-mono text-[11px] text-slate-600" x-text="row.table"></td>
+                    <td class="px-3 py-2" :class="row.download === '有' ? 'text-emerald-700' : 'text-amber-700'" x-text="row.download"></td>
+                    <td class="px-3 py-2" :class="row.verifiable ? 'text-emerald-700' : 'text-slate-500'" x-text="row.verifiable ? '可以' : '不可以（raw-only）'"></td>
+                    <td class="px-3 py-2" :class="row.enabledCount ? 'font-semibold text-emerald-700' : 'text-slate-500'" x-text="reportCoverageEnabledText(row)"></td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+        </section>
 
         <section class="overflow-hidden rounded-md border border-slate-200">
           <div class="border-b border-slate-200 bg-slate-50 px-3 py-2"><h3 class="text-xs font-bold text-slate-700">已配置报表</h3></div>

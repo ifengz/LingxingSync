@@ -259,6 +259,29 @@ window.syncManage = function () {
     reportAvailableTypes: ['fba_customer_returns'],
     reportBatch: { type: 'fba_customer_returns', account: '', region: 'na', cron: '0 4 * * *', window_days: 3, enabled: true },
     reportStatuses: {},
+    reportCoverageMatrix: [
+      { type: 'fba_customer_returns', interface: 'GET_FBA_FULFILLMENT_CUSTOMER_RETURNS_DATA', table: 'ls_fba_fulfillment_customer_returns -> listing_daily_metrics.returns_qty', download: '有', verifiable: true },
+      { type: 'fba_customer_shipment_sales', interface: 'GET_FBA_FULFILLMENT_CUSTOMER_SHIPMENT_SALES_DATA', table: 'ls_fba_fulfillment_customer_shipment_sales -> listing_daily_metrics.sales_units', download: '有', verifiable: true },
+      { type: 'fba_myi_unsuppressed_inventory', interface: 'GET_FBA_MYI_UNSUPPRESSED_INVENTORY_DATA', table: 'ls_fba_myi_unsuppressed_inventory -> listing_daily_metrics.inventory_*', download: '有', verifiable: true },
+      { type: 'fba_myi_all_inventory', interface: 'GET_FBA_MYI_ALL_INVENTORY_DATA', table: 'ls_fba_myi_all_inventory -> listing_daily_metrics.inventory_*', download: '有', verifiable: true },
+      { type: 'fba_reserved_inventory', interface: 'GET_RESERVED_INVENTORY_DATA', table: 'ls_fba_reserved_inventory -> listing_daily_metrics.inventory_reserved_*', download: '有', verifiable: true },
+      { type: 'afn_inventory', interface: 'GET_AFN_INVENTORY_DATA', table: 'ls_afn_inventory -> listing_daily_metrics.inventory_sellable', download: '有', verifiable: true },
+      { type: 'afn_inventory_by_country', interface: 'GET_AFN_INVENTORY_DATA_BY_COUNTRY', table: 'ls_afn_inventory_by_country', download: '未确认', verifiable: false },
+      { type: 'fba_storage_fee_charges', interface: 'GET_FBA_STORAGE_FEE_CHARGES_DATA', table: 'ls_fba_storage_fee_charges', download: '有', verifiable: false },
+      { type: 'fba_overage_fee_charges', interface: 'GET_FBA_OVERAGE_FEE_CHARGES_DATA', table: 'ls_fba_overage_fee_charges', download: '未确认', verifiable: false },
+      { type: 'fba_longterm_storage_fee_charges', interface: 'GET_FBA_FULFILLMENT_LONGTERM_STORAGE_FEE_CHARGES_DATA', table: 'ls_fba_longterm_storage_fee_charges', download: '未确认', verifiable: false },
+      { type: 'fba_customer_shipment_replacements', interface: 'GET_FBA_FULFILLMENT_CUSTOMER_SHIPMENT_REPLACEMENT_DATA', table: 'ls_fba_fulfillment_customer_shipment_replacements', download: '有', verifiable: false },
+      { type: 'fba_reimbursements', interface: 'GET_FBA_REIMBURSEMENTS_DATA', table: 'ls_fba_reimbursements', download: '有', verifiable: false },
+      { type: 'fba_stranded_inventory', interface: 'GET_STRANDED_INVENTORY_UI_DATA', table: 'ls_fba_stranded_inventory', download: '有', verifiable: false },
+      { type: 'fba_estimated_fees', interface: 'GET_FBA_ESTIMATED_FBA_FEES_TXT_DATA', table: 'ls_fba_estimated_fees', download: '有', verifiable: false },
+      { type: 'fba_inventory_planning', interface: 'GET_FBA_INVENTORY_PLANNING_DATA', table: 'ls_fba_inventory_planning', download: '有', verifiable: false },
+      { type: 'fba_inbound_noncompliance', interface: 'GET_FBA_FULFILLMENT_INBOUND_NONCOMPLIANCE_DATA', table: 'ls_fba_fulfillment_inbound_noncompliance', download: '有', verifiable: false },
+      { type: 'fba_recommended_removal', interface: 'GET_FBA_RECOMMENDED_REMOVAL_DATA', table: 'ls_fba_recommended_removals', download: '有', verifiable: false },
+      { type: 'fba_removal_order', interface: 'GET_FBA_FULFILLMENT_REMOVAL_ORDER_DETAIL_DATA', table: 'ls_fba_removal_order_details', download: '有', verifiable: false },
+      { type: 'fba_removal_shipment', interface: 'GET_FBA_FULFILLMENT_REMOVAL_SHIPMENT_DETAIL_DATA', table: 'ls_fba_removal_shipment_details', download: '有', verifiable: false },
+      { type: 'amazon_all_orders_by_order_date', interface: 'GET_FLAT_FILE_ALL_ORDERS_DATA_BY_ORDER_DATE_GENERAL', table: 'ls_amazon_all_orders_by_order_date', download: '有', verifiable: false },
+      { type: 'amazon_fulfilled_shipments', interface: 'GET_AMAZON_FULFILLED_SHIPMENTS_DATA_GENERAL', table: 'ls_amazon_fulfilled_shipments', download: '有', verifiable: false },
+    ],
     reportExportLoading: false,
     reportExportSaving: false,
     reportExportError: '',
@@ -369,6 +392,17 @@ window.syncManage = function () {
       const differences = this.reportStatusFor(row).differences || {};
       if (differences.error) return '—';
       return differences[name] === null || differences[name] === undefined ? 0 : differences[name];
+    },
+    reportCoverageRows() {
+      const enabled = new Map();
+      for (const row of this.reportExportConfigs) {
+        if (row.enabled) enabled.set(row.type, (enabled.get(row.type) || 0) + 1);
+      }
+      return this.reportCoverageMatrix.map(row => ({ ...row, enabledCount: enabled.get(row.type) || 0 }));
+    },
+    reportCoverageEnabledText(row) {
+      if (!row.verifiable) return '不适用（raw-only）';
+      return row.enabledCount ? '已启用（' + row.enabledCount + '条）' : '未启用';
     },
     selectReportAccount(account) { this.reportBatch.account = account; },
     async saveReportExportBatch() {

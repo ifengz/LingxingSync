@@ -33,6 +33,21 @@ const entryManage = sandbox.window.syncManage();
 assert.equal(entryManage.tab, 'manual');
 assert.equal(entryManage.advancedAdd, false);
 
+// 报表核验矩阵固定展示数据表、下载能力、核验能力和当前启用状态。
+{
+  const matrix = sandbox.window.syncManage();
+  matrix.reportExportConfigs = [
+    { type: 'fba_customer_returns', enabled: true },
+    { type: 'fba_customer_returns', enabled: false },
+  ];
+  const rows = matrix.reportCoverageRows();
+  const returns = rows.find((row) => row.type === 'fba_customer_returns');
+  const rawOnly = rows.find((row) => row.type === 'fba_storage_fee_charges');
+  assert.equal(returns.enabledCount, 1);
+  assert.equal(matrix.reportCoverageEnabledText(returns), '已启用（1条）');
+  assert.equal(matrix.reportCoverageEnabledText(rawOnly), '不适用（raw-only）');
+}
+
 // 同步配置标题提示必须支持键盘聚焦，并把“修改时间增量”和“业务日期重拉”说清楚。
 {
   const template = fs.readFileSync(__dirname + '/../templates/sync_manage.html', 'utf8');
@@ -42,8 +57,14 @@ assert.equal(entryManage.advancedAdd, false);
   assert.match(template, /销量、Performance、SP、SD、HSA、VC 销量\/库存/);
   assert.match(template, /<span class="block">支持按修改时间补拉：订单、Listing、FBA 退货、VC PO。<\/span>/);
   assert.match(template, /<span class="block">销量、Performance、SP、SD、HSA、VC 销量\/库存按业务日期重拉最近范围。<\/span>/);
+  assert.match(template, /<span class="block">raw-only：这类报告目前只能下载留档。它还没有完整映射到下游日维表的“店铺 \+ ASIN \+ 日期”行，无法判断具体差异并更新哪一行，因此不能用来核算或覆盖日维数据。<\/span>/);
   assert.match(template, /fixed left-4 right-4 top-44/);
-  assert.match(template, /sm:absolute sm:left-full sm:right-auto/);
+  assert.match(template, /data-report-coverage-matrix/);
+  assert.match(template, /是否有报表下载/);
+  assert.match(template, /是否能核验/);
+  assert.match(template, /是否已启用核验/);
+  assert.match(template, /sm:absolute sm:left-full sm:right-auto sm:top-1\/2/);
+  assert.match(template, /sm:-translate-y-\[40px\]/);
   assert.doesNotMatch(template, /absolute left-1\/2 top-full/);
 }
 
