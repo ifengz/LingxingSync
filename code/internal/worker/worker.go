@@ -895,8 +895,22 @@ func (w *EndpointWorker) baseParamsFor(req triggerReq) (map[string]any, error) {
 		if w.Endpoint.DateField != "" {
 			params[w.Endpoint.DateField] = req.dateFrom
 		} else {
-			params[w.Endpoint.WindowStartFieldOrDefault()] = req.dateFrom
-			params[w.Endpoint.WindowEndFieldOrDefault()] = req.dateTo
+			startField := w.Endpoint.WindowStartFieldOrDefault()
+			endField := w.Endpoint.WindowEndFieldOrDefault()
+			// 时间戳型窗口字段（如 FBM start_time/end_time）需将日期字符串转成 Unix 秒，
+			// 与 baseParams 的定时窗口注入保持一致；否则上游收到 "2026-01-01" 会 500。
+			if startField == "start_time" || endField == "end_time" {
+				from, ferr := time.Parse("2006-01-02", req.dateFrom)
+				to, terr := time.Parse("2006-01-02", req.dateTo)
+				if ferr != nil || terr != nil {
+					return nil, fmt.Errorf("date_from/date_to 非法: %v / %v", ferr, terr)
+				}
+				params[startField] = strconv.FormatInt(from.Unix(), 10)
+				params[endField] = strconv.FormatInt(to.Unix(), 10)
+			} else {
+				params[startField] = req.dateFrom
+				params[endField] = req.dateTo
+			}
 		}
 	}
 	return params, nil
