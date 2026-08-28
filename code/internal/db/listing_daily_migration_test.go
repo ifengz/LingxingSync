@@ -118,6 +118,11 @@ func TestListingDailyAdReachMigrationAddsPerTypeFieldsAndSources(t *testing.T) {
 		"ADD COLUMN SB_IMPRESSIONS_SOURCE VARCHAR(16) NOT NULL DEFAULT ''",
 		"ADD COLUMN SB_CLICKS BIGINT NULL",
 		"ADD COLUMN SB_CLICKS_SOURCE VARCHAR(16) NOT NULL DEFAULT ''",
+		"FROM LS_AD_SP_PRODUCT",
+		"FROM LS_AD_SD_PRODUCT",
+		"FROM LS_AD_HSA_CAMPAIGN",
+		"WHERE D.CHANNEL = 'SC_FBA' AND D.IDENTITY_SCOPE = 'LISTING'",
+		"WHERE D.CHANNEL = 'HSA' AND D.IDENTITY_SCOPE = 'STORE'",
 	} {
 		if !strings.Contains(sql, want) {
 			t.Fatalf("listing 广告曝光点击迁移缺少 %q", want)
