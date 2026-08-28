@@ -307,7 +307,7 @@ LEFT JOIN (
          MAX(m.updated_at) AS latest_sync_at
     FROM listing_dimensions d
     JOIN listing_daily_metrics m ON m.listing_dimension_id = d.id
-   WHERE d.channel = 'sc'
+   WHERE d.channel = 'sc_fba'
    GROUP BY d.store_id, d.asin, d.sku
 ) metrics
   ON metrics.store_id = l.sid AND metrics.asin = l.asin AND metrics.sku = l.seller_sku`,
@@ -532,6 +532,9 @@ func newOperationsLogV2Definition() detailReaderDefinition {
 	}
 	definition.fields["identity_scope"] = "d.identity_scope"
 	definition.fields["verified_fields"] = "m.verified_fields"
+	for _, field := range []string{"sp_impressions", "sp_clicks", "sd_impressions", "sd_clicks", "hsa_impressions", "hsa_clicks", "sb_impressions", "sb_clicks"} {
+		definition.fields[field] = "m." + field
+	}
 	return definition
 }
 

@@ -93,6 +93,45 @@ func TestListingDailyLegacySchemaMigrationAddsCurrentMetricColumns(t *testing.T)
 	}
 }
 
+func TestListingDailyAdReachMigrationAddsPerTypeFieldsAndSources(t *testing.T) {
+	raw, err := os.ReadFile("../../migrations/071_add_listing_daily_ad_reach.sql")
+	if err != nil {
+		t.Fatalf("读取 listing 广告曝光点击迁移失败: %v", err)
+	}
+	sql := strings.ToUpper(string(raw))
+	for _, want := range []string{
+		"INFORMATION_SCHEMA.COLUMNS",
+		"TABLE_NAME = 'LISTING_DAILY_METRICS'",
+		"ADD COLUMN SP_IMPRESSIONS BIGINT NULL",
+		"ADD COLUMN SP_IMPRESSIONS_SOURCE VARCHAR(16) NOT NULL DEFAULT ''",
+		"ADD COLUMN SP_CLICKS BIGINT NULL",
+		"ADD COLUMN SP_CLICKS_SOURCE VARCHAR(16) NOT NULL DEFAULT ''",
+		"ADD COLUMN SD_IMPRESSIONS BIGINT NULL",
+		"ADD COLUMN SD_IMPRESSIONS_SOURCE VARCHAR(16) NOT NULL DEFAULT ''",
+		"ADD COLUMN SD_CLICKS BIGINT NULL",
+		"ADD COLUMN SD_CLICKS_SOURCE VARCHAR(16) NOT NULL DEFAULT ''",
+		"ADD COLUMN HSA_IMPRESSIONS BIGINT NULL",
+		"ADD COLUMN HSA_IMPRESSIONS_SOURCE VARCHAR(16) NOT NULL DEFAULT ''",
+		"ADD COLUMN HSA_CLICKS BIGINT NULL",
+		"ADD COLUMN HSA_CLICKS_SOURCE VARCHAR(16) NOT NULL DEFAULT ''",
+		"ADD COLUMN SB_IMPRESSIONS BIGINT NULL",
+		"ADD COLUMN SB_IMPRESSIONS_SOURCE VARCHAR(16) NOT NULL DEFAULT ''",
+		"ADD COLUMN SB_CLICKS BIGINT NULL",
+		"ADD COLUMN SB_CLICKS_SOURCE VARCHAR(16) NOT NULL DEFAULT ''",
+		"DROP CHECK CHK_LISTING_DAILY_SOURCES",
+		"ADD CONSTRAINT CHK_LISTING_DAILY_SOURCES",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("listing 广告曝光点击迁移缺少 %q", want)
+		}
+	}
+	for _, forbidden := range []string{"DROP TABLE", "DELETE FROM", "TRUNCATE"} {
+		if strings.Contains(sql, forbidden) {
+			t.Fatalf("listing 广告曝光点击迁移不得使用破坏性语句 %s", forbidden)
+		}
+	}
+}
+
 func TestListingDailyTimestampPrecisionMigrationAgainstLocalMySQL(t *testing.T) {
 	dsn := os.Getenv("LINGXING_MIGRATION_TEST_DSN")
 	if dsn == "" {

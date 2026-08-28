@@ -141,15 +141,29 @@ func TestMetricArgsContainsEveryAuthorizedFieldAndProvenance(t *testing.T) {
 		SalesUnits: ptrInt(1), SalesAmount: ptrFloat(2), ReturnsQty: ptrInt(3), InventorySellable: ptrInt(4), InventoryInbound: ptrInt(5), InventoryReserved: ptrInt(6), InventoryUnfulfillable: ptrInt(7), InventoryLocalWarehouse: ptrInt(8), InventoryUnhealthyUnits: ptrInt(9), InventoryAged90SellableUnits: ptrInt(10), InventorySellThroughRate: ptrFloat(11), InventoryReceiveFillRate: ptrFloat(12), InventoryVendorConfirmationRate: ptrFloat(13), InventoryAvgLeadTimeDays: ptrFloat(14), InventorySellableCost: ptrFloat(15), InventoryUnfulfillableCost: ptrFloat(16), InventoryAged90Cost: ptrFloat(17), InventoryUnhealthyCost: ptrFloat(18), InventoryInboundCost: ptrFloat(19), InventoryCurrency: ptrString("USD"),
 		InventoryInboundReceiving: ptrInt(20), InventoryInboundShipped: ptrInt(21), InventoryInboundWorking: ptrInt(22), InventoryReservedCustomerOrders: ptrInt(23), InventoryReservedFCProcessing: ptrInt(24), InventoryReservedFCTransfers: ptrInt(25),
 		SessionsDesktop: ptrInt(26), SessionsMobile: ptrInt(27), SessionsTotal: ptrInt(28), ReviewCount: ptrInt(29), Rating: ptrFloat(4.2),
-		SPSpend: ptrFloat(30), SPSales: ptrFloat(31), SPOrders: ptrInt(32), SDSpend: ptrFloat(33), SDSales: ptrFloat(34), SDOrders: ptrInt(35),
-		HSASpend: ptrFloat(36), HSASales: ptrFloat(37), HSAOrders: ptrInt(38), SBSpend: ptrFloat(39), SBSales: ptrFloat(40), SBOrders: ptrInt(41),
+		SPSpend: ptrFloat(30), SPSales: ptrFloat(31), SPOrders: ptrInt(32), SPImpressions: ptrInt(33), SPClicks: ptrInt(34),
+		SDSpend: ptrFloat(35), SDSales: ptrFloat(36), SDOrders: ptrInt(37), SDImpressions: ptrInt(38), SDClicks: ptrInt(39),
+		HSASpend: ptrFloat(40), HSASales: ptrFloat(41), HSAOrders: ptrInt(42), HSAImpressions: ptrInt(43), HSAClicks: ptrInt(44),
+		SBSpend: ptrFloat(45), SBSales: ptrFloat(46), SBOrders: ptrInt(47), SBImpressions: ptrInt(48), SBClicks: ptrInt(49),
 	}
 	row := Metric{Values: values, Sources: map[string]Source{}}
 	for _, field := range knownFields(values) {
 		row.Sources[field] = SourceAPI
 	}
-	if got := metricArgs(1, row); len(got) != 92 {
-		t.Fatalf("metric args = %d, want 92", len(got))
+	if got := metricArgs(1, row); len(got) != 108 {
+		t.Fatalf("metric args = %d, want 108", len(got))
+	}
+}
+
+func TestMetricFieldNamesIncludePerTypeAdReach(t *testing.T) {
+	fields := make(map[string]bool)
+	for _, field := range knownMetricFieldNames() {
+		fields[field] = true
+	}
+	for _, field := range []string{"sp_impressions", "sp_clicks", "sd_impressions", "sd_clicks", "hsa_impressions", "hsa_clicks", "sb_impressions", "sb_clicks"} {
+		if !fields[field] {
+			t.Fatalf("listing daily omits %s", field)
+		}
 	}
 }
 

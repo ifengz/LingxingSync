@@ -98,7 +98,7 @@ func TestOperationsLogV2PublishesVerificationAndIdentityContract(t *testing.T) {
 	if v2.ParentID != "operations-log-v1" || v2.Grain != "store + channel + identity_scope + optional ASIN + optional listing_sku + business_date" {
 		t.Fatalf("operations log v2 contract=%+v", v2)
 	}
-	for _, field := range []string{"identity_scope", "verified_fields"} {
+	for _, field := range []string{"identity_scope", "verified_fields", "sp_impressions", "sp_clicks", "sd_impressions", "sd_clicks", "hsa_impressions", "hsa_clicks", "sb_impressions", "sb_clicks"} {
 		if !containsField(v2.Fields, field) {
 			t.Fatalf("operations log v2 field %q is missing", field)
 		}

@@ -228,7 +228,7 @@ func TestOperationsLogV2RouteInjectsDedicatedSQLReader(t *testing.T) {
 		DatasetAPI: config.DatasetAPIConfig{
 			CursorSecret: "cursor-secret-for-server-test",
 			FieldAllowlists: map[string][]string{
-				"operations-log-v2": {"identity_scope", "verified_fields"},
+				"operations-log-v2": {"channel_type", "identity_scope", "asin", "listing_sku", "sales_units", "sales_amount", "returns_qty", "inventory_sellable", "inventory_inbound", "inventory_reserved", "inventory_unfulfillable", "sessions_total", "sessions_desktop", "sessions_mobile", "rating", "review_count", "sp_spend", "sp_sales", "sp_orders", "sp_impressions", "sp_clicks", "sd_spend", "sd_sales", "sd_orders", "sd_impressions", "sd_clicks", "hsa_spend", "hsa_sales", "hsa_orders", "hsa_impressions", "hsa_clicks", "sb_spend", "sb_sales", "sb_orders", "sb_impressions", "sb_clicks", "is_provisional", "is_verified", "verified_fields"},
 			},
 			Tokens: []config.DatasetToken{{
 				ID: "project-a", TokenHash: datasetapi.HashToken(rawToken), DatasetScopes: []string{"operations-log-v2"}, StoreScopes: []string{"store-a"},

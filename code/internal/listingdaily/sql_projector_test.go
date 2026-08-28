@@ -121,6 +121,37 @@ func TestVCSalesContractUsesShippedMetricsAndSameDomainListing(t *testing.T) {
 	}
 }
 
+func TestAdProjectionMapsPerTypeReachAndPreservesUnknownFields(t *testing.T) {
+	date := time.Date(2026, 8, 12, 0, 0, 0, 0, time.UTC)
+	db := sql.OpenDB(adFixtureConnector{})
+	defer db.Close()
+	reader := SQLSourceReader{DB: sqlx.NewDb(db, "ad-fixture")}
+	out := SQLProjection{}
+	if err := reader.readAds(context.Background(), &out, "account-1", "store-1", "sc_fba", date, nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Records) != 2 {
+		t.Fatalf("ad records = %#v", out.Records)
+	}
+	sp, sd := out.Records[0].Input.Values, out.Records[1].Input.Values
+	if sp.SPImpressions == nil || *sp.SPImpressions != 101 || sp.SPClicks == nil || *sp.SPClicks != 0 || sp.SDImpressions != nil || sp.SDClicks != nil {
+		t.Fatalf("SP reach mapping = %#v", sp)
+	}
+	if sd.SDImpressions != nil || sd.SDClicks == nil || *sd.SDClicks != 13 || sd.SPImpressions != nil || sd.SPClicks != nil {
+		t.Fatalf("SD reach mapping must preserve raw NULL = %#v", sd)
+	}
+	if err := reader.readHSA(context.Background(), &out, "account-1", "store-1", "hsa", date); err != nil {
+		t.Fatal(err)
+	}
+	hsa := out.Records[2].Input
+	if hsa.Scope != ScopeStore || hsa.Values.HSAImpressions == nil || *hsa.Values.HSAImpressions != 303 || hsa.Values.HSAClicks == nil || *hsa.Values.HSAClicks != 17 {
+		t.Fatalf("HSA store-scoped reach mapping = %#v", hsa)
+	}
+	if hsa.Values.SBImpressions != nil || hsa.Values.SBClicks != nil {
+		t.Fatalf("SB values were manufactured from other ad data: %#v", hsa.Values)
+	}
+}
+
 func TestProjectAndPublishFromSQLPublishesProjectedRowsAndKeepsUnknownCoverage(t *testing.T) {
 	date := time.Date(2026, 8, 12, 0, 0, 0, 0, time.UTC)
 	units := int64(3)
@@ -310,6 +341,51 @@ func TestReadInventorySumsFNSKURowsBeforeAFNReconciliation(t *testing.T) {
 type inventoryFixtureRow struct {
 	FNSKU  string
 	Values []driver.Value
+}
+
+type adFixtureConnector struct{}
+
+func (adFixtureConnector) Connect(context.Context) (driver.Conn, error) { return adFixtureConn{}, nil }
+func (adFixtureConnector) Driver() driver.Driver                        { return adFixtureDriver{} }
+
+type adFixtureDriver struct{}
+
+func (adFixtureDriver) Open(string) (driver.Conn, error) { return nil, driver.ErrBadConn }
+
+type adFixtureConn struct{}
+
+func (adFixtureConn) Prepare(string) (driver.Stmt, error) { return nil, driver.ErrSkip }
+func (adFixtureConn) Close() error                        { return nil }
+func (adFixtureConn) Begin() (driver.Tx, error)           { return nil, driver.ErrSkip }
+func (adFixtureConn) QueryContext(_ context.Context, query string, _ []driver.NamedValue) (driver.Rows, error) {
+	columns := []string{"asin", "sku", "spend", "sales", "orders", "impressions", "clicks"}
+	switch {
+	case strings.Contains(query, "ls_ad_sp_product"):
+		return &adFixtureRows{columns: columns, rows: [][]driver.Value{{"B01", "SKU-1", float64(1.5), float64(2.5), int64(3), int64(101), int64(0)}}}, nil
+	case strings.Contains(query, "ls_ad_sd_product"):
+		return &adFixtureRows{columns: columns, rows: [][]driver.Value{{"B02", "SKU-2", float64(4.5), float64(5.5), int64(6), nil, int64(13)}}}, nil
+	case strings.Contains(query, "ls_ad_hsa_campaign"):
+		return &adFixtureRows{columns: columns[2:], rows: [][]driver.Value{{float64(7.5), float64(8.5), int64(9), int64(303), int64(17)}}}, nil
+	default:
+		return nil, driver.ErrSkip
+	}
+}
+
+type adFixtureRows struct {
+	columns []string
+	rows    [][]driver.Value
+	index   int
+}
+
+func (r *adFixtureRows) Columns() []string { return r.columns }
+func (*adFixtureRows) Close() error        { return nil }
+func (r *adFixtureRows) Next(values []driver.Value) error {
+	if r.index >= len(r.rows) {
+		return io.EOF
+	}
+	copy(values, r.rows[r.index])
+	r.index++
+	return nil
 }
 
 type inventoryFixtureConnector struct{ Rows []inventoryFixtureRow }

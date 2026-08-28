@@ -100,7 +100,13 @@ func TestOperationsLogV2SchemaKeepsVerificationAsJSON(t *testing.T) {
 	if !ok {
 		t.Fatal("operations log v2 schema missing")
 	}
-	wantTypes := map[string]string{"identity_scope": "VARCHAR(16)", "verified_fields": "JSON"}
+	wantTypes := map[string]string{
+		"identity_scope": "VARCHAR(16)", "verified_fields": "JSON",
+		"sp_impressions": "BIGINT", "sp_clicks": "BIGINT",
+		"sd_impressions": "BIGINT", "sd_clicks": "BIGINT",
+		"hsa_impressions": "BIGINT", "hsa_clicks": "BIGINT",
+		"sb_impressions": "BIGINT", "sb_clicks": "BIGINT",
+	}
 	for _, column := range schema.Columns {
 		if want, exists := wantTypes[column.Name]; exists {
 			if column.SQLType != want {

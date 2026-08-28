@@ -79,7 +79,7 @@ func diffValuesForFields(database, report Metric, fields []string) []FieldDiff {
 }
 
 func knownMetricFieldNames() []string {
-	return []string{"sales_units", "sales_amount", "returns_qty", "inventory_sellable", "inventory_inbound", "inventory_reserved", "inventory_unfulfillable", "inventory_local_warehouse", "inventory_unhealthy_units", "inventory_aged90_sellable_units", "inventory_sell_through_rate", "inventory_receive_fill_rate", "inventory_vendor_confirmation_rate", "inventory_avg_lead_time_days", "inventory_sellable_cost", "inventory_unfulfillable_cost", "inventory_aged90_cost", "inventory_unhealthy_cost", "inventory_inbound_cost", "inventory_currency", "inventory_inbound_receiving", "inventory_inbound_shipped", "inventory_inbound_working", "inventory_reserved_customer_orders", "inventory_reserved_fc_processing", "inventory_reserved_fc_transfers", "sessions_desktop", "sessions_mobile", "sessions_total", "review_count", "rating", "sp_spend", "sp_sales", "sp_orders", "sd_spend", "sd_sales", "sd_orders", "hsa_spend", "hsa_sales", "hsa_orders", "sb_spend", "sb_sales", "sb_orders"}
+	return []string{"sales_units", "sales_amount", "returns_qty", "inventory_sellable", "inventory_inbound", "inventory_reserved", "inventory_unfulfillable", "inventory_local_warehouse", "inventory_unhealthy_units", "inventory_aged90_sellable_units", "inventory_sell_through_rate", "inventory_receive_fill_rate", "inventory_vendor_confirmation_rate", "inventory_avg_lead_time_days", "inventory_sellable_cost", "inventory_unfulfillable_cost", "inventory_aged90_cost", "inventory_unhealthy_cost", "inventory_inbound_cost", "inventory_currency", "inventory_inbound_receiving", "inventory_inbound_shipped", "inventory_inbound_working", "inventory_reserved_customer_orders", "inventory_reserved_fc_processing", "inventory_reserved_fc_transfers", "sessions_desktop", "sessions_mobile", "sessions_total", "review_count", "rating", "sp_spend", "sp_sales", "sp_orders", "sp_impressions", "sp_clicks", "sd_spend", "sd_sales", "sd_orders", "sd_impressions", "sd_clicks", "hsa_spend", "hsa_sales", "hsa_orders", "hsa_impressions", "hsa_clicks", "sb_spend", "sb_sales", "sb_orders", "sb_impressions", "sb_clicks"}
 }
 
 // CustomerReturnsSchemaRequirements is the exact listing-daily schema touched
@@ -172,24 +172,40 @@ func metricField(values Values, field string) any {
 		return values.SPSales
 	case "sp_orders":
 		return values.SPOrders
+	case "sp_impressions":
+		return values.SPImpressions
+	case "sp_clicks":
+		return values.SPClicks
 	case "sd_spend":
 		return values.SDSpend
 	case "sd_sales":
 		return values.SDSales
 	case "sd_orders":
 		return values.SDOrders
+	case "sd_impressions":
+		return values.SDImpressions
+	case "sd_clicks":
+		return values.SDClicks
 	case "hsa_spend":
 		return values.HSASpend
 	case "hsa_sales":
 		return values.HSASales
 	case "hsa_orders":
 		return values.HSAOrders
+	case "hsa_impressions":
+		return values.HSAImpressions
+	case "hsa_clicks":
+		return values.HSAClicks
 	case "sb_spend":
 		return values.SBSpend
 	case "sb_sales":
 		return values.SBSales
 	case "sb_orders":
 		return values.SBOrders
+	case "sb_impressions":
+		return values.SBImpressions
+	case "sb_clicks":
+		return values.SBClicks
 	default:
 		return nil
 	}

@@ -63,15 +63,23 @@ type Values struct {
 	SPSpend                         *float64
 	SPSales                         *float64
 	SPOrders                        *int64
+	SPImpressions                   *int64
+	SPClicks                        *int64
 	SDSpend                         *float64
 	SDSales                         *float64
 	SDOrders                        *int64
+	SDImpressions                   *int64
+	SDClicks                        *int64
 	HSASpend                        *float64
 	HSASales                        *float64
 	HSAOrders                       *int64
+	HSAImpressions                  *int64
+	HSAClicks                       *int64
 	SBSpend                         *float64
 	SBSales                         *float64
 	SBOrders                        *int64
+	SBImpressions                   *int64
+	SBClicks                        *int64
 }
 
 type Source string
@@ -306,6 +314,12 @@ func knownFields(values Values) []string {
 	if values.SPOrders != nil {
 		fields = append(fields, "sp_orders")
 	}
+	if values.SPImpressions != nil {
+		fields = append(fields, "sp_impressions")
+	}
+	if values.SPClicks != nil {
+		fields = append(fields, "sp_clicks")
+	}
 	if values.SDSpend != nil {
 		fields = append(fields, "sd_spend")
 	}
@@ -314,6 +328,12 @@ func knownFields(values Values) []string {
 	}
 	if values.SDOrders != nil {
 		fields = append(fields, "sd_orders")
+	}
+	if values.SDImpressions != nil {
+		fields = append(fields, "sd_impressions")
+	}
+	if values.SDClicks != nil {
+		fields = append(fields, "sd_clicks")
 	}
 	if values.HSASpend != nil {
 		fields = append(fields, "hsa_spend")
@@ -324,6 +344,12 @@ func knownFields(values Values) []string {
 	if values.HSAOrders != nil {
 		fields = append(fields, "hsa_orders")
 	}
+	if values.HSAImpressions != nil {
+		fields = append(fields, "hsa_impressions")
+	}
+	if values.HSAClicks != nil {
+		fields = append(fields, "hsa_clicks")
+	}
 	if values.SBSpend != nil {
 		fields = append(fields, "sb_spend")
 	}
@@ -332,6 +358,12 @@ func knownFields(values Values) []string {
 	}
 	if values.SBOrders != nil {
 		fields = append(fields, "sb_orders")
+	}
+	if values.SBImpressions != nil {
+		fields = append(fields, "sb_impressions")
+	}
+	if values.SBClicks != nil {
+		fields = append(fields, "sb_clicks")
 	}
 	return fields
 }
@@ -411,15 +443,23 @@ func mergeValues(base, incoming Values, overwrite bool) Values {
 		SPSpend:                         choose(base.SPSpend, incoming.SPSpend, overwrite),
 		SPSales:                         choose(base.SPSales, incoming.SPSales, overwrite),
 		SPOrders:                        choose(base.SPOrders, incoming.SPOrders, overwrite),
+		SPImpressions:                   choose(base.SPImpressions, incoming.SPImpressions, overwrite),
+		SPClicks:                        choose(base.SPClicks, incoming.SPClicks, overwrite),
 		SDSpend:                         choose(base.SDSpend, incoming.SDSpend, overwrite),
 		SDSales:                         choose(base.SDSales, incoming.SDSales, overwrite),
 		SDOrders:                        choose(base.SDOrders, incoming.SDOrders, overwrite),
+		SDImpressions:                   choose(base.SDImpressions, incoming.SDImpressions, overwrite),
+		SDClicks:                        choose(base.SDClicks, incoming.SDClicks, overwrite),
 		HSASpend:                        choose(base.HSASpend, incoming.HSASpend, overwrite),
 		HSASales:                        choose(base.HSASales, incoming.HSASales, overwrite),
 		HSAOrders:                       choose(base.HSAOrders, incoming.HSAOrders, overwrite),
+		HSAImpressions:                  choose(base.HSAImpressions, incoming.HSAImpressions, overwrite),
+		HSAClicks:                       choose(base.HSAClicks, incoming.HSAClicks, overwrite),
 		SBSpend:                         choose(base.SBSpend, incoming.SBSpend, overwrite),
 		SBSales:                         choose(base.SBSales, incoming.SBSales, overwrite),
 		SBOrders:                        choose(base.SBOrders, incoming.SBOrders, overwrite),
+		SBImpressions:                   choose(base.SBImpressions, incoming.SBImpressions, overwrite),
+		SBClicks:                        choose(base.SBClicks, incoming.SBClicks, overwrite),
 	}
 }
 

@@ -769,18 +769,20 @@ func inventoryCurrency(values ...sql.NullString) (*string, error) {
 
 func (r SQLSourceReader) readAds(ctx context.Context, out *SQLProjection, accountID, storeID, channel string, date time.Time, skus map[string]string) error {
 	queries := []struct {
-		table                string
-		spend, sales, orders string
-	}{{"ls_ad_sp_product", "cost", "sales", "orders"}, {"ls_ad_sd_product", "cost", "sales", "orders"}}
+		table                                     string
+		spend, sales, orders, impressions, clicks string
+	}{{"ls_ad_sp_product", "cost", "sales", "orders", "impressions", "clicks"}, {"ls_ad_sd_product", "cost", "sales", "orders", "impressions", "clicks"}}
 	for _, query := range queries {
 		var rows []struct {
-			ASIN   string          `db:"asin"`
-			SKU    string          `db:"sku"`
-			Spend  sql.NullFloat64 `db:"spend"`
-			Sales  sql.NullFloat64 `db:"sales"`
-			Orders sql.NullInt64   `db:"orders"`
+			ASIN        string          `db:"asin"`
+			SKU         string          `db:"sku"`
+			Spend       sql.NullFloat64 `db:"spend"`
+			Sales       sql.NullFloat64 `db:"sales"`
+			Orders      sql.NullInt64   `db:"orders"`
+			Impressions sql.NullInt64   `db:"impressions"`
+			Clicks      sql.NullInt64   `db:"clicks"`
 		}
-		sqlText := fmt.Sprintf("SELECT asin, sku, SUM(%s) AS spend, SUM(%s) AS sales, SUM(%s) AS orders FROM %s WHERE account_id = ? AND sid = ? AND report_date = ? GROUP BY asin, sku", query.spend, query.sales, query.orders, query.table)
+		sqlText := fmt.Sprintf("SELECT asin, sku, SUM(%s) AS spend, SUM(%s) AS sales, SUM(%s) AS orders, SUM(%s) AS impressions, SUM(%s) AS clicks FROM %s WHERE account_id = ? AND sid = ? AND report_date = ? GROUP BY asin, sku", query.spend, query.sales, query.orders, query.impressions, query.clicks, query.table)
 		if err := r.DB.SelectContext(ctx, &rows, sqlText, accountID, storeID, date); err != nil {
 			return fmt.Errorf("listing daily: read %s: %w", query.table, err)
 		}
@@ -804,6 +806,12 @@ func (r SQLSourceReader) readAds(ctx context.Context, out *SQLProjection, accoun
 				if row.Orders.Valid {
 					values.SPOrders = &row.Orders.Int64
 				}
+				if row.Impressions.Valid {
+					values.SPImpressions = &row.Impressions.Int64
+				}
+				if row.Clicks.Valid {
+					values.SPClicks = &row.Clicks.Int64
+				}
 			} else {
 				if row.Spend.Valid {
 					values.SDSpend = &row.Spend.Float64
@@ -813,6 +821,12 @@ func (r SQLSourceReader) readAds(ctx context.Context, out *SQLProjection, accoun
 				}
 				if row.Orders.Valid {
 					values.SDOrders = &row.Orders.Int64
+				}
+				if row.Impressions.Valid {
+					values.SDImpressions = &row.Impressions.Int64
+				}
+				if row.Clicks.Valid {
+					values.SDClicks = &row.Clicks.Int64
 				}
 			}
 			out.Records = append(out.Records, RawRecord{Source: SourceAPI, Input: Input{Key: Key{Store: storeID, Channel: channel, ASIN: row.ASIN, SKU: sku, BusinessDate: date}, Scope: ScopeListing, Values: values}})
@@ -826,14 +840,16 @@ func (r SQLSourceReader) readHSA(ctx context.Context, out *SQLProjection, accoun
 		return nil
 	}
 	var row struct {
-		Spend  sql.NullFloat64 `db:"spend"`
-		Sales  sql.NullFloat64 `db:"sales"`
-		Orders sql.NullInt64   `db:"orders"`
+		Spend       sql.NullFloat64 `db:"spend"`
+		Sales       sql.NullFloat64 `db:"sales"`
+		Orders      sql.NullInt64   `db:"orders"`
+		Impressions sql.NullInt64   `db:"impressions"`
+		Clicks      sql.NullInt64   `db:"clicks"`
 	}
-	if err := r.DB.GetContext(ctx, &row, "SELECT SUM(cost) AS spend, SUM(sales) AS sales, SUM(orders) AS orders FROM ls_ad_hsa_campaign WHERE account_id = ? AND sid = ? AND report_date = ?", accountID, storeID, date); err != nil {
+	if err := r.DB.GetContext(ctx, &row, "SELECT SUM(cost) AS spend, SUM(sales) AS sales, SUM(orders) AS orders, SUM(impressions) AS impressions, SUM(clicks) AS clicks FROM ls_ad_hsa_campaign WHERE account_id = ? AND sid = ? AND report_date = ?", accountID, storeID, date); err != nil {
 		return fmt.Errorf("listing daily: read ls_ad_hsa_campaign: %w", err)
 	}
-	if !row.Spend.Valid && !row.Sales.Valid && !row.Orders.Valid {
+	if !row.Spend.Valid && !row.Sales.Valid && !row.Orders.Valid && !row.Impressions.Valid && !row.Clicks.Valid {
 		return nil
 	}
 	values := Values{}
@@ -845,6 +861,12 @@ func (r SQLSourceReader) readHSA(ctx context.Context, out *SQLProjection, accoun
 	}
 	if row.Orders.Valid {
 		values.HSAOrders = &row.Orders.Int64
+	}
+	if row.Impressions.Valid {
+		values.HSAImpressions = &row.Impressions.Int64
+	}
+	if row.Clicks.Valid {
+		values.HSAClicks = &row.Clicks.Int64
 	}
 	out.Records = append(out.Records, RawRecord{Source: SourceAPI, Input: Input{Key: Key{Store: storeID, Channel: "hsa", BusinessDate: date}, Scope: ScopeStore, Values: values}})
 	return nil

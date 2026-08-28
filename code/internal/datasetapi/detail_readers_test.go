@@ -290,6 +290,26 @@ func TestPageReadersUseSeparateFixedSources(t *testing.T) {
 	}
 }
 
+func TestFBALinksReaderIncludesPublishedFBAListingDailyMetrics(t *testing.T) {
+	updated := time.Date(2026, 8, 28, 3, 4, 5, 0, time.UTC)
+	queryer := &fixedQueryer{rows: &fixedRows{values: []any{
+		"sc-us-1", "store-a", "ASIN1", "SKU1", "2026-08-28", updated, "sc-us-1|store-a|SKU1", int64(12),
+	}}}
+	reader := &DetailSQLReader{queryer: queryer, definition: fbaLinksDefinition}
+	page, err := reader.Snapshot(context.Background(), Query{
+		Store: "store-a", DateFrom: "2026-08-28", DateTo: "2026-08-28", Fields: []string{"quantity_30d"}, PageSize: 1,
+	})
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	if !strings.Contains(queryer.query, "WHERE d.channel = 'sc_fba'") {
+		t.Fatalf("FBA Links must aggregate the published FBA daily channel: %s", queryer.query)
+	}
+	if len(page.Rows) != 1 || page.Rows[0].Values["quantity_30d"] != int64(12) {
+		t.Fatalf("FBA daily metric was not returned: %+v", page)
+	}
+}
+
 func TestOperationsLogV2ReaderReturnsStoreScopeWithStructuredVerification(t *testing.T) {
 	for _, v2OnlyField := range []string{"identity_scope", "verified_fields"} {
 		if operationsLogDefinition.fields[v2OnlyField] != "" {
@@ -299,17 +319,17 @@ func TestOperationsLogV2ReaderReturnsStoreScopeWithStructuredVerification(t *tes
 	updated := time.Date(2026, 8, 15, 3, 4, 5, 0, time.UTC)
 	queryer := &fixedQueryer{rows: &fixedRows{values: []any{
 		"", "store-a", nil, nil, "2026-08-14", updated, "store-a|hsa|-|-|2026-08-14",
-		"hsa", "store", nil, nil, []byte(`{"hsa_spend":true}`),
+		"hsa", "store", nil, nil, int64(0), int64(7), nil, int64(0), []byte(`{"hsa_spend":true}`),
 	}}}
 	reader := &DetailSQLReader{queryer: queryer, definition: operationsLogV2Definition}
 	page, err := reader.Snapshot(context.Background(), Query{
 		Store: "store-a", DateFrom: "2026-08-14", DateTo: "2026-08-14",
-		Fields: []string{"channel_type", "identity_scope", "asin", "listing_sku", "verified_fields"}, PageSize: 1,
+		Fields: []string{"channel_type", "identity_scope", "asin", "listing_sku", "hsa_impressions", "hsa_clicks", "sp_impressions", "sp_clicks", "verified_fields"}, PageSize: 1,
 	})
 	if err != nil {
 		t.Fatalf("Snapshot: %v", err)
 	}
-	for _, want := range []string{"d.identity_scope AS `identity_scope`", "m.verified_fields AS `verified_fields`", "COALESCE(NULLIF(d.asin, ''), '-')", "COALESCE(NULLIF(d.sku, ''), '-')"} {
+	for _, want := range []string{"d.identity_scope AS `identity_scope`", "m.hsa_impressions AS `hsa_impressions`", "m.hsa_clicks AS `hsa_clicks`", "m.sp_impressions AS `sp_impressions`", "m.sp_clicks AS `sp_clicks`", "m.verified_fields AS `verified_fields`", "COALESCE(NULLIF(d.asin, ''), '-')", "COALESCE(NULLIF(d.sku, ''), '-')"} {
 		if !strings.Contains(queryer.query, want) {
 			t.Fatalf("operations log v2 query missing %q: %s", want, queryer.query)
 		}
@@ -319,6 +339,9 @@ func TestOperationsLogV2ReaderReturnsStoreScopeWithStructuredVerification(t *tes
 	}
 	if page.Rows[0].Values["asin"] != nil || page.Rows[0].Values["listing_sku"] != nil {
 		t.Fatalf("store-scoped HSA identity must keep ASIN/SKU null: %+v", page.Rows[0].Values)
+	}
+	if page.Rows[0].Values["hsa_impressions"] != int64(0) || page.Rows[0].Values["hsa_clicks"] != int64(7) || page.Rows[0].Values["sp_impressions"] != nil || page.Rows[0].Values["sp_clicks"] != int64(0) {
+		t.Fatalf("operations log v2 must retain zero and NULL independently: %+v", page.Rows[0].Values)
 	}
 	verified, ok := page.Rows[0].Values["verified_fields"].(map[string]bool)
 	if !ok || !verified["hsa_spend"] {
