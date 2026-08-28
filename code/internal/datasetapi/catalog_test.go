@@ -4,8 +4,8 @@ import "testing"
 
 func TestCatalogExposesOnlyRegisteredDataProducts(t *testing.T) {
 	definitions := Definitions()
-	if len(definitions) != 15 {
-		t.Fatalf("definitions=%d, want 15", len(definitions))
+	if len(definitions) != 16 {
+		t.Fatalf("definitions=%d, want 16", len(definitions))
 	}
 
 	po, ok := DefinitionFor("vc-po-detail-v1")
@@ -102,6 +102,10 @@ func TestOperationsLogV2PublishesVerificationAndIdentityContract(t *testing.T) {
 		if !containsField(v2.Fields, field) {
 			t.Fatalf("operations log v2 field %q is missing", field)
 		}
+	}
+	v3, ok := DefinitionFor("operations-log-v3")
+	if !ok || v2.NextVersionID != "operations-log-v3" || v3.ParentID != "operations-log-v2" {
+		t.Fatalf("operations log v3 contract v2=%+v v3=%+v", v2, v3)
 	}
 }
 

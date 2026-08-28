@@ -120,6 +120,13 @@ func TestOperationsLogV2SchemaKeepsVerificationAsJSON(t *testing.T) {
 	}
 }
 
+func TestOperationsLogV3SchemaUsesV2Contract(t *testing.T) {
+	schema, ok := SchemaFor("operations-log-v3")
+	if !ok || schema.TableName != "operations_log_v3" {
+		t.Fatalf("operations log v3 schema=%+v ok=%v", schema, ok)
+	}
+}
+
 func TestDatasetSchemaCreateTableCanRestrictPublishedFields(t *testing.T) {
 	schema, ok := SchemaFor(DatasetID)
 	if !ok {

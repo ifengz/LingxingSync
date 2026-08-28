@@ -96,6 +96,10 @@ var schemas = map[string]Schema{
 		DatasetID: "operations-log-v2", TableName: "operations_log_v2", DataNote: "运营日志事实 v2；identity_scope 标识店铺级或已明确分摊的商品级事实，verified_fields 是报告实际核验字段的 JSON 对象。",
 		PrimaryKey: []string{"store", "stable_key"},
 	},
+	"operations-log-v3": {
+		DatasetID: "operations-log-v3", TableName: "operations_log_v3", DataNote: "运营日志事实 v3；保留 v2 身份和核验语义，并发布各广告类型的曝光和点击。",
+		PrimaryKey: []string{"store", "stable_key"},
+	},
 }
 
 func schemaColumns(columns []Column) []Column { return append([]Column(nil), columns...) }

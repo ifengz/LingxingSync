@@ -130,6 +130,13 @@ var definitions = map[string]Definition{
 		Source: "listing_daily_metrics", Grain: "store + channel + identity_scope + optional ASIN + optional listing_sku + business_date", ParentID: "operations-log-v1",
 		InitialCursor: "0|0|0|0|1000-01-01", FixedFields: []string{"store", "record_date", "stable_key", "updated_at"},
 		Fields: []string{"channel_type", "identity_scope", "asin", "listing_sku", "sales_units", "sales_amount", "returns_qty", "inventory_sellable", "inventory_inbound", "inventory_reserved", "inventory_unfulfillable", "sessions_total", "sessions_desktop", "sessions_mobile", "rating", "review_count", "sp_spend", "sp_sales", "sp_orders", "sp_impressions", "sp_clicks", "sd_spend", "sd_sales", "sd_orders", "sd_impressions", "sd_clicks", "hsa_spend", "hsa_sales", "hsa_orders", "hsa_impressions", "hsa_clicks", "sb_spend", "sb_sales", "sb_orders", "sb_impressions", "sb_clicks", "is_provisional", "is_verified", "verified_fields"},
+		NextVersionID: "operations-log-v3",
+	},
+	"operations-log-v3": {
+		ID: "operations-log-v3", Name: "运营日志事实数据表 v3", Kind: DatasetKindDetail,
+		Source: "listing_daily_metrics", Grain: "store + channel + identity_scope + optional ASIN + optional listing_sku + business_date", ParentID: "operations-log-v2",
+		InitialCursor: "0|0|0|0|1000-01-01", FixedFields: []string{"store", "record_date", "stable_key", "updated_at"},
+		Fields: []string{"channel_type", "identity_scope", "asin", "listing_sku", "sales_units", "sales_amount", "returns_qty", "inventory_sellable", "inventory_inbound", "inventory_reserved", "inventory_unfulfillable", "sessions_total", "sessions_desktop", "sessions_mobile", "rating", "review_count", "sp_spend", "sp_sales", "sp_orders", "sp_impressions", "sp_clicks", "sd_spend", "sd_sales", "sd_orders", "sd_impressions", "sd_clicks", "hsa_spend", "hsa_sales", "hsa_orders", "hsa_impressions", "hsa_clicks", "sb_spend", "sb_sales", "sb_orders", "sb_impressions", "sb_clicks", "is_provisional", "is_verified", "verified_fields"},
 	},
 }
 
