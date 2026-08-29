@@ -95,3 +95,44 @@ func TestDataSourcesTemplateDoesNotContainDatasetFieldEditor(t *testing.T) {
 		t.Fatal("数据源页不应继续嵌入数据集字段编辑器")
 	}
 }
+
+func TestEndpointTypeLabelUsesDateContractAndSpecializedNames(t *testing.T) {
+	tests := []struct {
+		name string
+		ep   config.Endpoint
+		want string
+	}{
+		{name: "single date", ep: config.Endpoint{DateField: "report_date"}, want: "日维型"},
+		{name: "single day window", ep: config.Endpoint{WindowDays: 7, SingleDayWindow: true}, want: "日维型"},
+		{name: "range", ep: config.Endpoint{WindowDays: 30}, want: "范围型"},
+		{name: "snapshot", ep: config.Endpoint{}, want: "快照型"},
+		{name: "performance", ep: config.Endpoint{Table: "ls_sc_performance_daily", WindowDays: 7, SingleDayWindow: true}, want: "日维型 · SC Performance"},
+		{name: "fbm", ep: config.Endpoint{Table: "ls_mp_fbm_orders", WindowDays: 30}, want: "范围型 · FBM"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := endpointTypeLabel(tt.ep); got != tt.want {
+				t.Fatalf("endpointTypeLabel()=%q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestDataSourcesTemplateShowsEndpointTypeColumn(t *testing.T) {
+	raw, err := os.ReadFile("../../web/templates/datasources.html")
+	if err != nil {
+		t.Fatalf("读 datasources.html: %v", err)
+	}
+	source := string(raw)
+	if !strings.Contains(source, ">接口类型</th>") {
+		t.Fatal("数据源列表缺少接口类型列")
+	}
+	if !strings.Contains(source, `x-text="e.type || '未知'"`) {
+		t.Fatal("数据源列表未渲染接口类型")
+	}
+	for _, want := range []string{"bg-emerald-50", "bg-sky-50", "bg-slate-100"} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("接口类型缺少颜色标签 %q", want)
+		}
+	}
+}

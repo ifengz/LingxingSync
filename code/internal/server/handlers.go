@@ -176,10 +176,30 @@ func (s *Server) pageSettingsAPI(w http.ResponseWriter, r *http.Request) {
 type endpointOut struct {
 	Name      string   `json:"name"`
 	Display   string   `json:"display"`
+	Type      string   `json:"type"`
 	AccountID string   `json:"account_id"`
 	Table     string   `json:"table"`
 	Enabled   bool     `json:"enabled"`
 	LastSync  *rfc3339 `json:"last_sync"` // 该表 MAX(synced_at)，来自 DB（重启不失忆）；无数据/查询失败为 null
+}
+
+// endpointTypeLabel exposes the date contract behind an endpoint without
+// duplicating the classification in the data-source page. Performance and
+// FBM retain their domain names because their sync semantics are useful to
+// operators when scanning the complete endpoint list.
+func endpointTypeLabel(e config.Endpoint) string {
+	switch {
+	case e.Table == "ls_sc_performance_daily":
+		return "日维型 · SC Performance"
+	case e.Table == "ls_mp_fbm_orders":
+		return "范围型 · FBM"
+	case e.DateField != "" || e.SingleDayWindow:
+		return "日维型"
+	case e.DateRangeCapable():
+		return "范围型"
+	default:
+		return "快照型"
+	}
 }
 
 func (s *Server) apiEndpoints(w http.ResponseWriter, r *http.Request) {
@@ -196,6 +216,7 @@ func (s *Server) apiEndpoints(w http.ResponseWriter, r *http.Request) {
 		}
 		items = append(items, endpointOut{
 			Name: e.Name, Display: e.Display,
+			Type:      endpointTypeLabel(e),
 			AccountID: e.Account, Table: e.Table, Enabled: e.Enabled,
 			LastSync: lastSync,
 		})

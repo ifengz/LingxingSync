@@ -105,6 +105,7 @@
       <thead class="border-b border-slate-200 bg-slate-50 text-xs font-bold text-slate-500">
         <tr>
           <th class="px-4 py-2.5 text-left">数据类型</th>
+          <th class="px-4 py-2.5 text-left">接口类型</th>
           <th class="px-4 py-2.5 text-left">表名</th>
           <th class="px-4 py-2.5 text-right">账号</th>
           <th class="px-4 py-2.5 text-right">表内最近更新时间</th>
@@ -115,6 +116,11 @@
         <tbody class="divide-y divide-slate-100">
           <tr class="hover:bg-slate-50/70">
             <td class="px-4 py-3 font-medium text-slate-700" x-text="e.display || e.name"></td>
+            <td class="px-4 py-3">
+              <span class="inline-flex whitespace-nowrap rounded px-2 py-0.5 text-xs font-medium"
+                    :class="!e.type || e.type.indexOf('快照型') === 0 ? 'bg-slate-100 text-slate-600' : e.type.indexOf('日维型') === 0 ? 'bg-emerald-50 text-emerald-700' : 'bg-sky-50 text-sky-700'"
+                    x-text="e.type || '未知'"></span>
+            </td>
             <td class="px-4 py-3 font-mono text-xs text-slate-600" x-text="e.table"></td>
             <td class="px-4 py-3 text-right text-slate-600" x-text="accountOf(e)"></td>
             <td class="px-4 py-3 text-right tabular-nums" :class="e.last_sync ? 'text-slate-600' : 'text-slate-300'" x-text="fmtLastSync(e)"></td>
@@ -124,7 +130,7 @@
             </td>
           </tr>
           <tr x-show="expanded===idx" class="bg-slate-50/60">
-            <td colspan="5" class="px-4 py-3">
+            <td colspan="6" class="px-4 py-3">
               <div x-show="metaLoading" class="text-xs text-slate-400">加载中…</div>
               <div x-show="!metaLoading && colError" class="text-xs text-red-600">未能读取字段结构： <span x-text="colError"></span></div>
               <div x-show="!metaLoading && !colError && columns.length===0" class="text-xs text-slate-400">该表未返回任何字段</div>
@@ -157,7 +163,7 @@
       </template>
       <tbody x-show="endpoints.length===0">
         <tr>
-          <td colspan="5" class="px-4 py-10 text-center text-sm text-slate-400">未配置任何数据源</td>
+          <td colspan="6" class="px-4 py-10 text-center text-sm text-slate-400">未配置任何数据源</td>
         </tr>
       </tbody>
     </table>
