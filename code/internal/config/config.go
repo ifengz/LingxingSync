@@ -679,9 +679,13 @@ func separatedFixedParamVariants(a, b Endpoint) bool {
 	if NormID(a.Account) != NormID(b.Account) ||
 		!strings.EqualFold(a.Method, b.Method) ||
 		a.Table == b.Table ||
-		a.Rate != b.Rate ||
-		len(a.ExtraParams) == 0 ||
-		len(a.ExtraParams) != len(b.ExtraParams) {
+		a.Rate != b.Rate {
+		return false
+	}
+	if a.IterateByAdAccount && b.IterateByAdAccount && a.AdAccountType != b.AdAccountType && a.AdAccountType != "" && b.AdAccountType != "" {
+		return true
+	}
+	if len(a.ExtraParams) == 0 || len(a.ExtraParams) != len(b.ExtraParams) {
 		return false
 	}
 

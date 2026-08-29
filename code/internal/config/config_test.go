@@ -927,3 +927,16 @@ func TestConflictingLimiterKeyAllowsSeparatedFixedParamVariant(t *testing.T) {
 		t.Fatalf("separated type variant reported conflict with %q", owner)
 	}
 }
+
+func TestConflictingLimiterKeyAllowsSellerAndVendorAdVariants(t *testing.T) {
+	rate := Rate{Bucket: 1, IntervalMs: 1000, Dimension: "account+path"}
+	seller := Endpoint{Name: "seller", Account: "sc_us", Path: "/ads", Method: "POST", Table: "ls_ad_sp_product", Rate: rate, IterateByAdAccount: true, AdAccountType: "seller"}
+	vendor := seller
+	vendor.Name = "vendor"
+	vendor.Table = "ls_ad_vc_sp_product"
+	vendor.AdAccountType = "vendor"
+	cfg := &Config{Accounts: []Account{{ID: "sc_us"}}, Endpoints: []Endpoint{seller}}
+	if owner, conflict := cfg.ConflictingLimiterKey(vendor); conflict {
+		t.Fatalf("seller/vendor ad variants should share the upstream limiter without config conflict: %q", owner)
+	}
+}
