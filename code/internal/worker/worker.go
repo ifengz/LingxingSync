@@ -108,10 +108,18 @@ type EndpointWorker struct {
 	// It is injected before Run starts and remains process-local.
 	dailyProject      DailyProjector
 	inventorySnapshot InventorySnapshotter
+	vcAdProject       VCAdProjector
 }
 
 // DailyProjector validates every target before publishing one atomic batch.
 type DailyProjector func(context.Context, string, []DailyProjectionTarget, time.Time) error
+
+type VCAdProjectionTarget struct {
+	ProfileID string
+	Date      time.Time
+}
+
+type VCAdProjector func(context.Context, string, []VCAdProjectionTarget) error
 
 // InventorySnapshotter publishes the dated FBA inventory history only after
 // the complete current-state raw sync succeeds.
@@ -211,6 +219,8 @@ func (w *EndpointWorker) FatalError() error { return w.fatalErr }
 // SetDailyProjector wires the one allowed listing daily fact publisher. Main
 // calls it before worker goroutines start, so no runtime synchronization is needed.
 func (w *EndpointWorker) SetDailyProjector(project DailyProjector) { w.dailyProject = project }
+
+func (w *EndpointWorker) SetVCAdProjector(project VCAdProjector) { w.vcAdProject = project }
 
 func (w *EndpointWorker) SetInventorySnapshotter(snapshot InventorySnapshotter) {
 	w.inventorySnapshot = snapshot
@@ -439,6 +449,7 @@ func (w *EndpointWorker) doSync(ctx context.Context, req triggerReq) {
 	totalRecords := 0
 	totalPages := 0
 	dailyTargets := make([]DailyProjectionTarget, 0)
+	vcAdTargets := make([]VCAdProjectionTarget, 0)
 	projectionNow := time.Now()
 	if w.Endpoint.IsStoreSource {
 		if err := db.MarkStoreSyncAttempt(w.DB, w.Account.ID); err != nil {
@@ -474,6 +485,12 @@ func (w *EndpointWorker) doSync(ctx context.Context, req triggerReq) {
 				// 拼表失败不能把本次同步改成 error，也不能触发上游重拉。
 				_ = db.InsertTaskLog(w.DB, taskID, totalPages+1, 0, 0, 0, 0, "daily projection warning: "+projectErr.Error())
 				log.Printf("[worker:%s] 日维拼表告警（原始同步仍成功）: %v", w.Endpoint.Name, projectErr)
+			}
+			if w.Endpoint.AdAccountType == "vendor" && w.vcAdProject != nil {
+				if projectErr := w.vcAdProject(syncCtx, w.Account.ID, vcAdTargets); projectErr != nil {
+					_ = db.InsertTaskLog(w.DB, taskID, totalPages+1, 0, 0, 0, 0, "vc ad projection warning: "+projectErr.Error())
+					log.Printf("[worker:%s] VC 广告规范表拼表告警（原始同步仍成功）: %v", w.Endpoint.Name, projectErr)
+				}
 			}
 		}
 		if status == "error" {
@@ -537,11 +554,11 @@ func (w *EndpointWorker) doSync(ctx context.Context, req triggerReq) {
 			return
 		}
 		if len(accounts) == 0 {
-			log.Printf("[worker:%s] 没有可用的 seller 广告账号，拒绝把未同步误报为 success", w.Endpoint.Name)
+			log.Printf("[worker:%s] 没有可用的 %s 广告账号，拒绝把未同步误报为 success", w.Endpoint.Name, w.Endpoint.AdAccountType)
 			status = "error"
 			return
 		}
-		if req.kind == "manual" && len(req.storeSids) > 0 {
+		if w.Endpoint.AdAccountType == "seller" && req.kind == "manual" && len(req.storeSids) > 0 {
 			accounts = filterAdAccountsByStoreSIDs(accounts, req.storeSids)
 		}
 		for i, account := range accounts {
@@ -556,7 +573,9 @@ func (w *EndpointWorker) doSync(ctx context.Context, req triggerReq) {
 				return
 			}
 			for _, params := range sets {
-				params["sid"] = account.SID
+				if w.Endpoint.AdAccountType == "seller" {
+					params["sid"] = account.SID
+				}
 				params["profile_id"] = account.ProfileID
 			}
 			rec, pages, ok := forEachParamSet(sets, func(params map[string]any) (int, int, bool) {
@@ -568,7 +587,20 @@ func (w *EndpointWorker) doSync(ctx context.Context, req triggerReq) {
 				status = "error"
 				return
 			}
-			dailyTargets = append(dailyTargets, projectionTargets(w.Endpoint, account.SID, sets, projectionNow)...)
+			if w.Endpoint.AdAccountType == "vendor" {
+				for _, set := range sets {
+					dates, dateErr := projectionDatesForVCAd(w.Endpoint, set)
+					if dateErr != nil {
+						status = "error"
+						return
+					}
+					for _, date := range dates {
+						vcAdTargets = append(vcAdTargets, VCAdProjectionTarget{ProfileID: account.ProfileID, Date: date})
+					}
+				}
+			} else {
+				dailyTargets = append(dailyTargets, projectionTargets(w.Endpoint, account.SID, sets, projectionNow)...)
+			}
 			if i < len(accounts)-1 && w.Endpoint.Rate.MultiIntervalMs > 0 {
 				select {
 				case <-syncCtx.Done():
@@ -1028,6 +1060,17 @@ func dailyProjectionDates(endpoint config.Endpoint, params map[string]any, now t
 		dates = append(dates, date)
 	}
 	return dates, nil
+}
+
+func projectionDatesForVCAd(endpoint config.Endpoint, params map[string]any) ([]time.Time, error) {
+	if endpoint.DateField == "" {
+		return nil, fmt.Errorf("VC 广告 endpoint %s 缺 date_field", endpoint.Name)
+	}
+	date, err := parseProjectionDate(stringParam(params, endpoint.DateField), endpoint.DateField)
+	if err != nil {
+		return nil, err
+	}
+	return []time.Time{date}, nil
 }
 
 func projectionTargets(endpoint config.Endpoint, store string, sets []map[string]any, now time.Time) []DailyProjectionTarget {

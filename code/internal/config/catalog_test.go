@@ -174,6 +174,41 @@ func TestCatalogIncludesVerifiedSyncTemplates(t *testing.T) {
 	}
 }
 
+func TestCatalogIncludesVerifiedVCAdTemplates(t *testing.T) {
+	tests := []struct {
+		key, path, table string
+	}{
+		{"ad_accounts_vendor", "/basicOpen/baseData/account/list", "ls_ad_vendor_accounts"},
+		{"ad_vc_sp_product", "/pb/openapi/newad/spProductAdReports", "ls_ad_vc_sp_product"},
+		{"ad_vc_sd_product", "/pb/openapi/newad/sdProductAdReports", "ls_ad_vc_sd_product"},
+		{"ad_vc_hsa_product", "/pb/openapi/newad/listHsaProductAdReport", "ls_ad_vc_hsa_product"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.key, func(t *testing.T) {
+			e, err := FindCatalogEntry(tc.key)
+			if err != nil {
+				t.Fatalf("FindCatalogEntry(%q): %v", tc.key, err)
+			}
+			ep := e.ToEndpoint("sc_us")
+			if ep.Path != tc.path || ep.Table != tc.table || ep.Method != "POST" {
+				t.Fatalf("template contract = %#v", ep)
+			}
+			if tc.key != "ad_accounts_vendor" && (!ep.IterateByAdAccount || ep.AdAccountType != "vendor") {
+				t.Fatalf("VC ad must iterate vendor profiles: %#v", ep)
+			}
+			if tc.key == "ad_accounts_vendor" {
+				return
+			}
+			if ep.DateField != "report_date" || ep.DateOffsetDays != 2 {
+				t.Fatalf("VC ad date contract = %#v", ep)
+			}
+			if len(ep.ForceInjectParams) != 1 || ep.ForceInjectParams[0] != "profile_id" {
+				t.Fatalf("VC ad must force profile_id only: %#v", ep.ForceInjectParams)
+			}
+		})
+	}
+}
+
 func TestCatalogIncludesVerifiedReportTemplates(t *testing.T) {
 	tests := []struct {
 		key      string

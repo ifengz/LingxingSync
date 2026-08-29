@@ -51,6 +51,19 @@ make build
 # 产物：./lingxing-sync（约 15 MB 单二进制，零运行时依赖）
 ```
 
+## 用已有 raw 回刷历史日维
+
+当 `ls_*` 原始表已有数据、但 `listing_daily_metrics` 尚未投影时，使用一次性命令回刷指定日期范围：
+
+```bash
+./lingxing-sync \
+  -rebuild-listing-daily \
+  -rebuild-date-from 2026-01-01 \
+  -rebuild-date-to 2026-08-29
+```
+
+可选 `-rebuild-account` 限定账号，`-rebuild-store` 限定店铺 SID。该模式只读取已有 `ls_*` raw 并写回 `listing_daily_metrics`，不调用领星、不创建同步任务、不执行 cron；不新增表、队列或锁。`operations-log-v3` 等读取 `listing_daily_metrics` 的数据集会随之读到回刷后的值。
+
 ---
 
 ## Makefile 命令一览

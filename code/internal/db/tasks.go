@@ -392,8 +392,20 @@ type AdAccountParams struct {
 	ProfileID string `db:"profile_id"`
 }
 
-// QueryEnabledAdAccountsForAccount 返回当前店铺选择范围内的有效广告账号。
+// QueryEnabledAdAccountsForAccount 返回有效广告账号。seller 受 SC 店铺选择约束，
+// vendor 只按 profile_id 工作，不伪造 sid。
 func QueryEnabledAdAccountsForAccount(db *sqlx.DB, accountID, accountType string) ([]AdAccountParams, error) {
+	if accountType == "vendor" {
+		var accounts []AdAccountParams
+		if err := db.Select(&accounts, `
+SELECT '' AS sid, profile_id
+FROM ls_ad_vendor_accounts
+WHERE account_id = ? AND status = 1 AND profile_id <> ''
+ORDER BY profile_id ASC`, accountID); err != nil {
+			return nil, fmt.Errorf("db.QueryEnabledAdAccountsForAccount: 查 vendor 广告账号 (account=%s) 失败: %w", accountID, err)
+		}
+		return accounts, nil
+	}
 	sids, err := QueryEnabledSIDsForAccount(db, accountID, "SC")
 	if err != nil {
 		return nil, err

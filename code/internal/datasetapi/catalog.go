@@ -114,9 +114,21 @@ var definitions = map[string]Definition{
 	},
 	"vc-links-v1": {
 		ID: "vc-links-v1", Name: "VC Links 页面数据表", Kind: DatasetKindDetail,
-		Source: "ls_vc_listing + ls_vc_sales_report + ls_vc_inventory + ls_vc_traffic + ls_vc_margin + ls_vc_realtime_sales + ls_ad_sp_product + ls_ad_sd_product", Grain: "store + ASIN",
+		Source: "ls_vc_listing + ls_vc_sales_report + ls_vc_inventory + ls_vc_traffic + ls_vc_margin + ls_vc_realtime_sales", Grain: "store + ASIN",
 		InitialCursor: "0|0|0", FixedFields: []string{"store", "record_date", "stable_key", "updated_at"},
 		Fields: []string{"store_name", "country", "channel_type", "asin", "parent_asin", "msku", "title", "brand", "image_url", "quantity_7d", "quantity_30d", "revenue_30d", "revenue_currency", "returns_30d", "inventory", "rating", "reviews_count", "ad_orders_7d", "ad_spend_30d", "ad_sales_30d", "ad_spend_currency", "sales_quantity_7d", "sales_quantity_30d", "sales_revenue_7d", "sales_revenue_30d", "sales_sparkline_7d", "sales_revenue_sparkline_7d", "realtime_revenue_sparkline_7d", "ad_spend_sparkline_7d", "sellable_inventory", "inbound_inventory", "unfulfillable_inventory", "aged90_sellable_inventory", "unhealthy_inventory", "latest_inventory_date", "realtime_ordered_units", "realtime_ordered_revenue", "latest_realtime_end_at", "glance_views", "net_ppm", "latest_margin_date", "latest_date", "latest_sync_at", "sales_latest_date", "sales_latest_sync_at", "vc_sales_covered_dates", "visibility_status"},
+	},
+	"vc-inventory-daily-v1": {
+		ID: "vc-inventory-daily-v1", Name: "VC 库存日维表", Kind: DatasetKindDaily,
+		Source: "ls_vc_inventory", Grain: "store + ASIN + business_date",
+		InitialCursor: "0|0|0|1000-01-01", FixedFields: []string{"store", "record_date", "stable_key", "updated_at"},
+		Fields: []string{"channel_type", "asin", "listing_sku", "business_date", "sellable", "inbound", "unfulfillable", "unhealthy_units", "aged90_sellable_units", "sell_through_rate", "receive_fill_rate", "vendor_confirmation_rate", "avg_lead_time_days", "sellable_cost", "unsellable_cost", "aged90_cost", "unhealthy_cost", "net_received_cost", "currency"},
+	},
+	"vc-ad-daily-v1": {
+		ID: "vc-ad-daily-v1", Name: "VC 广告日维表", Kind: DatasetKindDaily,
+		Source: "vc_ad_daily", Grain: "profile_id + attribution_scope + ASIN + business_date + campaign_type",
+		InitialCursor: "0|0|0|0|1000-01-01", FixedFields: []string{"store", "record_date", "stable_key", "updated_at"},
+		Fields: []string{"profile_id", "attribution_scope", "asin", "business_date", "campaign_type", "spend", "ad_sales", "ad_orders", "clicks", "impressions", "currency"},
 	},
 	"operations-log-v1": {
 		ID: "operations-log-v1", Name: "运营日志事实数据表", Kind: DatasetKindDetail,
@@ -129,7 +141,7 @@ var definitions = map[string]Definition{
 		ID: "operations-log-v2", Name: "运营日志事实数据表 v2", Kind: DatasetKindDetail,
 		Source: "listing_daily_metrics", Grain: "store + channel + identity_scope + optional ASIN + optional listing_sku + business_date", ParentID: "operations-log-v1",
 		InitialCursor: "0|0|0|0|1000-01-01", FixedFields: []string{"store", "record_date", "stable_key", "updated_at"},
-		Fields: []string{"channel_type", "identity_scope", "asin", "listing_sku", "sales_units", "sales_amount", "returns_qty", "inventory_sellable", "inventory_inbound", "inventory_reserved", "inventory_unfulfillable", "sessions_total", "sessions_desktop", "sessions_mobile", "rating", "review_count", "sp_spend", "sp_sales", "sp_orders", "sp_impressions", "sp_clicks", "sd_spend", "sd_sales", "sd_orders", "sd_impressions", "sd_clicks", "hsa_spend", "hsa_sales", "hsa_orders", "hsa_impressions", "hsa_clicks", "sb_spend", "sb_sales", "sb_orders", "sb_impressions", "sb_clicks", "is_provisional", "is_verified", "verified_fields"},
+		Fields:        []string{"channel_type", "identity_scope", "asin", "listing_sku", "sales_units", "sales_amount", "returns_qty", "inventory_sellable", "inventory_inbound", "inventory_reserved", "inventory_unfulfillable", "sessions_total", "sessions_desktop", "sessions_mobile", "rating", "review_count", "sp_spend", "sp_sales", "sp_orders", "sp_impressions", "sp_clicks", "sd_spend", "sd_sales", "sd_orders", "sd_impressions", "sd_clicks", "hsa_spend", "hsa_sales", "hsa_orders", "hsa_impressions", "hsa_clicks", "sb_spend", "sb_sales", "sb_orders", "sb_impressions", "sb_clicks", "is_provisional", "is_verified", "verified_fields"},
 		NextVersionID: "operations-log-v3",
 	},
 	"operations-log-v3": {

@@ -724,8 +724,11 @@ func TestValidateAdAccountIteration(t *testing.T) {
 	if err := mk(false, true, "").validate(); err == nil {
 		t.Fatal("ad iteration without type accepted")
 	}
-	if err := mk(false, true, "vendor").validate(); err == nil {
-		t.Fatal("未验证的 vendor 广告账号迭代被接受")
+	if err := mk(false, true, "vendor").validate(); err != nil {
+		t.Fatalf("vendor 广告账号迭代被拒绝: %v", err)
+	}
+	if err := mk(false, true, "unknown").validate(); err == nil {
+		t.Fatal("未知广告账号类型被接受")
 	}
 	if err := mk(true, true, "seller").validate(); err == nil {
 		t.Fatal("store and ad-account iteration together accepted")

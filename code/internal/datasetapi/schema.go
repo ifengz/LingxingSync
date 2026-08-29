@@ -88,6 +88,16 @@ var schemas = map[string]Schema{
 		DatasetID: "vc-links-v1", TableName: "vc_links_v1", DataNote: "VC Links 页面固定行；按 VC 店铺和 ASIN 汇总已同步的 VC Listing、销售、实时销售、库存、流量和毛利事实。",
 		PrimaryKey: []string{"store", "stable_key"},
 	},
+	"vc-inventory-daily-v1": {
+		DatasetID: "vc-inventory-daily-v1", TableName: "vc_inventory_daily_v1", DataNote: "VC 库存日维事实；只发布领星库存报表实际返回的数量、率、交付天数、成本和币种。",
+		Columns:    detailSchemaColumns([]Column{{Name: "store", SQLType: "VARCHAR(64)", Nullable: false}, {Name: "record_date", SQLType: "DATE", Nullable: true}, {Name: "stable_key", SQLType: "VARCHAR(255)", Nullable: false}, {Name: "updated_at", SQLType: "DATETIME(6)", Nullable: false}}),
+		PrimaryKey: []string{"store", "stable_key"},
+	},
+	"vc-ad-daily-v1": {
+		DatasetID: "vc-ad-daily-v1", TableName: "vc_ad_daily_v1", DataNote: "VC 广告 profile 事实；store 查询参数代表 profile_id，HSA/SB 无 ASIN 时保留 profile_unattributed。",
+		Columns:    detailSchemaColumns([]Column{{Name: "store", SQLType: "VARCHAR(64)", Nullable: false}, {Name: "record_date", SQLType: "DATE", Nullable: true}, {Name: "stable_key", SQLType: "VARCHAR(255)", Nullable: false}, {Name: "updated_at", SQLType: "DATETIME(6)", Nullable: false}}),
+		PrimaryKey: []string{"store", "stable_key"},
+	},
 	"operations-log-v1": {
 		DatasetID: "operations-log-v1", TableName: "operations_log_v1", DataNote: "运营日志可由领星事实提供的日维指标；跟踪目标、备注和人工历史仍属于 polabel2 本地业务。",
 		PrimaryKey: []string{"store", "stable_key"},
@@ -130,6 +140,10 @@ func columnsForFields(fields []string) []Column {
 
 func schemaType(name string) string {
 	switch {
+	case name == "sellable", name == "inbound", name == "unfulfillable", name == "unhealthy_units", name == "aged90_sellable_units", name == "ad_orders", name == "clicks", name == "impressions":
+		return "BIGINT"
+	case name == "currency":
+		return "VARCHAR(16)"
 	case name == "return_date_locale", name == "purchase_date_locale":
 		return "VARCHAR(32)"
 	case name == "gmt_modified":
@@ -249,6 +263,9 @@ func SchemaFor(id string) (Schema, bool) {
 			fields = definition.CatalogFields
 		}
 		schema.Columns = append(fixedColumnsForDataset(), columnsForFields(fields)...)
+	} else if definition.ID != DatasetID {
+		fields := dailyDefinitionFields(definition)
+		schema.Columns = append(fixedColumnsForDataset(), columnsForFields(fields)...)
 	}
 	schema.Columns = append([]Column(nil), schema.Columns...)
 	schema.PrimaryKey = append([]string(nil), schema.PrimaryKey...)
@@ -266,7 +283,7 @@ func (s Schema) CreateTableSQL(selected []string) (string, error) {
 		definitionFields = definition.CatalogFields
 	}
 	if definition.Kind == DatasetKindDaily {
-		definitionFields = availableSchemaFields
+		definitionFields = dailyDefinitionFields(definition)
 	}
 	business := make(map[string]struct{}, len(definitionFields))
 	for _, name := range definitionFields {
@@ -320,6 +337,13 @@ func (s Schema) CreateTableSQL(selected []string) (string, error) {
 	}
 	lines = append(lines, "  PRIMARY KEY ("+strings.Join(keys, ", ")+")", "  KEY `idx_updated_at` (`updated_at`)")
 	return "CREATE TABLE `" + s.TableName + "` (\n" + strings.Join(lines, ",\n") + "\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;", nil
+}
+
+func dailyDefinitionFields(definition Definition) []string {
+	if len(definition.Fields) > 0 {
+		return definition.Fields
+	}
+	return availableSchemaFields
 }
 
 func fixedColumnsForDataset() []Column {

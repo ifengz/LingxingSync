@@ -171,6 +171,10 @@ func (s *Server) newDatasetHandler(cfg *config.Config, definition datasetapi.Def
 		handler.SetReader(datasetapi.NewFBALinksReader(s.dbx))
 	case "vc-links-v1":
 		handler.SetReader(datasetapi.NewVCLinksReader(s.dbx))
+	case "vc-inventory-daily-v1":
+		handler.SetReader(datasetapi.NewVCInventoryDailyReader(s.dbx))
+	case "vc-ad-daily-v1":
+		handler.SetReader(datasetapi.NewVCAdDailyReader(s.dbx))
 	case "operations-log-v1":
 		handler.SetReader(datasetapi.NewOperationsLogReader(s.dbx))
 	case "operations-log-v2", "operations-log-v3":

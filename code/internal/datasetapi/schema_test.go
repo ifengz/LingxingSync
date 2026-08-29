@@ -83,6 +83,37 @@ func TestPageDatasetSchemasHaveStableKeys(t *testing.T) {
 	}
 }
 
+func TestVCFactSchemasUseTheirOwnPublishedFields(t *testing.T) {
+	cases := map[string]map[string]string{
+		"vc-inventory-daily-v1": {"sellable": "BIGINT", "sellable_cost": "DECIMAL(20,6)", "currency": "VARCHAR(16)"},
+		"vc-ad-daily-v1":        {"profile_id": "VARCHAR(255)", "campaign_type": "VARCHAR(255)", "impressions": "BIGINT"},
+	}
+	for datasetID, expected := range cases {
+		schema, ok := SchemaFor(datasetID)
+		if !ok {
+			t.Fatalf("schema %s missing", datasetID)
+		}
+		columns := make(map[string]struct{}, len(schema.Columns))
+		for _, column := range schema.Columns {
+			columns[column.Name] = struct{}{}
+		}
+		for field, sqlType := range expected {
+			_, ok := columns[field]
+			if !ok {
+				t.Fatalf("schema %s missing published field %s", datasetID, field)
+			}
+			for _, candidate := range schema.Columns {
+				if candidate.Name == field && candidate.SQLType != sqlType {
+					t.Fatalf("schema %s field %s type=%q want %q", datasetID, field, candidate.SQLType, sqlType)
+				}
+			}
+		}
+		if _, ok := columns["sales_units"]; ok {
+			t.Fatalf("schema %s leaked unrelated daily field sales_units", datasetID)
+		}
+	}
+}
+
 func TestVCLinksSchemaKeepsAdSparklineAsJSON(t *testing.T) {
 	schema, ok := SchemaFor("vc-links-v1")
 	if !ok {
@@ -213,6 +244,39 @@ func TestV1SchemasDoNotSilentlyIncludeV2CandidateColumns(t *testing.T) {
 			if column.Name == tc.candidate {
 				t.Fatalf("locked %s unexpectedly contains v2 candidate %s", tc.datasetID, tc.candidate)
 			}
+		}
+	}
+}
+
+func TestVCFactSchemasUseNumericAndBoundedTypes(t *testing.T) {
+	cases := []struct {
+		datasetID string
+		field     string
+		sqlType   string
+	}{
+		{"vc-inventory-daily-v1", "sellable", "BIGINT"},
+		{"vc-inventory-daily-v1", "sell_through_rate", "DECIMAL(20,6)"},
+		{"vc-inventory-daily-v1", "currency", "VARCHAR(16)"},
+		{"vc-ad-daily-v1", "ad_orders", "BIGINT"},
+		{"vc-ad-daily-v1", "impressions", "BIGINT"},
+		{"vc-ad-daily-v1", "currency", "VARCHAR(16)"},
+	}
+	for _, tc := range cases {
+		schema, ok := SchemaFor(tc.datasetID)
+		if !ok {
+			t.Fatalf("schema %s missing", tc.datasetID)
+		}
+		found := false
+		for _, column := range schema.Columns {
+			if column.Name == tc.field {
+				found = true
+				if column.SQLType != tc.sqlType {
+					t.Fatalf("schema %s field %s type=%q want %q", tc.datasetID, tc.field, column.SQLType, tc.sqlType)
+				}
+			}
+		}
+		if !found {
+			t.Fatalf("schema %s missing field %s", tc.datasetID, tc.field)
 		}
 	}
 }

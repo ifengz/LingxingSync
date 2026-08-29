@@ -399,33 +399,12 @@ LEFT JOIN (
          MAX(synced_at) AS latest_sync_at
     FROM ls_vc_realtime_sales GROUP BY account_id, sid, asin
 ) realtime ON realtime.account_id = v.account_id AND realtime.sid = v.vc_store_id AND realtime.asin = v.asin
-LEFT JOIN (
-  SELECT ad.account_id, ad.asin,
-         SUM(CASE WHEN ad.report_date >= DATE_SUB(CURDATE(), INTERVAL 6 DAY) THEN ad.ad_orders ELSE 0 END) AS ad_orders_7d,
-         SUM(CASE WHEN ad.report_date >= DATE_SUB(CURDATE(), INTERVAL 29 DAY) THEN ad.spend ELSE 0 END) AS ad_spend_30d,
-         SUM(CASE WHEN ad.report_date >= DATE_SUB(CURDATE(), INTERVAL 29 DAY) THEN ad.ad_sales ELSE 0 END) AS ad_sales_30d,
-         CASE WHEN COUNT(DISTINCT NULLIF(ad.currency_code, '')) = 1 THEN MAX(ad.currency_code) END AS ad_spend_currency,
-         CAST(CONCAT('[', GROUP_CONCAT(CASE WHEN ad.report_date >= DATE_SUB(CURDATE(), INTERVAL 6 DAY) THEN COALESCE(ad.spend, 0) END ORDER BY ad.report_date SEPARATOR ','), ']') AS JSON) AS ad_spend_sparkline_7d,
-         MAX(ad.report_date) AS latest_date,
-         MAX(ad.synced_at) AS latest_sync_at
-    FROM (
-      SELECT p.account_id, p.asin, p.report_date, p.cost AS spend, p.sales AS ad_sales, p.orders AS ad_orders, p.synced_at, a.currency_code
-        FROM ls_ad_sp_product p
-        LEFT JOIN ls_ad_accounts a ON a.account_id = p.account_id AND a.profile_id = p.profile_id
-       WHERE p.asin IS NOT NULL AND p.asin <> ''
-      UNION ALL
-      SELECT p.account_id, p.asin, p.report_date, p.cost AS spend, p.sales AS ad_sales, p.orders AS ad_orders, p.synced_at, a.currency_code
-        FROM ls_ad_sd_product p
-        LEFT JOIN ls_ad_accounts a ON a.account_id = p.account_id AND a.profile_id = p.profile_id
-       WHERE p.asin IS NOT NULL AND p.asin <> ''
-    ) ad
-   GROUP BY ad.account_id, ad.asin
-) ads ON ads.account_id = v.account_id AND ads.asin = v.asin`,
+`,
 	storeColumn:     "v.vc_store_id",
-	baseColumns:     []string{"v.account_id", "v.vc_store_id", "v.asin", "''", "DATE(v.synced_at)", "GREATEST(v.synced_at, COALESCE(sales.latest_sync_at, v.synced_at), COALESCE(inventory.latest_sync_at, v.synced_at), COALESCE(traffic.latest_sync_at, v.synced_at), COALESCE(margin.latest_sync_at, v.synced_at), COALESCE(realtime.latest_sync_at, v.synced_at), COALESCE(ads.latest_sync_at, v.synced_at))", "CONCAT_WS('|', v.account_id, v.vc_store_id, v.asin)"},
+	baseColumns:     []string{"v.account_id", "v.vc_store_id", "v.asin", "''", "DATE(v.synced_at)", "GREATEST(v.synced_at, COALESCE(sales.latest_sync_at, v.synced_at), COALESCE(inventory.latest_sync_at, v.synced_at), COALESCE(traffic.latest_sync_at, v.synced_at), COALESCE(margin.latest_sync_at, v.synced_at), COALESCE(realtime.latest_sync_at, v.synced_at))", "CONCAT_WS('|', v.account_id, v.vc_store_id, v.asin)"},
 	dateColumn:      "DATE(v.synced_at)",
 	stableKeyColumn: "CONCAT_WS('|', v.account_id, v.vc_store_id, v.asin)",
-	updatedAtColumn: "GREATEST(v.synced_at, COALESCE(sales.latest_sync_at, v.synced_at), COALESCE(inventory.latest_sync_at, v.synced_at), COALESCE(traffic.latest_sync_at, v.synced_at), COALESCE(margin.latest_sync_at, v.synced_at), COALESCE(realtime.latest_sync_at, v.synced_at), COALESCE(ads.latest_sync_at, v.synced_at))",
+	updatedAtColumn: "GREATEST(v.synced_at, COALESCE(sales.latest_sync_at, v.synced_at), COALESCE(inventory.latest_sync_at, v.synced_at), COALESCE(traffic.latest_sync_at, v.synced_at), COALESCE(margin.latest_sync_at, v.synced_at), COALESCE(realtime.latest_sync_at, v.synced_at))",
 	stableKeyParts:  3,
 	fields: map[string]string{
 		"store_name":                    "s.store_name",
@@ -445,10 +424,10 @@ LEFT JOIN (
 		"inventory":                     "inventory.sellable_inventory",
 		"rating":                        "v.stars",
 		"reviews_count":                 "v.reviews_num",
-		"ad_orders_7d":                  "ads.ad_orders_7d",
-		"ad_spend_30d":                  "ads.ad_spend_30d",
-		"ad_sales_30d":                  "ads.ad_sales_30d",
-		"ad_spend_currency":             "ads.ad_spend_currency",
+		"ad_orders_7d":                  "CAST(NULL AS SIGNED)",
+		"ad_spend_30d":                  "CAST(NULL AS DECIMAL(20,6))",
+		"ad_sales_30d":                  "CAST(NULL AS DECIMAL(20,6))",
+		"ad_spend_currency":             "CAST(NULL AS CHAR)",
 		"sales_quantity_7d":             "sales.sales_quantity_7d",
 		"sales_quantity_30d":            "sales.sales_quantity_30d",
 		"sales_revenue_7d":              "sales.sales_revenue_7d",
@@ -456,7 +435,7 @@ LEFT JOIN (
 		"sales_sparkline_7d":            "CAST(NULL AS JSON)",
 		"sales_revenue_sparkline_7d":    "CAST(NULL AS JSON)",
 		"realtime_revenue_sparkline_7d": "CAST(NULL AS JSON)",
-		"ad_spend_sparkline_7d":         "ads.ad_spend_sparkline_7d",
+		"ad_spend_sparkline_7d":         "CAST(NULL AS JSON)",
 		"sellable_inventory":            "inventory.sellable_inventory",
 		"inbound_inventory":             "inventory.inbound_inventory",
 		"unfulfillable_inventory":       "inventory.unfulfillable_inventory",
@@ -469,12 +448,68 @@ LEFT JOIN (
 		"glance_views":                  "traffic.glance_views",
 		"net_ppm":                       "margin.net_ppm",
 		"latest_margin_date":            "margin.latest_date",
-		"latest_date":                   "COALESCE(sales.latest_date, ads.latest_date, inventory.latest_date, DATE(v.synced_at))",
-		"latest_sync_at":                "GREATEST(v.synced_at, COALESCE(sales.latest_sync_at, v.synced_at), COALESCE(inventory.latest_sync_at, v.synced_at), COALESCE(traffic.latest_sync_at, v.synced_at), COALESCE(margin.latest_sync_at, v.synced_at), COALESCE(realtime.latest_sync_at, v.synced_at), COALESCE(ads.latest_sync_at, v.synced_at))",
+		"latest_date":                   "COALESCE(sales.latest_date, inventory.latest_date, DATE(v.synced_at))",
+		"latest_sync_at":                "GREATEST(v.synced_at, COALESCE(sales.latest_sync_at, v.synced_at), COALESCE(inventory.latest_sync_at, v.synced_at), COALESCE(traffic.latest_sync_at, v.synced_at), COALESCE(margin.latest_sync_at, v.synced_at), COALESCE(realtime.latest_sync_at, v.synced_at))",
 		"sales_latest_date":             "sales.latest_date",
 		"sales_latest_sync_at":          "sales.latest_sync_at",
 		"vc_sales_covered_dates":        "CAST(NULL AS CHAR)",
 		"visibility_status":             "CASE WHEN COALESCE(v.status, 0) = 1 THEN 'active' ELSE CAST(v.status AS CHAR) END",
+	},
+}
+
+var vcInventoryDailyDefinition = detailReaderDefinition{
+	sourceTable:     "ls_vc_inventory",
+	alias:           "i",
+	storeColumn:     "i.sid",
+	baseColumns:     []string{"i.account_id", "i.sid", "i.asin", "i.msku", "LEFT(i.`date`, 10)", "i.synced_at", "CONCAT_WS('|', i.account_id, i.sid, i.asin, LEFT(i.`date`, 10))"},
+	dateColumn:      "LEFT(i.`date`, 10)",
+	stableKeyColumn: "CONCAT_WS('|', i.account_id, i.sid, i.asin, LEFT(i.`date`, 10))",
+	updatedAtColumn: "i.synced_at",
+	stableKeyParts:  4,
+	fields: map[string]string{
+		"channel_type":             "'vc'",
+		"asin":                     "i.asin",
+		"listing_sku":              "i.msku",
+		"business_date":            "LEFT(i.`date`, 10)",
+		"sellable":                 "i.sellableOnHandInventoryUnits",
+		"inbound":                  "i.netReceivedInventoryUnits",
+		"unfulfillable":            "i.unsellableOnHandInventoryUnits",
+		"unhealthy_units":          "i.unhealthyInventoryUnits",
+		"aged90_sellable_units":    "i.aged90PlusDaysSellableInventoryUnits",
+		"sell_through_rate":        "i.sellThroughRate",
+		"receive_fill_rate":        "i.receiveFillRate",
+		"vendor_confirmation_rate": "i.vendorConfirmationRate",
+		"avg_lead_time_days":       "i.averageVendorLeadTimeDays",
+		"sellable_cost":            "i.sellableOnHandInventoryCostAmount",
+		"unsellable_cost":          "i.unsellableOnHandInventoryCostAmount",
+		"aged90_cost":              "i.aged90PlusDaysSellableInventoryCostAmount",
+		"unhealthy_cost":           "i.unhealthyInventoryCostAmount",
+		"net_received_cost":        "i.netReceivedInventoryCostAmount",
+		"currency":                 "COALESCE(NULLIF(i.sellableOnHandInventoryCostCurrencyCode, ''), NULLIF(i.unsellableOnHandInventoryCostCurrencyCode, ''), NULLIF(i.aged90PlusDaysSellableInventoryCostCurrencyCode, ''), NULLIF(i.unhealthyInventoryCostCurrencyCode, ''), NULLIF(i.netReceivedInventoryCostCurrencyCode, ''))",
+	},
+}
+
+var vcAdDailyDefinition = detailReaderDefinition{
+	sourceTable:     "vc_ad_daily",
+	alias:           "v",
+	storeColumn:     "v.profile_id",
+	baseColumns:     []string{"v.account_id", "v.profile_id", "v.asin", "''", "v.business_date", "v.synced_at", "CONCAT_WS('|', v.account_id, v.profile_id, v.attribution_scope, v.asin, v.business_date, v.campaign_type)"},
+	dateColumn:      "v.business_date",
+	stableKeyColumn: "CONCAT_WS('|', v.account_id, v.profile_id, v.attribution_scope, v.asin, v.business_date, v.campaign_type)",
+	updatedAtColumn: "v.synced_at",
+	stableKeyParts:  6,
+	fields: map[string]string{
+		"profile_id":        "v.profile_id",
+		"attribution_scope": "v.attribution_scope",
+		"asin":              "v.asin",
+		"business_date":     "v.business_date",
+		"campaign_type":     "v.campaign_type",
+		"spend":             "v.spend",
+		"ad_sales":          "v.ad_sales",
+		"ad_orders":         "v.ad_orders",
+		"clicks":            "v.clicks",
+		"impressions":       "v.impressions",
+		"currency":          "v.currency",
 	},
 }
 
@@ -1140,6 +1175,14 @@ func NewFBALinksReader(db *sqlx.DB) *DetailSQLReader {
 
 func NewVCLinksReader(db *sqlx.DB) *DetailSQLReader {
 	return newDetailSQLReader(db, vcLinksDefinition)
+}
+
+func NewVCInventoryDailyReader(db *sqlx.DB) *DetailSQLReader {
+	return newDetailSQLReader(db, vcInventoryDailyDefinition)
+}
+
+func NewVCAdDailyReader(db *sqlx.DB) *DetailSQLReader {
+	return newDetailSQLReader(db, vcAdDailyDefinition)
 }
 
 func NewOperationsLogReader(db *sqlx.DB) *DetailSQLReader {

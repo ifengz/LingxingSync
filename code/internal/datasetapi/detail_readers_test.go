@@ -166,6 +166,38 @@ func TestVersionedReadersExposeOnlyVerifiedCandidateMappings(t *testing.T) {
 	}
 }
 
+func TestVCInventoryDailyReaderUsesBusinessDateAndVCStore(t *testing.T) {
+	updated := time.Date(2026, 8, 1, 1, 0, 0, 0, time.UTC)
+	queryer := &fixedQueryer{rows: &fixedRows{values: []any{"acct", "vc-store", "ASIN1", "MSKU1", "2026-08-01", updated, "acct|vc-store|ASIN1|2026-08-01", int64(4)}}}
+	reader := &DetailSQLReader{queryer: queryer, definition: vcInventoryDailyDefinition}
+	page, err := reader.Snapshot(context.Background(), Query{Store: "vc-store", DateFrom: "2026-08-01", DateTo: "2026-08-01", Fields: []string{"sellable"}, PageSize: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(queryer.query, "FROM ls_vc_inventory i") || !strings.Contains(queryer.query, "LEFT(i.`date`, 10) BETWEEN ? AND ?") {
+		t.Fatalf("unexpected VC inventory query: %s", queryer.query)
+	}
+	if len(page.Rows) != 1 || page.Rows[0].Store != "vc-store" || page.Rows[0].Values["sellable"] != int64(4) {
+		t.Fatalf("unexpected page %#v", page)
+	}
+}
+
+func TestVCAdDailyReaderUsesProfileScopeAndPreservesUnattributedRows(t *testing.T) {
+	updated := time.Date(2026, 8, 1, 1, 0, 0, 0, time.UTC)
+	queryer := &fixedQueryer{rows: &fixedRows{values: []any{"acct", "profile-1", "", "", "2026-08-01", updated, "acct|profile-1|profile_unattributed||2026-08-01|HSA", "profile-1", "profile_unattributed", "HSA", 12.5}}}
+	reader := &DetailSQLReader{queryer: queryer, definition: vcAdDailyDefinition}
+	page, err := reader.Snapshot(context.Background(), Query{Store: "profile-1", DateFrom: "2026-08-01", DateTo: "2026-08-01", Fields: []string{"profile_id", "attribution_scope", "campaign_type", "spend"}, PageSize: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(queryer.query, "FROM vc_ad_daily v") || !strings.Contains(queryer.query, "v.profile_id IN (?)") || !strings.Contains(queryer.query, "v.business_date BETWEEN ? AND ?") {
+		t.Fatalf("unexpected VC ad query: %s", queryer.query)
+	}
+	if len(page.Rows) != 1 || page.Rows[0].Values["attribution_scope"] != "profile_unattributed" {
+		t.Fatalf("unexpected page %#v", page)
+	}
+}
+
 func TestVCPOLinesReaderExpandsVerifiedItemsWithStableLineKey(t *testing.T) {
 	updated := time.Date(2026, 8, 20, 3, 4, 5, 0, time.UTC)
 	queryer := &fixedQueryer{rows: &fixedRows{values: []any{
@@ -245,15 +277,15 @@ func TestVCPOReaderUsesDetailRowsAndSyncDate(t *testing.T) {
 }
 
 func TestConfirmedPageBoundariesUseOnlyConfirmedFacts(t *testing.T) {
-	if got := vcLinksDefinition.fields["ad_spend_30d"]; got != "ads.ad_spend_30d" {
-		t.Fatalf("VC ad spend must use the ASIN-level SP/SD aggregate: %q", got)
+	if got := vcLinksDefinition.fields["ad_spend_30d"]; got != "CAST(NULL AS DECIMAL(20,6))" {
+		t.Fatalf("VC Links must not present Seller ad spend as VC data: %q", got)
 	}
-	if got := vcLinksDefinition.fields["ad_spend_sparkline_7d"]; got != "ads.ad_spend_sparkline_7d" {
-		t.Fatalf("VC ad sparkline must use the SP/SD daily aggregate: %q", got)
+	if got := vcLinksDefinition.fields["ad_spend_sparkline_7d"]; got != "CAST(NULL AS JSON)" {
+		t.Fatalf("VC Links must not present Seller ad sparkline as VC data: %q", got)
 	}
 	for _, source := range []string{"ls_ad_sp_product", "ls_ad_sd_product"} {
-		if !strings.Contains(vcLinksDefinition.fromClause, source) {
-			t.Fatalf("VC Links missing ASIN-level ad source %q: %s", source, vcLinksDefinition.fromClause)
+		if strings.Contains(vcLinksDefinition.fromClause, source) {
+			t.Fatalf("VC Links must not join Seller ad source %q: %s", source, vcLinksDefinition.fromClause)
 		}
 	}
 	if strings.Contains(vcLinksDefinition.fromClause, "ls_ad_hsa_campaign") {

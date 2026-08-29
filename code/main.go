@@ -37,6 +37,7 @@ import (
 	"lingxing-sync/internal/listingdaily"
 	"lingxing-sync/internal/reportexport"
 	"lingxing-sync/internal/server"
+	"lingxing-sync/internal/vcad"
 	"lingxing-sync/internal/worker"
 )
 
@@ -54,6 +55,11 @@ func main() {
 	reportExport := flag.Bool("export-amazon-report", false, "显式导出一份已支持的 Amazon 正式报告后退出；配合 -report-type")
 	probeInventoryPlanning := flag.Bool("probe-fba-inventory-planning", false, "只创建/下载一份真实 FBA Inventory Planning 合同，不连接或写入本地数据库")
 	resumeReportAudit := flag.Int64("resume-amazon-report-audit", 0, "复用已有正式报告 audit 的同一上游任务，不创建新任务")
+	rebuildListingDaily := flag.Bool("rebuild-listing-daily", false, "只用已有 ls_* raw 历史重建 listing_daily_metrics 后退出")
+	rebuildDateFrom := flag.String("rebuild-date-from", "", "日维回刷起始日期 YYYY-MM-DD")
+	rebuildDateTo := flag.String("rebuild-date-to", "", "日维回刷结束日期 YYYY-MM-DD")
+	rebuildAccount := flag.String("rebuild-account", "", "日维回刷账号 ID；空值表示全部账号")
+	rebuildStore := flag.String("rebuild-store", "", "日维回刷店铺 SID；空值表示账号下全部店铺")
 	reportType := flag.String("report-type", reportexport.CustomerReturnsReportType, "Amazon report_type；默认 FBA Customer Returns")
 	reportAccount := flag.String("report-account", "", "报告导出使用的本地 account id")
 	reportSeller := flag.String("report-seller-id", "", "Amazon seller_id")
@@ -77,6 +83,12 @@ func main() {
 	}
 	if *probeInventoryPlanning && *reportType != reportexport.CustomerReturnsReportType {
 		log.Fatalf("[main] -probe-fba-inventory-planning 不接受 -report-type")
+	}
+	if *rebuildListingDaily && (*rebuildDateFrom == "" || *rebuildDateTo == "") {
+		log.Fatalf("[main] -rebuild-listing-daily 必须同时提供 -rebuild-date-from 和 -rebuild-date-to")
+	}
+	if *rebuildListingDaily && (*reportReturns || *reportExport || *probeInventoryPlanning || *resumeReportAudit > 0) {
+		log.Fatalf("[main] -rebuild-listing-daily 不能与 Amazon report 模式同时使用")
 	}
 
 	// 1. 加载配置（启动断言式校验，缺字段直接 FATAL）
@@ -120,6 +132,22 @@ func main() {
 		log.Fatalf("[main] 连接 MySQL 失败: %v", err)
 	}
 	defer dbx.Close()
+	if *rebuildListingDaily {
+		from, fromErr := parseRebuildDate(*rebuildDateFrom, "-rebuild-date-from")
+		to, toErr := parseRebuildDate(*rebuildDateTo, "-rebuild-date-to")
+		if fromErr != nil {
+			log.Fatalf("[main] %v", fromErr)
+		}
+		if toErr != nil {
+			log.Fatalf("[main] %v", toErr)
+		}
+		rows, rebuildErr := runListingDailyRebuild(context.Background(), dbx, cfg, *rebuildAccount, *rebuildStore, from, to)
+		if rebuildErr != nil {
+			log.Fatalf("[main] %v", rebuildErr)
+		}
+		log.Printf("[main] 历史日维回刷完成：rows=%d date_from=%s date_to=%s", rows, from.Format("2006-01-02"), to.Format("2006-01-02"))
+		return
+	}
 	reportAuditStore := db.NewReportStore(dbx)
 	var resumeAudit reportexport.Audit
 	effectiveReportType := *reportType
@@ -207,6 +235,13 @@ func main() {
 		}
 		return db.CaptureFBAInventorySnapshots(ctx, dbx, accountID, dbTargets)
 	}
+	vcAdProjector := func(ctx context.Context, accountID string, targets []worker.VCAdProjectionTarget) error {
+		vcTargets := make([]vcad.Target, 0, len(targets))
+		for _, target := range targets {
+			vcTargets = append(vcTargets, vcad.Target{ProfileID: target.ProfileID, Date: target.Date})
+		}
+		return (vcad.SQLStore{DB: dbx}).Rebuild(ctx, accountID, vcTargets)
+	}
 	var storeSourceWorkers []*worker.EndpointWorker
 	degraded := 0 // 降级为不可同步的接口数（缺表等），仅用于启动摘要日志
 	warned := 0   // 有告警但仍可同步的条目数（缺声明列等），仅用于启动摘要日志
@@ -228,6 +263,7 @@ func main() {
 			continue
 		}
 		w.SetDailyProjector(dailyProject)
+		w.SetVCAdProjector(vcAdProjector)
 		if ep.Table == "ls_fba_inventory" {
 			w.SetInventorySnapshotter(inventorySnapshot)
 		}

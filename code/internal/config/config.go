@@ -613,8 +613,8 @@ func (c *Config) validate() error {
 				return fmt.Errorf("endpoint %s 的 iterate_by_sales_orders 仅允许 ls_sc_order_details，且 record_id_fields 必须为 [sid amazon_order_id]", e.Name)
 			}
 		}
-		if e.IterateByAdAccount && e.AdAccountType != "seller" {
-			return fmt.Errorf("endpoint %s 的 ad_account_type=%q 非法：当前仅支持已验证的 seller", e.Name, e.AdAccountType)
+		if e.IterateByAdAccount && e.AdAccountType != "seller" && e.AdAccountType != "vendor" {
+			return fmt.Errorf("endpoint %s 的 ad_account_type=%q 非法：只能是 seller 或 vendor", e.Name, e.AdAccountType)
 		}
 		for _, name := range e.ForceInjectParams {
 			if strings.TrimSpace(name) == "" {

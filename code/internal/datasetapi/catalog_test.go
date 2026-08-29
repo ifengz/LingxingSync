@@ -4,8 +4,8 @@ import "testing"
 
 func TestCatalogExposesOnlyRegisteredDataProducts(t *testing.T) {
 	definitions := Definitions()
-	if len(definitions) != 16 {
-		t.Fatalf("definitions=%d, want 16", len(definitions))
+	if len(definitions) != 18 {
+		t.Fatalf("definitions=%d, want 18", len(definitions))
 	}
 
 	po, ok := DefinitionFor("vc-po-detail-v1")
@@ -70,13 +70,25 @@ func TestPageDatasetDefinitionsExposeSeparateContracts(t *testing.T) {
 		id, grain, source, field string
 	}{
 		{"fba-links-v1", "store + ASIN + listing_sku", "ls_sc_listing + listing_daily_metrics", "quantity_30d"},
-		{"vc-links-v1", "store + ASIN", "ls_vc_listing + ls_vc_sales_report + ls_vc_inventory + ls_vc_traffic + ls_vc_margin + ls_vc_realtime_sales + ls_ad_sp_product + ls_ad_sd_product", "sales_revenue_30d"},
+		{"vc-links-v1", "store + ASIN", "ls_vc_listing + ls_vc_sales_report + ls_vc_inventory + ls_vc_traffic + ls_vc_margin + ls_vc_realtime_sales", "sales_revenue_30d"},
 		{"operations-log-v1", "store + channel + ASIN + listing_sku + business_date", "listing_daily_metrics", "sales_units"},
 	}
 	for _, tc := range cases {
 		definition, ok := DefinitionFor(tc.id)
 		if !ok || definition.Grain != tc.grain || definition.Source != tc.source || !containsField(definition.Fields, tc.field) {
 			t.Fatalf("page definition %s=%+v found=%t", tc.id, definition, ok)
+		}
+	}
+}
+
+func TestVCFactDatasetsDeclareSeparateGrains(t *testing.T) {
+	for _, tc := range []struct{ id, source, grain string }{
+		{"vc-inventory-daily-v1", "ls_vc_inventory", "store + ASIN + business_date"},
+		{"vc-ad-daily-v1", "vc_ad_daily", "profile_id + attribution_scope + ASIN + business_date + campaign_type"},
+	} {
+		definition, ok := DefinitionFor(tc.id)
+		if !ok || definition.Source != tc.source || definition.Grain != tc.grain {
+			t.Fatalf("%s definition = %#v", tc.id, definition)
 		}
 	}
 }
