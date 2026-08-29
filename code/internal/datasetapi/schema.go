@@ -98,6 +98,26 @@ var schemas = map[string]Schema{
 		Columns:    detailSchemaColumns([]Column{{Name: "store", SQLType: "VARCHAR(64)", Nullable: false}, {Name: "record_date", SQLType: "DATE", Nullable: true}, {Name: "stable_key", SQLType: "VARCHAR(255)", Nullable: false}, {Name: "updated_at", SQLType: "DATETIME(6)", Nullable: false}}),
 		PrimaryKey: []string{"store", "stable_key"},
 	},
+	"vc-traffic-daily-v1": {
+		DatasetID: "vc-traffic-daily-v1", TableName: "vc_traffic_daily_v1", DataNote: "VC 流量日表；仅发布 raw ls_vc_traffic 提供的 glanceViews，桌面/移动流量不臆造。",
+		Columns:    detailSchemaColumns([]Column{{Name: "store", SQLType: "VARCHAR(64)", Nullable: false}, {Name: "record_date", SQLType: "DATE", Nullable: true}, {Name: "stable_key", SQLType: "VARCHAR(255)", Nullable: false}, {Name: "updated_at", SQLType: "DATETIME(6)", Nullable: false}}),
+		PrimaryKey: []string{"store", "stable_key"},
+	},
+	"sc-account-ad-daily-v1": {
+		DatasetID: "sc-account-ad-daily-v1", TableName: "sc_account_ad_daily_v1", DataNote: "SC 账户广告日表；按店铺、日期、广告类型汇总 SP/SD/HSA campaign raw。",
+		Columns:    detailSchemaColumns([]Column{{Name: "store", SQLType: "VARCHAR(64)", Nullable: false}, {Name: "record_date", SQLType: "DATE", Nullable: true}, {Name: "stable_key", SQLType: "VARCHAR(255)", Nullable: false}, {Name: "updated_at", SQLType: "DATETIME(6)", Nullable: false}}),
+		PrimaryKey: []string{"store", "stable_key"},
+	},
+	"vc-realtime-v1": {
+		DatasetID: "vc-realtime-v1", TableName: "vc_realtime_sales_v1", DataNote: "VC 实时销量；按原始小时窗口发布，业务日期取 localStartTime，缺失时保持 NULL。",
+		Columns:    detailSchemaColumns([]Column{{Name: "store", SQLType: "VARCHAR(64)", Nullable: false}, {Name: "record_date", SQLType: "DATE", Nullable: true}, {Name: "stable_key", SQLType: "VARCHAR(255)", Nullable: false}, {Name: "updated_at", SQLType: "DATETIME(6)", Nullable: false}}),
+		PrimaryKey: []string{"store", "stable_key"},
+	},
+	"vc-listing-metrics-snapshot-v1": {
+		DatasetID: "vc-listing-metrics-snapshot-v1", TableName: "vc_listing_metrics_snapshot_v1", DataNote: "VC Listing 当前态快照；日期为最近同步日期，raw 表不保留历史版本。",
+		Columns:    detailSchemaColumns([]Column{{Name: "store", SQLType: "VARCHAR(64)", Nullable: false}, {Name: "record_date", SQLType: "DATE", Nullable: true}, {Name: "stable_key", SQLType: "VARCHAR(255)", Nullable: false}, {Name: "updated_at", SQLType: "DATETIME(6)", Nullable: false}}),
+		PrimaryKey: []string{"store", "stable_key"},
+	},
 	"operations-log-v1": {
 		DatasetID: "operations-log-v1", TableName: "operations_log_v1", DataNote: "运营日志可由领星事实提供的日维指标；跟踪目标、备注和人工历史仍属于 polabel2 本地业务。",
 		PrimaryKey: []string{"store", "stable_key"},
@@ -140,6 +160,18 @@ func columnsForFields(fields []string) []Column {
 
 func schemaType(name string) string {
 	switch {
+	case name == "business_date", name == "snapshot_date":
+		return "DATE"
+	case name == "start_time", name == "end_time":
+		return "DATETIME(6)"
+	case name == "glance_views", name == "total_orders", name == "ordered_units":
+		return "BIGINT"
+	case name == "total_spend", name == "total_sales", name == "ordered_revenue":
+		return "DECIMAL(20,6)"
+	case name == "classification_rank", name == "display_group_rank":
+		return "JSON"
+	case name == "reviews_num", name == "stars":
+		return "VARCHAR(64)"
 	case name == "sellable", name == "inbound", name == "unfulfillable", name == "unhealthy_units", name == "aged90_sellable_units", name == "ad_orders", name == "clicks", name == "impressions":
 		return "BIGINT"
 	case name == "currency":

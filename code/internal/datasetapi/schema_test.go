@@ -114,6 +114,30 @@ func TestVCFactSchemasUseTheirOwnPublishedFields(t *testing.T) {
 	}
 }
 
+func TestRequestedDownstreamSchemasPublishOwnFields(t *testing.T) {
+	cases := map[string][]string{
+		"vc-traffic-daily-v1":            {"glance_views", "business_date"},
+		"sc-account-ad-daily-v1":         {"campaign_type", "total_spend", "total_sales", "total_orders"},
+		"vc-realtime-v1":                 {"start_time", "end_time", "ordered_units", "ordered_revenue"},
+		"vc-listing-metrics-snapshot-v1": {"snapshot_date", "classification_rank", "display_group_rank", "reviews_num", "stars"},
+	}
+	for id, fields := range cases {
+		schema, ok := SchemaFor(id)
+		if !ok {
+			t.Fatalf("schema %s missing", id)
+		}
+		columns := make(map[string]bool, len(schema.Columns))
+		for _, column := range schema.Columns {
+			columns[column.Name] = true
+		}
+		for _, field := range fields {
+			if !columns[field] {
+				t.Fatalf("schema %s missing field %s", id, field)
+			}
+		}
+	}
+}
+
 func TestVCLinksSchemaKeepsAdSparklineAsJSON(t *testing.T) {
 	schema, ok := SchemaFor("vc-links-v1")
 	if !ok {

@@ -198,6 +198,27 @@ func TestVCAdDailyReaderUsesProfileScopeAndPreservesUnattributedRows(t *testing.
 	}
 }
 
+func TestRequestedReadersUseOnlyTheirRawSources(t *testing.T) {
+	cases := []struct {
+		name       string
+		definition detailReaderDefinition
+		from       string
+		date       string
+	}{
+		{"traffic", vcTrafficDailyDefinition, "ls_vc_traffic", "LEFT(t.`date`, 10)"},
+		{"account ads", scAccountAdDailyDefinition, "ls_ad_sp_campaign", "a.report_date"},
+		{"realtime", vcRealtimeDefinition, "ls_vc_realtime_sales", "DATE(r.localStartTime)"},
+		{"listing", vcListingMetricsSnapshotDefinition, "ls_vc_listing", "DATE(l.synced_at)"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if !strings.Contains(tc.definition.sourceTable+" "+tc.definition.fromClause, tc.from) || tc.definition.dateColumn != tc.date {
+				t.Fatalf("definition source/date mismatch: %+v", tc.definition)
+			}
+		})
+	}
+}
+
 func TestVCPOLinesReaderExpandsVerifiedItemsWithStableLineKey(t *testing.T) {
 	updated := time.Date(2026, 8, 20, 3, 4, 5, 0, time.UTC)
 	queryer := &fixedQueryer{rows: &fixedRows{values: []any{

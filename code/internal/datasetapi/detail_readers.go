@@ -513,6 +513,62 @@ var vcAdDailyDefinition = detailReaderDefinition{
 	},
 }
 
+var vcTrafficDailyDefinition = detailReaderDefinition{
+	fromClause:      "ls_vc_traffic t LEFT JOIN ls_vc_listing l ON l.account_id = t.account_id AND l.vc_store_id = t.sid AND l.asin = t.asin",
+	storeColumn:     "t.sid",
+	baseColumns:     []string{"t.account_id", "t.sid", "t.asin", "l.msku", "LEFT(t.`date`, 10)", "t.synced_at", "CONCAT_WS('|', t.account_id, t.sid, t.asin, LEFT(t.`date`, 10))"},
+	dateColumn:      "LEFT(t.`date`, 10)",
+	stableKeyColumn: "CONCAT_WS('|', t.account_id, t.sid, t.asin, LEFT(t.`date`, 10))",
+	updatedAtColumn: "t.synced_at",
+	stableKeyParts:  4,
+	fields: map[string]string{
+		"channel_type": "'vc'", "asin": "t.asin", "listing_sku": "l.msku", "business_date": "LEFT(t.`date`, 10)", "glance_views": "t.glanceViews",
+	},
+}
+
+var scAccountAdDailyDefinition = detailReaderDefinition{
+	fromClause: `(SELECT account_id, sid, report_date, 'SP' AS campaign_type, SUM(cost) AS total_spend, SUM(sales) AS total_sales, SUM(orders) AS total_orders, MAX(synced_at) AS synced_at FROM ls_ad_sp_campaign GROUP BY account_id, sid, report_date
+UNION ALL SELECT account_id, sid, report_date, 'SD' AS campaign_type, SUM(cost), SUM(sales), SUM(orders), MAX(synced_at) FROM ls_ad_sd_campaign GROUP BY account_id, sid, report_date
+UNION ALL SELECT account_id, sid, report_date, 'HSA' AS campaign_type, SUM(cost), SUM(sales), SUM(orders), MAX(synced_at) FROM ls_ad_hsa_campaign GROUP BY account_id, sid, report_date) a`,
+	storeColumn:     "a.sid",
+	baseColumns:     []string{"a.account_id", "a.sid", "''", "''", "a.report_date", "a.synced_at", "CONCAT_WS('|', a.account_id, a.sid, a.report_date, a.campaign_type)"},
+	dateColumn:      "a.report_date",
+	stableKeyColumn: "CONCAT_WS('|', a.account_id, a.sid, a.report_date, a.campaign_type)",
+	updatedAtColumn: "a.synced_at",
+	stableKeyParts:  4,
+	fields: map[string]string{
+		"campaign_type": "a.campaign_type", "business_date": "a.report_date", "total_spend": "a.total_spend", "total_sales": "a.total_sales", "total_orders": "a.total_orders",
+	},
+}
+
+var vcRealtimeDefinition = detailReaderDefinition{
+	sourceTable:     "ls_vc_realtime_sales",
+	alias:           "r",
+	storeColumn:     "r.sid",
+	baseColumns:     []string{"r.account_id", "r.sid", "r.asin", "''", "DATE(r.localStartTime)", "r.synced_at", "CONCAT_WS('|', r.account_id, r.sid, r.asin, r.startTime, r.endTime)"},
+	dateColumn:      "DATE(r.localStartTime)",
+	stableKeyColumn: "CONCAT_WS('|', r.account_id, r.sid, r.asin, r.startTime, r.endTime)",
+	updatedAtColumn: "r.synced_at",
+	stableKeyParts:  5,
+	fields: map[string]string{
+		"asin": "r.asin", "listing_sku": "''", "start_time": "r.startTime", "end_time": "r.endTime", "ordered_units": "r.orderedUnits", "ordered_revenue": "r.orderedRevenue", "currency": "r.currencyCode",
+	},
+}
+
+var vcListingMetricsSnapshotDefinition = detailReaderDefinition{
+	sourceTable:     "ls_vc_listing",
+	alias:           "l",
+	storeColumn:     "l.vc_store_id",
+	baseColumns:     []string{"l.account_id", "l.vc_store_id", "l.asin", "l.msku", "DATE(l.synced_at)", "l.synced_at", "CONCAT_WS('|', l.account_id, l.vc_store_id, l.asin, DATE(l.synced_at))"},
+	dateColumn:      "DATE(l.synced_at)",
+	stableKeyColumn: "CONCAT_WS('|', l.account_id, l.vc_store_id, l.asin, DATE(l.synced_at))",
+	updatedAtColumn: "l.synced_at",
+	stableKeyParts:  4,
+	fields: map[string]string{
+		"asin": "l.asin", "listing_sku": "l.msku", "snapshot_date": "DATE(l.synced_at)", "classification_rank": "l.classification_rank", "display_group_rank": "l.display_group_rank", "reviews_num": "l.reviews_num", "stars": "l.stars",
+	},
+}
+
 var operationsLogDefinition = detailReaderDefinition{
 	fromClause: `listing_daily_metrics m
 JOIN listing_dimensions d ON d.id = m.listing_dimension_id`,
@@ -1183,6 +1239,22 @@ func NewVCInventoryDailyReader(db *sqlx.DB) *DetailSQLReader {
 
 func NewVCAdDailyReader(db *sqlx.DB) *DetailSQLReader {
 	return newDetailSQLReader(db, vcAdDailyDefinition)
+}
+
+func NewVCTrafficDailyReader(db *sqlx.DB) *DetailSQLReader {
+	return newDetailSQLReader(db, vcTrafficDailyDefinition)
+}
+
+func NewSCAccountAdDailyReader(db *sqlx.DB) *DetailSQLReader {
+	return newDetailSQLReader(db, scAccountAdDailyDefinition)
+}
+
+func NewVCRealtimeReader(db *sqlx.DB) *DetailSQLReader {
+	return newDetailSQLReader(db, vcRealtimeDefinition)
+}
+
+func NewVCListingMetricsSnapshotReader(db *sqlx.DB) *DetailSQLReader {
+	return newDetailSQLReader(db, vcListingMetricsSnapshotDefinition)
 }
 
 func NewOperationsLogReader(db *sqlx.DB) *DetailSQLReader {

@@ -175,6 +175,14 @@ func (s *Server) newDatasetHandler(cfg *config.Config, definition datasetapi.Def
 		handler.SetReader(datasetapi.NewVCInventoryDailyReader(s.dbx))
 	case "vc-ad-daily-v1":
 		handler.SetReader(datasetapi.NewVCAdDailyReader(s.dbx))
+	case "vc-traffic-daily-v1":
+		handler.SetReader(datasetapi.NewVCTrafficDailyReader(s.dbx))
+	case "sc-account-ad-daily-v1":
+		handler.SetReader(datasetapi.NewSCAccountAdDailyReader(s.dbx))
+	case "vc-realtime-v1":
+		handler.SetReader(datasetapi.NewVCRealtimeReader(s.dbx))
+	case "vc-listing-metrics-snapshot-v1":
+		handler.SetReader(datasetapi.NewVCListingMetricsSnapshotReader(s.dbx))
 	case "operations-log-v1":
 		handler.SetReader(datasetapi.NewOperationsLogReader(s.dbx))
 	case "operations-log-v2", "operations-log-v3":

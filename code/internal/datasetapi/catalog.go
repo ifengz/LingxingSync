@@ -130,6 +130,30 @@ var definitions = map[string]Definition{
 		InitialCursor: "0|0|0|0|1000-01-01", FixedFields: []string{"store", "record_date", "stable_key", "updated_at"},
 		Fields: []string{"profile_id", "attribution_scope", "asin", "business_date", "campaign_type", "spend", "ad_sales", "ad_orders", "clicks", "impressions", "currency"},
 	},
+	"vc-traffic-daily-v1": {
+		ID: "vc-traffic-daily-v1", Name: "VC 流量日表", Kind: DatasetKindDaily,
+		Source: "ls_vc_traffic", Grain: "store + ASIN + business_date",
+		InitialCursor: "0|0|0|1000-01-01", FixedFields: []string{"store", "record_date", "stable_key", "updated_at"},
+		Fields: []string{"channel_type", "asin", "listing_sku", "business_date", "glance_views"},
+	},
+	"sc-account-ad-daily-v1": {
+		ID: "sc-account-ad-daily-v1", Name: "SC 账户广告日表", Kind: DatasetKindDaily,
+		Source: "ls_ad_sp_campaign + ls_ad_sd_campaign + ls_ad_hsa_campaign", Grain: "store + business_date + campaign_type",
+		InitialCursor: "0|0|0|1000-01-01", FixedFields: []string{"store", "record_date", "stable_key", "updated_at"},
+		Fields: []string{"campaign_type", "business_date", "total_spend", "total_sales", "total_orders"},
+	},
+	"vc-realtime-v1": {
+		ID: "vc-realtime-v1", Name: "VC 实时销量表", Kind: DatasetKindDetail,
+		Source: "ls_vc_realtime_sales", Grain: "store + ASIN + start_time + end_time",
+		InitialCursor: "0|0|0|0|0", FixedFields: []string{"store", "record_date", "stable_key", "updated_at"},
+		Fields: []string{"asin", "listing_sku", "start_time", "end_time", "ordered_units", "ordered_revenue", "currency"},
+	},
+	"vc-listing-metrics-snapshot-v1": {
+		ID: "vc-listing-metrics-snapshot-v1", Name: "VC Listing 指标快照表", Kind: DatasetKindSnapshot,
+		Source: "ls_vc_listing", Grain: "store + ASIN + snapshot_date",
+		InitialCursor: "0|0|0|1000-01-01", FixedFields: []string{"store", "record_date", "stable_key", "updated_at"},
+		Fields: []string{"asin", "listing_sku", "snapshot_date", "classification_rank", "display_group_rank", "reviews_num", "stars"},
+	},
 	"operations-log-v1": {
 		ID: "operations-log-v1", Name: "运营日志事实数据表", Kind: DatasetKindDetail,
 		Source: "listing_daily_metrics", Grain: "store + channel + ASIN + listing_sku + business_date",
