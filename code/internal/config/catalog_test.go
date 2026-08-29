@@ -193,6 +193,9 @@ func TestCatalogIncludesVerifiedVCAdTemplates(t *testing.T) {
 			if ep.Path != tc.path || ep.Table != tc.table || ep.Method != "POST" {
 				t.Fatalf("template contract = %#v", ep)
 			}
+			if tc.key != "ad_accounts_vendor" && (ep.Rate.Bucket != 10 || ep.Rate.IntervalMs != 1000) {
+				t.Fatalf("VC ad rate = bucket %d interval %d, want bucket 10 interval 1000", ep.Rate.Bucket, ep.Rate.IntervalMs)
+			}
 			if tc.key != "ad_accounts_vendor" && (!ep.IterateByAdAccount || ep.AdAccountType != "vendor") {
 				t.Fatalf("VC ad must iterate vendor profiles: %#v", ep)
 			}
