@@ -212,6 +212,22 @@ func TestCatalogIncludesVerifiedVCAdTemplates(t *testing.T) {
 	}
 }
 
+func TestCatalogAdRateBucketsMatchLingxingDocs(t *testing.T) {
+	for _, key := range []string{
+		"ad_accounts", "ad_accounts_vendor", "ad_sp_product", "ad_sp_campaign",
+		"ad_sd_product", "ad_sd_campaign", "ad_hsa_campaign",
+		"ad_vc_sp_product", "ad_vc_sd_product", "ad_vc_hsa_product",
+	} {
+		e, err := FindCatalogEntry(key)
+		if err != nil {
+			t.Fatalf("FindCatalogEntry(%q): %v", key, err)
+		}
+		if e.Rate.Bucket != 10 || e.Rate.IntervalMs != 1000 {
+			t.Fatalf("catalog %q rate = bucket %d interval %d, want bucket 10 interval 1000", key, e.Rate.Bucket, e.Rate.IntervalMs)
+		}
+	}
+}
+
 func TestCatalogIncludesVerifiedReportTemplates(t *testing.T) {
 	tests := []struct {
 		key      string

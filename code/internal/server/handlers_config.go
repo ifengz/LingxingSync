@@ -1354,8 +1354,22 @@ func (s *Server) apiUpdateEndpoint(w http.ResponseWriter, r *http.Request) {
 	ep.StoreSids = in.StoreSids
 	ep.IterateByStore = in.IterateByStore
 	ep.StoreParamName = in.StoreParamName
+	s.syncSharedLimiterRate(snap, *ep)
 
 	s.applyConfigWrite(w, old, snap, "接口已更新: "+name)
+}
+
+// syncSharedLimiterRate keeps explicitly allowed fixed-parameter variants on the
+// same upstream quota contract. Lingxing scopes a bucket by appId + path, so
+// persisting different rates for seller/vendor variants would be invalid.
+func (s *Server) syncSharedLimiterRate(cfg *config.Config, source config.Endpoint) {
+	group := cfg.QuotaGroupOf(source.Account)
+	for i := range cfg.Endpoints {
+		candidate := &cfg.Endpoints[i]
+		if cfg.QuotaGroupOf(candidate.Account) == group && candidate.Path == source.Path {
+			candidate.Rate = source.Rate
+		}
+	}
 }
 
 // ---------------------------------------------------------------------------

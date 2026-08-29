@@ -380,6 +380,46 @@ func TestUpdateEndpointPersistsDailyDateContract(t *testing.T) {
 	}
 }
 
+func TestUpdateEndpointSyncsRateForSharedLimiterVariants(t *testing.T) {
+	base := config.Endpoint{
+		Account: "sc_us_1", Path: "/pb/openapi/newad/spProductAdReports", Method: "POST",
+		RecordIDFields: []string{"profile_id", "report_date", "ad_id"},
+		Rate:           config.Rate{Bucket: 1, IntervalMs: 1000, Dimension: "account+path"},
+		Cron:           "0 5 * * *", Enabled: true, ExtraParams: map[string]any{"type": "seller"},
+	}
+	seller := base
+	seller.Name, seller.Table = "ad_sp_product_sc_us_1", "ls_ad_sp_product"
+	vendor := base
+	vendor.Name, vendor.Table, vendor.ExtraParams = "ad_vc_sp_product_sc_us_1", "ls_ad_vc_sp_product", map[string]any{"type": "vendor"}
+	cfg := &config.Config{
+		Database:  config.Database{Host: "127.0.0.1", User: "test", DB: "lingsync"},
+		Accounts:  []config.Account{{ID: "sc_us_1", AppKey: "key", AppSecret: "secret"}},
+		Endpoints: []config.Endpoint{seller, vendor},
+	}
+	store := config.NewStore(t.TempDir()+"/config.yaml", cfg)
+	s := &Server{cfg: cfg, store: store}
+	update := endpointToDTO(vendor)
+	update.Rate.Bucket = 10
+	body, err := json.Marshal(update)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPut, "/api/endpoints/ad_vc_sp_product_sc_us_1", strings.NewReader(string(body)))
+	req.SetPathValue("name", "ad_vc_sp_product_sc_us_1")
+	rec := httptest.NewRecorder()
+
+	s.apiUpdateEndpoint(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("update endpoint status=%d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	for _, ep := range store.Current().Endpoints {
+		if ep.Rate.Bucket != 10 || ep.Rate.IntervalMs != 1000 {
+			t.Fatalf("shared limiter variant %s rate = %#v, want bucket 10 interval 1000", ep.Name, ep.Rate)
+		}
+	}
+}
+
 func TestCreateProbeEndpointDoesNotRequireTableOrRecordIDs(t *testing.T) {
 	cfg := &config.Config{
 		Database: config.Database{Host: "127.0.0.1", User: "test", DB: "test"},
