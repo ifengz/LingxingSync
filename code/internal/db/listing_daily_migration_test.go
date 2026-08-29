@@ -135,6 +135,34 @@ func TestListingDailyAdReachMigrationAddsPerTypeFieldsAndSources(t *testing.T) {
 	}
 }
 
+func TestListingDailyAdReachReprojectionMigrationUsesExistingRawOnly(t *testing.T) {
+	raw, err := os.ReadFile("../../migrations/072_reproject_listing_daily_ad_reach.sql")
+	if err != nil {
+		t.Fatalf("读取 listing 广告曝光点击回填迁移失败: %v", err)
+	}
+	sql := strings.ToUpper(string(raw))
+	for _, want := range []string{
+		"UPDATE LISTING_DAILY_METRICS",
+		"FROM LS_AD_SP_PRODUCT",
+		"FROM LS_AD_SD_PRODUCT",
+		"FROM LS_AD_HSA_CAMPAIGN",
+		"SUM(IMPRESSIONS)",
+		"SUM(CLICKS)",
+		"M.SP_IMPRESSIONS_SOURCE",
+		"M.SD_IMPRESSIONS_SOURCE",
+		"M.HSA_IMPRESSIONS_SOURCE",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("listing 广告曝光点击回填迁移缺少 %q", want)
+		}
+	}
+	for _, forbidden := range []string{"DROP TABLE", "DELETE FROM", "TRUNCATE"} {
+		if strings.Contains(sql, forbidden) {
+			t.Fatalf("listing 广告曝光点击回填迁移不得使用破坏性语句 %s", forbidden)
+		}
+	}
+}
+
 func TestListingDailyTimestampPrecisionMigrationAgainstLocalMySQL(t *testing.T) {
 	dsn := os.Getenv("LINGXING_MIGRATION_TEST_DSN")
 	if dsn == "" {
