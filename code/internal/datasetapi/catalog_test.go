@@ -99,7 +99,7 @@ func TestRequestedDownstreamDatasetsDeclareFixedContracts(t *testing.T) {
 		fields                  []string
 	}{
 		{"vc-traffic-daily-v1", string(DatasetKindDaily), "ls_vc_traffic", "store + ASIN + business_date", []string{"asin", "listing_sku", "business_date", "glance_views"}},
-		{"sc-account-ad-daily-v1", string(DatasetKindDaily), "ls_ad_sp_campaign + ls_ad_sd_campaign + ls_ad_hsa_campaign", "store + business_date + campaign_type", []string{"campaign_type", "business_date", "total_spend", "total_sales", "total_orders"}},
+		{"sc-account-ad-daily-v1", string(DatasetKindDaily), "ls_ad_sp_campaign + ls_ad_sd_campaign + ls_ad_hsa_campaign", "store + business_date + campaign_type", []string{"campaign_type", "business_date", "total_spend", "total_sales", "total_orders", "currency"}},
 		{"vc-realtime-v1", string(DatasetKindDetail), "ls_vc_realtime_sales", "store + ASIN + start_time + end_time", []string{"asin", "start_time", "end_time", "ordered_units", "ordered_revenue"}},
 		{"vc-listing-metrics-snapshot-v1", string(DatasetKindSnapshot), "ls_vc_listing", "store + ASIN + snapshot_date", []string{"asin", "listing_sku", "snapshot_date", "classification_rank", "display_group_rank", "reviews_num", "stars"}},
 	}

@@ -527,9 +527,9 @@ var vcTrafficDailyDefinition = detailReaderDefinition{
 }
 
 var scAccountAdDailyDefinition = detailReaderDefinition{
-	fromClause: `(SELECT account_id, sid, report_date, 'SP' AS campaign_type, SUM(cost) AS total_spend, SUM(sales) AS total_sales, SUM(orders) AS total_orders, MAX(synced_at) AS synced_at FROM ls_ad_sp_campaign GROUP BY account_id, sid, report_date
-UNION ALL SELECT account_id, sid, report_date, 'SD' AS campaign_type, SUM(cost), SUM(sales), SUM(orders), MAX(synced_at) FROM ls_ad_sd_campaign GROUP BY account_id, sid, report_date
-UNION ALL SELECT account_id, sid, report_date, 'HSA' AS campaign_type, SUM(cost), SUM(sales), SUM(orders), MAX(synced_at) FROM ls_ad_hsa_campaign GROUP BY account_id, sid, report_date) a`,
+	fromClause: `(SELECT p.account_id, p.sid, p.report_date, 'SP' AS campaign_type, SUM(p.cost) AS total_spend, SUM(p.sales) AS total_sales, SUM(p.orders) AS total_orders, MAX(acc.currency_code) AS currency, MAX(p.synced_at) AS synced_at FROM ls_ad_sp_campaign p LEFT JOIN ls_ad_accounts acc ON acc.account_id = p.account_id AND acc.profile_id = p.profile_id GROUP BY p.account_id, p.sid, p.report_date
+UNION ALL SELECT p.account_id, p.sid, p.report_date, 'SD' AS campaign_type, SUM(p.cost), SUM(p.sales), SUM(p.orders), MAX(acc.currency_code), MAX(p.synced_at) FROM ls_ad_sd_campaign p LEFT JOIN ls_ad_accounts acc ON acc.account_id = p.account_id AND acc.profile_id = p.profile_id GROUP BY p.account_id, p.sid, p.report_date
+UNION ALL SELECT p.account_id, p.sid, p.report_date, 'HSA' AS campaign_type, SUM(p.cost), SUM(p.sales), SUM(p.orders), MAX(acc.currency_code), MAX(p.synced_at) FROM ls_ad_hsa_campaign p LEFT JOIN ls_ad_accounts acc ON acc.account_id = p.account_id AND acc.profile_id = p.profile_id GROUP BY p.account_id, p.sid, p.report_date) a`,
 	storeColumn:     "a.sid",
 	baseColumns:     []string{"a.account_id", "a.sid", "''", "''", "a.report_date", "a.synced_at", "CONCAT_WS('|', a.account_id, a.sid, a.report_date, a.campaign_type)"},
 	dateColumn:      "a.report_date",
@@ -537,7 +537,7 @@ UNION ALL SELECT account_id, sid, report_date, 'HSA' AS campaign_type, SUM(cost)
 	updatedAtColumn: "a.synced_at",
 	stableKeyParts:  4,
 	fields: map[string]string{
-		"campaign_type": "a.campaign_type", "business_date": "a.report_date", "total_spend": "a.total_spend", "total_sales": "a.total_sales", "total_orders": "a.total_orders",
+		"campaign_type": "a.campaign_type", "business_date": "a.report_date", "total_spend": "a.total_spend", "total_sales": "a.total_sales", "total_orders": "a.total_orders", "currency": "a.currency",
 	},
 }
 

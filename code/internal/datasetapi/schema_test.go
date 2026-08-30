@@ -117,7 +117,7 @@ func TestVCFactSchemasUseTheirOwnPublishedFields(t *testing.T) {
 func TestRequestedDownstreamSchemasPublishOwnFields(t *testing.T) {
 	cases := map[string][]string{
 		"vc-traffic-daily-v1":            {"glance_views", "business_date"},
-		"sc-account-ad-daily-v1":         {"campaign_type", "total_spend", "total_sales", "total_orders"},
+		"sc-account-ad-daily-v1":         {"campaign_type", "total_spend", "total_sales", "total_orders", "currency"},
 		"vc-realtime-v1":                 {"start_time", "end_time", "ordered_units", "ordered_revenue"},
 		"vc-listing-metrics-snapshot-v1": {"snapshot_date", "classification_rank", "display_group_rank", "reviews_num", "stars"},
 	}
