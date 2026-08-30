@@ -1063,10 +1063,17 @@ func dailyProjectionDates(endpoint config.Endpoint, params map[string]any, now t
 }
 
 func projectionDatesForVCAd(endpoint config.Endpoint, params map[string]any) ([]time.Time, error) {
-	if endpoint.DateField == "" {
-		return nil, fmt.Errorf("VC 广告 endpoint %s 缺 date_field", endpoint.Name)
+	if endpoint.DateField != "" {
+		date, err := parseProjectionDate(stringParam(params, endpoint.DateField), endpoint.DateField)
+		if err != nil {
+			return nil, err
+		}
+		return []time.Time{date}, nil
 	}
-	date, err := parseProjectionDate(stringParam(params, endpoint.DateField), endpoint.DateField)
+	// single_day_window 模式（滚动补 T-N 天）：校验强制 date_field 为空，日期注入在
+	// window_start/end_field（VC 广告为 report_date）。逐日请求起止同日，取起点即可。
+	startField := endpoint.WindowStartFieldOrDefault()
+	date, err := parseProjectionDate(stringParam(params, startField), startField)
 	if err != nil {
 		return nil, err
 	}

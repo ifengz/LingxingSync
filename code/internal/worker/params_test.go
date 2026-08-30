@@ -171,3 +171,24 @@ func TestForEachParamSetStopsOnFirstFailure(t *testing.T) {
 		t.Fatalf("visited=%d records=%d pages=%d ok=%v", visited, records, pages, ok)
 	}
 }
+
+func TestProjectionDatesForVCAdFallsBackToWindowField(t *testing.T) {
+	// single_day_window 模式下校验强制 date_field 为空，日期注入在 window 字段。
+	// 投影必须回退到 window_start_field，否则 vc_ad_daily 重建缺日期直接报错。
+	ep := config.Endpoint{
+		SingleDayWindow:  true,
+		WindowDays:       7,
+		WindowStartField: "report_date",
+		WindowEndField:   "report_date",
+	}
+	dates, err := projectionDatesForVCAd(ep, map[string]any{"report_date": "2026-08-28"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(dates) != 1 || dates[0].Format("2006-01-02") != "2026-08-28" {
+		t.Fatalf("dates=%v, want [2026-08-28]", dates)
+	}
+	if _, err := projectionDatesForVCAd(ep, map[string]any{}); err == nil {
+		t.Fatal("missing window field should error")
+	}
+}
