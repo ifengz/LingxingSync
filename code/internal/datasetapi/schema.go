@@ -108,6 +108,11 @@ var schemas = map[string]Schema{
 		Columns:    detailSchemaColumns([]Column{{Name: "store", SQLType: "VARCHAR(64)", Nullable: false}, {Name: "record_date", SQLType: "DATE", Nullable: true}, {Name: "stable_key", SQLType: "VARCHAR(255)", Nullable: false}, {Name: "updated_at", SQLType: "DATETIME(6)", Nullable: false}}),
 		PrimaryKey: []string{"store", "stable_key"},
 	},
+	"sc-account-ad-daily-v2": {
+		DatasetID: "sc-account-ad-daily-v2", TableName: "sc_account_ad_daily_v2", DataNote: "SC 账户广告日表 v2；继承 v1 字段并允许下游读取已验证的 currency。",
+		Columns:    detailSchemaColumns([]Column{{Name: "store", SQLType: "VARCHAR(64)", Nullable: false}, {Name: "record_date", SQLType: "DATE", Nullable: true}, {Name: "stable_key", SQLType: "VARCHAR(255)", Nullable: false}, {Name: "updated_at", SQLType: "DATETIME(6)", Nullable: false}}),
+		PrimaryKey: []string{"store", "stable_key"},
+	},
 	"vc-realtime-v1": {
 		DatasetID: "vc-realtime-v1", TableName: "vc_realtime_sales_v1", DataNote: "VC 实时销量；按原始小时窗口发布，业务日期取 localStartTime，缺失时保持 NULL。",
 		Columns:    detailSchemaColumns([]Column{{Name: "store", SQLType: "VARCHAR(64)", Nullable: false}, {Name: "record_date", SQLType: "DATE", Nullable: true}, {Name: "stable_key", SQLType: "VARCHAR(255)", Nullable: false}, {Name: "updated_at", SQLType: "DATETIME(6)", Nullable: false}}),

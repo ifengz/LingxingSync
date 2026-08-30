@@ -140,6 +140,13 @@ var definitions = map[string]Definition{
 		ID: "sc-account-ad-daily-v1", Name: "SC 账户广告日表", Kind: DatasetKindDaily,
 		Source: "ls_ad_sp_campaign + ls_ad_sd_campaign + ls_ad_hsa_campaign", Grain: "store + business_date + campaign_type",
 		InitialCursor: "0|0|0|1000-01-01", FixedFields: []string{"store", "record_date", "stable_key", "updated_at"},
+		Fields:        []string{"campaign_type", "business_date", "total_spend", "total_sales", "total_orders", "currency"},
+		NextVersionID: "sc-account-ad-daily-v2",
+	},
+	"sc-account-ad-daily-v2": {
+		ID: "sc-account-ad-daily-v2", Name: "SC 账户广告日表 v2", Kind: DatasetKindDaily,
+		Source: "ls_ad_sp_campaign + ls_ad_sd_campaign + ls_ad_hsa_campaign", Grain: "store + business_date + campaign_type", ParentID: "sc-account-ad-daily-v1",
+		InitialCursor: "0|0|0|1000-01-01", FixedFields: []string{"store", "record_date", "stable_key", "updated_at"},
 		Fields: []string{"campaign_type", "business_date", "total_spend", "total_sales", "total_orders", "currency"},
 	},
 	"vc-realtime-v1": {

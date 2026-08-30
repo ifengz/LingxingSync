@@ -642,3 +642,14 @@ func TestUnpublishedVersionCannotAuthorizeBearerReads(t *testing.T) {
 		t.Fatalf("unpublished draft read status=%d body=%s", rec.Code, rec.Body.String())
 	}
 }
+
+func TestSCAccountAdDailyV2ReaderIsRegisteredWhenPublished(t *testing.T) {
+	cfg := validDatasetProjectTestConfig()
+	cfg.DatasetAPI.FieldAllowlists = map[string][]string{
+		"sc-account-ad-daily-v2": {"campaign_type", "business_date", "total_spend", "total_sales", "total_orders", "currency"},
+	}
+	s := New(cfg, nil, nil, nil, "", Assets{FS: renderTestFS, TemplateFS: "testdata", StaticFS: "testdata"}, nil, nil, nil, "")
+	if _, ok := s.datasetAPIs["sc-account-ad-daily-v2"]; !ok {
+		t.Fatal("published sc-account-ad-daily-v2 handler is not registered")
+	}
+}

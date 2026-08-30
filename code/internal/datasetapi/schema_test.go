@@ -138,6 +138,22 @@ func TestRequestedDownstreamSchemasPublishOwnFields(t *testing.T) {
 	}
 }
 
+func TestSCAccountAdDailyV2HasIndependentSchema(t *testing.T) {
+	schema, ok := SchemaFor("sc-account-ad-daily-v2")
+	if !ok || schema.TableName != "sc_account_ad_daily_v2" {
+		t.Fatalf("v2 schema=%+v found=%t", schema, ok)
+	}
+	columns := make(map[string]bool, len(schema.Columns))
+	for _, column := range schema.Columns {
+		columns[column.Name] = true
+	}
+	for _, field := range []string{"campaign_type", "business_date", "total_spend", "total_sales", "total_orders", "currency"} {
+		if !columns[field] {
+			t.Fatalf("v2 schema missing field %s", field)
+		}
+	}
+}
+
 func TestVCLinksSchemaKeepsAdSparklineAsJSON(t *testing.T) {
 	schema, ok := SchemaFor("vc-links-v1")
 	if !ok {

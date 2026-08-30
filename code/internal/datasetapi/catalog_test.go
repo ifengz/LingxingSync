@@ -4,8 +4,8 @@ import "testing"
 
 func TestCatalogExposesOnlyRegisteredDataProducts(t *testing.T) {
 	definitions := Definitions()
-	if len(definitions) != 22 {
-		t.Fatalf("definitions=%d, want 22", len(definitions))
+	if len(definitions) != 23 {
+		t.Fatalf("definitions=%d, want 23", len(definitions))
 	}
 
 	po, ok := DefinitionFor("vc-po-detail-v1")
@@ -112,6 +112,25 @@ func TestRequestedDownstreamDatasetsDeclareFixedContracts(t *testing.T) {
 			if !containsField(definition.Fields, field) {
 				t.Fatalf("dataset %s field %q is missing", tc.id, field)
 			}
+		}
+	}
+}
+
+func TestSCAccountAdDailyV2KeepsV1ImmutableAndAddsCurrencyContract(t *testing.T) {
+	v1, ok := DefinitionFor("sc-account-ad-daily-v1")
+	if !ok || v1.NextVersionID != "sc-account-ad-daily-v2" {
+		t.Fatalf("v1 version metadata=%+v found=%t", v1, ok)
+	}
+	if !containsField(v1.Fields, "currency") {
+		t.Fatal("v1 source contract must continue to declare currency")
+	}
+	v2, ok := DefinitionFor("sc-account-ad-daily-v2")
+	if !ok || v2.ParentID != "sc-account-ad-daily-v1" || v2.NextVersionID != "" {
+		t.Fatalf("v2 version metadata=%+v found=%t", v2, ok)
+	}
+	for _, field := range []string{"campaign_type", "business_date", "total_spend", "total_sales", "total_orders", "currency"} {
+		if !containsField(v2.Fields, field) {
+			t.Fatalf("v2 field %q is missing", field)
 		}
 	}
 }
