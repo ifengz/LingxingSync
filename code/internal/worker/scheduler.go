@@ -461,10 +461,10 @@ func (s *Scheduler) runCleanup(ctx context.Context) {
 	}
 	result, err := cleanupOld(s.dbx, taskLogsDays, tasksDays)
 	if err != nil {
-		log.Printf("[scheduler] CleanupOld 失败: task_logs_deleted=%d task_logs_batches=%d tasks_deleted=%d tasks_batches=%d err=%v",
-			result.TaskLogsDeleted, result.TaskLogsBatches, result.TasksDeleted, result.TasksBatches, err)
+		log.Printf("[scheduler] CleanupOld 失败: task_logs_deleted=%d task_logs_batches=%d tasks_deleted=%d tasks_batches=%d dataset_req_deleted=%d dataset_req_batches=%d err=%v",
+			result.TaskLogsDeleted, result.TaskLogsBatches, result.TasksDeleted, result.TasksBatches, result.DatasetReqDeleted, result.DatasetReqBatches, err)
 		return
 	}
-	log.Printf("[scheduler] CleanupOld 完成: task_logs_deleted=%d task_logs_batches=%d tasks_deleted=%d tasks_batches=%d",
-		result.TaskLogsDeleted, result.TaskLogsBatches, result.TasksDeleted, result.TasksBatches)
+	log.Printf("[scheduler] CleanupOld 完成: task_logs_deleted=%d task_logs_batches=%d tasks_deleted=%d tasks_batches=%d dataset_req_deleted=%d dataset_req_batches=%d",
+		result.TaskLogsDeleted, result.TaskLogsBatches, result.TasksDeleted, result.TasksBatches, result.DatasetReqDeleted, result.DatasetReqBatches)
 }

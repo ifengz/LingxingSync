@@ -597,16 +597,19 @@ const (
 	cleanupBatchSize  = 1000
 	cleanupMaxBatches = 100
 
-	cleanupTaskLogsSQL = "DELETE FROM sync_task_logs WHERE created_at < DATE_SUB(NOW(), INTERVAL ? DAY) ORDER BY created_at, id LIMIT ?"
-	cleanupTasksSQL    = "DELETE FROM sync_tasks WHERE created_at < DATE_SUB(NOW(), INTERVAL ? DAY) AND status IN ('success','empty','error','cancelled') ORDER BY created_at, id LIMIT ?"
+	cleanupTaskLogsSQL   = "DELETE FROM sync_task_logs WHERE created_at < DATE_SUB(NOW(), INTERVAL ? DAY) ORDER BY created_at, id LIMIT ?"
+	cleanupTasksSQL      = "DELETE FROM sync_tasks WHERE created_at < DATE_SUB(NOW(), INTERVAL ? DAY) AND status IN ('success','empty','error','cancelled') ORDER BY created_at, id LIMIT ?"
+	cleanupDatasetReqSQL = "DELETE FROM dataset_request_logs WHERE created_at < DATE_SUB(NOW(), INTERVAL ? DAY) ORDER BY created_at, id LIMIT ?"
 )
 
 // CleanupResult 是一次 retention 清理的有界执行摘要。
 type CleanupResult struct {
-	TaskLogsDeleted int64
-	TaskLogsBatches int
-	TasksDeleted    int64
-	TasksBatches    int
+	TaskLogsDeleted   int64
+	TaskLogsBatches   int
+	TasksDeleted      int64
+	TasksBatches      int
+	DatasetReqDeleted int64
+	DatasetReqBatches int
 }
 
 // CleanupOld 按留存策略分批删除旧记录。每条 DELETE 独立提交；达到固定批次上限
@@ -628,6 +631,10 @@ func CleanupOld(db *sqlx.DB, taskLogsDays, tasksDays int) (CleanupResult, error)
 	result.TasksDeleted, result.TasksBatches, err = deleteOldRows(db.Exec, cleanupTasksSQL, tasksDays)
 	if err != nil {
 		return result, fmt.Errorf("db.CleanupOld: 清 sync_tasks (%d 天) 失败: %w", tasksDays, err)
+	}
+	result.DatasetReqDeleted, result.DatasetReqBatches, err = deleteOldRows(db.Exec, cleanupDatasetReqSQL, taskLogsDays)
+	if err != nil {
+		return result, fmt.Errorf("db.CleanupOld: 清 dataset_request_logs (%d 天) 失败: %w", taskLogsDays, err)
 	}
 	return result, nil
 }

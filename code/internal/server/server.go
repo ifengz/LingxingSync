@@ -29,6 +29,7 @@ import (
 	"lingxing-sync/internal/api"
 	"lingxing-sync/internal/config"
 	"lingxing-sync/internal/datasetapi"
+	"lingxing-sync/internal/db"
 	"lingxing-sync/internal/worker"
 )
 
@@ -53,16 +54,17 @@ type Server struct {
 	assets     Assets // 注入的 web/ 静态资源（embed.FS）
 
 	// 配置读写 + 热加载/重启依赖（宪法 §7.5）
-	store            *config.ConfigStore     // config.yaml 线程安全读写 + 变更分类
-	sched            *worker.Scheduler       // 热加载时 Rebuild cron
-	limiters         *worker.LimiterRegistry // rate 变化时 UpdateOrCreate
-	configPath       string                  // config.yaml 路径（消息展示用）
-	datasetAPI       *datasetapi.Handler     // listing-daily-v1 兼容入口
-	datasetAPIs      map[string]*datasetapi.Handler
-	dailyPreview     dailyPreviewReader     // 固定日维预览查询
-	reportStatus     reportStatusReader     // 正式报表任务与对账状态
-	reportStoreScope reportStoreScopeReader // 正式报表复用账号级店铺选择
-	reportHistory    reportHistoryReader    // 正式报告下载与核对历史
+	store             *config.ConfigStore     // config.yaml 线程安全读写 + 变更分类
+	sched             *worker.Scheduler       // 热加载时 Rebuild cron
+	limiters          *worker.LimiterRegistry // rate 变化时 UpdateOrCreate
+	configPath        string                  // config.yaml 路径（消息展示用）
+	datasetAPI        *datasetapi.Handler     // listing-daily-v1 兼容入口
+	datasetAPIs       map[string]*datasetapi.Handler
+	dailyPreview      dailyPreviewReader      // 固定日维预览查询
+	reportStatus      reportStatusReader      // 正式报表任务与对账状态
+	reportStoreScope  reportStoreScopeReader  // 正式报表复用账号级店铺选择
+	reportHistory     reportHistoryReader     // 正式报告下载与核对历史
+	datasetRequestLog datasetRequestLogReader // 下游数据集请求日志查询
 
 	// pages: 页面名 → 该页专属的已解析模板树。
 	// 关键解耦：每页一棵独立模板树（layout + 该页 partial），这样各页的
@@ -107,6 +109,7 @@ func New(cfg *config.Config, dbx *sqlx.DB, reg *worker.Registry, clients *api.Cl
 		s.reportStatus = sqlReportStatusReader{db: dbx}
 		s.reportStoreScope = sqlReportStoreScopeReader{db: dbx}
 		s.reportHistory = sqlReportHistoryReader{db: dbx}
+		s.datasetRequestLog = sqlDatasetRequestLogReader{db: dbx}
 	}
 	s.datasetAPIs = make(map[string]*datasetapi.Handler)
 	for _, definition := range datasetapi.Definitions() {
@@ -149,6 +152,16 @@ func (s *Server) newDatasetHandler(cfg *config.Config, definition datasetapi.Def
 	handler, err := datasetapi.New(datasetapi.Config{Definition: definition, Tokens: tokens, FieldAllowlist: fields, CatalogFields: catalogDatasetFields(definition), MaxDateSpanDays: cfg.DatasetAPI.MaxDateSpanDays, MaxPageSize: cfg.DatasetAPI.MaxPageSize, CursorSecret: []byte(cfg.DatasetAPI.CursorSecret)}, nil)
 	if err != nil || s.dbx == nil {
 		return handler, err
+	}
+	if s.dbx != nil {
+		// 下游请求日志：handler 出口单点回调 → 一请求一行落 dataset_request_logs。
+		handler.SetRequestLogger(func(l datasetapi.RequestLog) {
+			db.InsertDatasetRequestLog(s.dbx, db.DatasetRequestLog{
+				DatasetID: l.DatasetID, Endpoint: l.Endpoint, ProjectID: l.ProjectID, TokenID: l.TokenID,
+				Store: l.Store, DateFrom: l.DateFrom, DateTo: l.DateTo,
+				StatusCode: l.StatusCode, RowsReturned: l.RowsReturned, DurationMs: l.DurationMs, ErrorMessage: l.ErrorMessage,
+			})
+		})
 	}
 	switch definition.ID {
 	case datasetapi.DatasetID:
@@ -364,6 +377,7 @@ func (s *Server) Routes() *http.ServeMux {
 	mux.HandleFunc("GET /api/tasks/{id}/logs", s.apiTaskLogs)
 	mux.HandleFunc("GET /api/report-exports/history", s.apiReportHistory)
 	mux.HandleFunc("GET /api/report-reconciliations", s.apiReportReconciliations)
+	mux.HandleFunc("GET /api/dataset-requests", s.apiDatasetRequests)
 
 	// ---- API 路由：触发同步 ----
 	mux.HandleFunc("POST /api/sync/{name}", s.apiSyncTrigger)

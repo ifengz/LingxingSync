@@ -24,7 +24,8 @@
     <nav class="ml-auto flex items-center gap-1.5" role="tablist" aria-label="日志类型">
       <button type="button" @click="switchTab('sync')" :class="activeTab==='sync' ? 'border-brand-600 bg-brand-600 text-white' : 'border-transparent text-slate-600 hover:border-slate-200 hover:bg-slate-50'" class="inline-flex min-h-8 items-center gap-1.5 rounded-md border px-3 py-1 text-sm font-bold">接口同步数据</button>
       <button type="button" @click="switchTab('report')" :class="activeTab==='report' ? 'border-brand-600 bg-brand-600 text-white' : 'border-transparent text-slate-600 hover:border-slate-200 hover:bg-slate-50'" class="inline-flex min-h-8 items-center gap-1.5 rounded-md border px-3 py-1 text-sm font-bold">接口下载报告</button>
-      <button type="button" @click="switchTab('reconciliation')" :class="activeTab==='reconciliation' ? 'border-brand-600 bg-brand-600 text-white' : 'border-transparent text-slate-600 hover:border-slate-200'" class="inline-flex min-h-8 items-center gap-1.5 rounded-md border px-3 py-1 text-sm font-bold">核对数据</button>
+      <button type="button" @click="switchTab('reconciliation')" :class="activeTab==='reconciliation' ? 'border-brand-600 bg-brand-600 text-white' : 'border-transparent text-slate-600 hover:border-slate-200 hover:bg-slate-50'" class="inline-flex min-h-8 items-center gap-1.5 rounded-md border px-3 py-1 text-sm font-bold">核对数据</button>
+      <button type="button" @click="switchTab('downstream')" :class="activeTab==='downstream' ? 'border-brand-600 bg-brand-600 text-white' : 'border-transparent text-slate-600 hover:border-slate-200 hover:bg-slate-50'" class="inline-flex min-h-8 items-center gap-1.5 rounded-md border px-3 py-1 text-sm font-bold">下游同步数据</button>
     </nav>
     <button @click="refreshList()" :disabled="refreshing" title="刷新列表"
             class="ui-btn ui-btn-secondary">
@@ -47,14 +48,14 @@
           <template x-for="n in endpointNames" :key="n"><option :value="n" x-text="n"></option></template>
         </select>
       </div>
-      <div class="ui-field" x-show="activeTab!=='sync'">
+      <div class="ui-field" x-show="activeTab==='report' || activeTab==='reconciliation'">
         <label class="ui-field-label">报表类型</label>
         <select x-model="filters.report_type" @change="filters.page=1; load()" class="ui-control">
           <option value="">全部</option>
           <template x-for="n in reportTypes" :key="n"><option :value="n" x-text="reportTypeLabel(n)"></option></template>
         </select>
       </div>
-      <div class="ui-field">
+      <div class="ui-field" x-show="activeTab!=='downstream'">
         <label class="ui-field-label">账号</label>
         <select x-model="filters.account" @change="filters.page=1; load()" class="ui-control">
           <option value="">全部</option>
@@ -79,6 +80,12 @@
         <label class="ui-field-label">状态</label>
         <select x-model="filters.status" @change="filters.page=1; load()" class="ui-control">
           <option value="">全部</option><option value="matched">已匹配</option><option value="corrected">已修正</option><option value="failed">失败</option>
+        </select>
+      </div>
+      <div class="ui-field" x-show="activeTab==='downstream'">
+        <label class="ui-field-label">状态</label>
+        <select x-model="filters.status" @change="filters.page=1; load()" class="ui-control">
+          <option value="">全部</option><option value="ok">成功</option><option value="error">失败</option>
         </select>
       </div>
       <div class="ui-field ui-date-range-field" @click.outside="dateRangeOpen = false">
@@ -173,6 +180,34 @@
       <table x-show="activeTab==='reconciliation'" class="ui-table">
         <thead><tr><th class="px-4 py-2.5 text-left">业务日期</th><th class="px-4 py-2.5 text-left">报表类型</th><th class="px-4 py-2.5 text-left">账号 / 店铺</th><th class="px-4 py-2.5 text-left">核对结果</th><th class="px-4 py-2.5 text-right">数据库缺少</th><th class="px-4 py-2.5 text-right">报表缺少</th><th class="px-4 py-2.5 text-right">字段差异</th><th class="px-4 py-2.5 text-left">报告审计号</th><th class="px-4 py-2.5 text-left">错误</th></tr></thead>
         <tbody class="divide-y divide-slate-100"><template x-for="row in reconciliations" :key="row.report_audit_id + '|' + row.business_date"><tr class="ui-table-row"><td class="ui-cell-nowrap text-slate-600" x-text="row.business_date"></td><td class="font-medium text-slate-800" x-text="reportTypeLabel(row.report_type)"></td><td class="text-slate-600" x-text="row.account_id + ' / ' + row.store_id"></td><td><span :class="statusClass(row.status === 'failed' ? 'error' : row.status === 'corrected' ? 'empty' : 'success')" class="ui-badge" x-text="reportStatusText(row.status)"></span></td><td class="ui-cell-data ui-cell-right" x-text="row.database_missing"></td><td class="ui-cell-data ui-cell-right" x-text="row.report_missing"></td><td class="ui-cell-data ui-cell-right" x-text="row.value_mismatch"></td><td><button type="button" @click="openReportAudit(row.report_audit_id)" class="font-mono text-xs text-brand-700 hover:underline" x-text="row.report_audit_id"></button></td><td class="max-w-64 truncate text-xs text-red-600" :title="row.error_message || ''" x-text="row.error_message || '—'"></td></tr></template><tr x-show="reconciliations.length===0"><td colspan="9" class="ui-empty">无符合条件的记录</td></tr></tbody>
+      </table>
+      <table x-show="activeTab==='downstream'" class="ui-table">
+        <thead><tr><th class="px-4 py-2.5 text-left">时间</th><th class="px-4 py-2.5 text-left">下游项目</th><th class="px-4 py-2.5 text-left">数据集</th><th class="px-4 py-2.5 text-left">方式</th><th class="px-4 py-2.5 text-left">店铺</th><th class="px-4 py-2.5 text-left">日期范围</th><th class="px-4 py-2.5 text-left">状态</th><th class="px-4 py-2.5 text-right">返回行数</th><th class="px-4 py-2.5 text-right">耗时</th></tr></thead>
+        <tbody class="divide-y divide-slate-100">
+          <template x-for="row in datasetRequests" :key="row.id">
+            <tr class="ui-table-row">
+              <td class="ui-cell-nowrap text-slate-600" x-text="fmtTime(row.created_at)"></td>
+              <td class="font-medium text-slate-800">
+                <span x-text="row.project_id || '（未识别）'"></span>
+                <span x-show="row.token_id" class="ml-1 font-mono text-xs text-slate-400" x-text="row.token_id"></span>
+              </td>
+              <td class="font-mono text-xs text-slate-600" x-text="row.dataset_id"></td>
+              <td class="text-slate-600" x-text="datasetEndpointText(row.endpoint)"></td>
+              <td class="text-slate-600" x-text="row.store || '—'"></td>
+              <td class="ui-cell-nowrap text-xs text-slate-500" x-text="row.date_from ? (row.date_from + ' ~ ' + row.date_to) : '—'"></td>
+              <td>
+                <span :class="datasetStatusOk(row.status_code) ? 'success' : 'error'" class="ui-badge">
+                  <span :class="datasetStatusOk(row.status_code) ? 'bg-emerald-500' : 'bg-red-500'" class="ui-badge-dot"></span>
+                  <span x-text="'HTTP ' + row.status_code"></span>
+                </span>
+                <span x-show="!datasetStatusOk(row.status_code) && row.error_message" class="ml-1.5 max-w-48 truncate align-middle text-xs text-red-600" :title="row.error_message" x-text="row.error_message"></span>
+              </td>
+              <td class="ui-cell-data ui-cell-right text-slate-700" x-text="row.rows_returned"></td>
+              <td class="ui-cell-data ui-cell-right text-xs text-slate-500" x-text="row.duration_ms + ' ms'"></td>
+            </tr>
+          </template>
+          <tr x-show="datasetRequests.length===0"><td colspan="9" class="ui-empty">无符合条件的记录</td></tr>
+        </tbody>
       </table>
       </div>
     </div>

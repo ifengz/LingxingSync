@@ -48,6 +48,7 @@ type Config struct {
 	MaxPageSize     int
 	CursorSecret    []byte
 	PersistFields   func(string, []string) error
+	RequestLogger   func(RequestLog)
 }
 
 type Token struct {
@@ -59,6 +60,22 @@ type Token struct {
 	Fields        []string
 	ExpiresAt     time.Time
 	Revoked       bool
+}
+
+// RequestLog 是一次下游请求的落定事实，由 handler 出口单点回调。
+// 留存端（server 层注入 db 写入）负责落库；未注入时只留 stdout。
+type RequestLog struct {
+	DatasetID    string
+	Endpoint     string // snapshot | changes | fields
+	ProjectID    string // 认证失败时为空
+	TokenID      string // 认证失败时为空
+	Store        string
+	DateFrom     string
+	DateTo       string
+	StatusCode   int
+	RowsReturned int
+	DurationMs   int64
+	ErrorMessage string
 }
 
 type CursorKey struct {
@@ -269,6 +286,50 @@ func New(cfg Config, reader Reader) (*Handler, error) {
 	return &Handler{reader: reader, cfg: cfg, definition: definition, available: available, catalog: catalog, tokens: tokens}, nil
 }
 
+// requestLogAccum 累积一次 snapshot/changes 请求的落定事实，出口经
+// logDatasetRequest 回调注入的 RequestLogger（未注入则不留痕）。
+type requestLogAccum struct {
+	datasetID string
+	endpoint  string
+	projectID string
+	tokenID   string
+	store     string
+	dateFrom  string
+	dateTo    string
+	status    int
+	rows      int
+	errMsg    string
+	// fieldsResp：fields 路由的错误响应用 FieldsResponse 包裹（保持原有 wire 形状），
+	// snapshot/changes 用 Response。
+	fieldsResp bool
+}
+
+func (a *requestLogAccum) fail(w http.ResponseWriter, status int, msg string) {
+	a.status = status
+	a.errMsg = msg
+	if a.fieldsResp {
+		writeJSON(w, status, FieldsResponse{OK: false, Error: msg})
+		return
+	}
+	writeError(w, status, msg)
+}
+
+func (h *Handler) logDatasetRequest(a *requestLogAccum, start time.Time) {
+	status := a.status
+	if status == 0 { // panic 未及写状态码时按 500 落账
+		status = http.StatusInternalServerError
+	}
+	if h.cfg.RequestLogger == nil {
+		return
+	}
+	h.cfg.RequestLogger(RequestLog{
+		DatasetID: a.datasetID, Endpoint: a.endpoint, ProjectID: a.projectID, TokenID: a.tokenID,
+		Store: a.store, DateFrom: a.dateFrom, DateTo: a.dateTo,
+		StatusCode: status, RowsReturned: a.rows,
+		DurationMs: time.Since(start).Milliseconds(), ErrorMessage: a.errMsg,
+	})
+}
+
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path == h.fieldsPath() {
 		h.serveFields(w, r)
@@ -278,30 +339,43 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	endpoint := "changes"
+	if r.URL.Path == h.snapshotPath() {
+		endpoint = "snapshot"
+	}
+	start := time.Now()
+	acc := &requestLogAccum{datasetID: h.definition.ID, endpoint: endpoint}
+	defer func() { h.logDatasetRequest(acc, start) }()
+	h.serveDataset(w, r, acc)
+}
+
+func (h *Handler) serveDataset(w http.ResponseWriter, r *http.Request, acc *requestLogAccum) {
 	token, status, err := h.authenticate(r)
 	if err != nil {
-		writeError(w, status, err.Error())
+		acc.fail(w, status, err.Error())
 		return
 	}
+	acc.projectID, acc.tokenID = token.ProjectID, token.ID
 	var in request
 	if err := decodeJSON(r, &in); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		acc.fail(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	acc.store, acc.dateFrom, acc.dateTo = in.Store, in.DateFrom, in.DateTo
 	fields, pageSize, err := h.validateRequest(&in, r.URL.Path == h.snapshotPath(), token)
 	if err != nil {
 		status := http.StatusBadRequest
 		if strings.Contains(err.Error(), "scope") {
 			status = http.StatusForbidden
 		}
-		writeError(w, status, err.Error())
+		acc.fail(w, status, err.Error())
 		return
 	}
 	h.mu.RLock()
 	reader := h.reader
 	h.mu.RUnlock()
 	if reader == nil {
-		writeError(w, http.StatusServiceUnavailable, "listing daily reader is not configured")
+		acc.fail(w, http.StatusServiceUnavailable, "listing daily reader is not configured")
 		return
 	}
 	var page Page
@@ -312,7 +386,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if in.Cursor != "" {
 			cursor, cursorErr := h.decodeCursor(in.Cursor, "snapshot", token.ID, in.Store, in.DateFrom, in.DateTo)
 			if cursorErr != nil {
-				writeError(w, cursorErrorStatus(cursorErr), cursorErr.Error())
+				acc.fail(w, cursorErrorStatus(cursorErr), cursorErr.Error())
 				return
 			}
 			query.Cursor = &cursor.Key
@@ -328,21 +402,22 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	} else {
 		cursor, cursorErr := h.decodeCursor(in.Cursor, "changes", token.ID, in.Store, "", "")
 		if cursorErr != nil {
-			writeError(w, cursorErrorStatus(cursorErr), cursorErr.Error())
+			acc.fail(w, cursorErrorStatus(cursorErr), cursorErr.Error())
 			return
 		}
 		query = Query{Store: in.Store, Fields: fields, PageSize: pageSize, Cursor: &cursor.Key}
 		page, err = reader.Changes(r.Context(), query)
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "listing daily query failed")
+		acc.fail(w, http.StatusInternalServerError, "listing daily query failed")
 		return
 	}
 	response, err := h.response(r.URL.Path == h.snapshotPath(), in, page, fields, token.ID, snapshotWatermark, query.Cursor)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		acc.fail(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	acc.status, acc.rows = http.StatusOK, len(page.Rows)
 	writeJSON(w, http.StatusOK, response)
 }
 
@@ -372,6 +447,10 @@ func (h *Handler) authenticate(r *http.Request) (Token, int, error) {
 
 func (h *Handler) SetFieldPersistence(persist func(string, []string) error) {
 	h.cfg.PersistFields = persist
+}
+
+func (h *Handler) SetRequestLogger(logger func(RequestLog)) {
+	h.cfg.RequestLogger = logger
 }
 
 func (h *Handler) SetReader(reader Reader) {
@@ -519,8 +598,15 @@ func (h *Handler) changesPath() string  { return ChangesPathFor(h.definition.ID)
 func (h *Handler) fieldsPath() string   { return FieldsPathFor(h.definition.ID) }
 
 func (h *Handler) serveFields(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+	acc := &requestLogAccum{datasetID: h.definition.ID, endpoint: "fields", fieldsResp: true}
+	defer func() { h.logDatasetRequest(acc, start) }()
+	h.serveFieldsInner(w, r, acc)
+}
+
+func (h *Handler) serveFieldsInner(w http.ResponseWriter, r *http.Request, acc *requestLogAccum) {
 	if r.Method != http.MethodGet && r.Method != http.MethodPut {
-		writeJSON(w, http.StatusMethodNotAllowed, FieldsResponse{OK: false, Error: "method not allowed"})
+		acc.fail(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	var in fieldsRequest
@@ -530,12 +616,12 @@ func (h *Handler) serveFields(w http.ResponseWriter, r *http.Request) {
 		dec := json.NewDecoder(io.LimitReader(r.Body, 1<<20))
 		dec.DisallowUnknownFields()
 		if err := dec.Decode(&in); err != nil {
-			writeJSON(w, http.StatusBadRequest, FieldsResponse{OK: false, Error: "fields JSON is invalid"})
+			acc.fail(w, http.StatusBadRequest, "fields JSON is invalid")
 			return
 		}
 		var extra any
 		if err := dec.Decode(&extra); err != io.EOF {
-			writeJSON(w, http.StatusBadRequest, FieldsResponse{OK: false, Error: "fields JSON must contain one object"})
+			acc.fail(w, http.StatusBadRequest, "fields JSON must contain one object")
 			return
 		}
 		if requestedProjectID == "" {
@@ -560,6 +646,7 @@ func (h *Handler) serveFields(w http.ResponseWriter, r *http.Request) {
 			}
 			return projects[i].ProjectID < projects[j].ProjectID
 		})
+		acc.status = http.StatusOK
 		writeJSON(w, http.StatusOK, FieldsResponse{OK: true, Data: FieldsResponseData{DatasetID: h.definition.ID, DatasetName: h.definition.Name, FixedFields: append([]string(nil), h.definition.FixedFields...), AvailableFields: available, CatalogFields: catalog, ConfiguredFields: append([]string(nil), available...), Projects: projects}})
 		return
 	}
@@ -569,9 +656,10 @@ func (h *Handler) serveFields(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(err.Error(), "not allowed") {
 			status = http.StatusForbidden
 		}
-		writeFieldsError(w, status, err.Error())
+		acc.fail(w, status, err.Error())
 		return
 	}
+	acc.projectID, acc.tokenID = token.ProjectID, token.ID
 	current := make(map[string]struct{}, len(token.Fields))
 	for _, field := range token.Fields {
 		current[field] = struct{}{}
@@ -580,36 +668,37 @@ func (h *Handler) serveFields(w http.ResponseWriter, r *http.Request) {
 		h.mu.RLock()
 		available := sortedKeys(h.available)
 		h.mu.RUnlock()
+		acc.status = http.StatusOK
 		writeJSON(w, http.StatusOK, FieldsResponse{OK: true, Data: FieldsResponseData{DatasetID: h.definition.ID, DatasetName: h.definition.Name, FixedFields: append([]string(nil), h.definition.FixedFields...), ProjectID: token.ProjectID, TokenID: token.ID, AvailableFields: available, Fields: sortedKeys(current)}})
 		return
 	}
 	if requestedProjectID == "" {
-		writeFieldsError(w, http.StatusBadRequest, "project_id is required")
+		acc.fail(w, http.StatusBadRequest, "project_id is required")
 		return
 	}
 	if in.ProjectID != "" && in.ProjectID != token.ProjectID {
-		writeFieldsError(w, http.StatusForbidden, "project_id is not allowed")
+		acc.fail(w, http.StatusForbidden, "project_id is not allowed")
 		return
 	}
 	if in.TokenID != "" && in.TokenID != token.ID {
-		writeFieldsError(w, http.StatusForbidden, "token_id is not allowed")
+		acc.fail(w, http.StatusForbidden, "token_id is not allowed")
 		return
 	}
 	if len(in.Fields) == 0 {
-		writeJSON(w, http.StatusBadRequest, FieldsResponse{OK: false, Error: "fields cannot be empty"})
+		acc.fail(w, http.StatusBadRequest, "fields cannot be empty")
 		return
 	}
 	selected := make(map[string]struct{}, len(in.Fields))
 	for _, field := range in.Fields {
 		if _, duplicate := selected[field]; duplicate {
-			writeJSON(w, http.StatusBadRequest, FieldsResponse{OK: false, Error: "fields contains a duplicate"})
+			acc.fail(w, http.StatusBadRequest, "fields contains a duplicate")
 			return
 		}
 		h.mu.RLock()
 		_, available := h.available[field]
 		h.mu.RUnlock()
 		if !available {
-			writeJSON(w, http.StatusBadRequest, FieldsResponse{OK: false, Error: "field is not available"})
+			acc.fail(w, http.StatusBadRequest, "field is not available")
 			return
 		}
 		selected[field] = struct{}{}
@@ -617,7 +706,7 @@ func (h *Handler) serveFields(w http.ResponseWriter, r *http.Request) {
 	fields := sortedKeys(selected)
 	if h.cfg.PersistFields != nil {
 		if err := h.cfg.PersistFields(token.ID, fields); err != nil {
-			writeJSON(w, http.StatusInternalServerError, FieldsResponse{OK: false, Error: "persisting fields failed"})
+			acc.fail(w, http.StatusInternalServerError, "persisting fields failed")
 			return
 		}
 	}
@@ -629,6 +718,7 @@ func (h *Handler) serveFields(w http.ResponseWriter, r *http.Request) {
 	// A PUT updates the persisted project configuration. The current request's
 	// token remains authoritative until the config is reloaded, so one project
 	// cannot mutate another project's in-memory field scope.
+	acc.status = http.StatusOK
 	writeJSON(w, http.StatusOK, FieldsResponse{OK: true, Data: FieldsResponseData{DatasetID: h.definition.ID, DatasetName: h.definition.Name, FixedFields: append([]string(nil), h.definition.FixedFields...), ProjectID: token.ProjectID, TokenID: token.ID, AvailableFields: sortedKeys(h.available), Fields: fields}})
 }
 
@@ -659,10 +749,6 @@ func (h *Handler) resolveToken(projectID, tokenID string) (Token, error) {
 		return match, nil
 	}
 	return Token{}, errors.New("project_id or token_id is not allowed")
-}
-
-func writeFieldsError(w http.ResponseWriter, status int, message string) {
-	writeJSON(w, status, FieldsResponse{OK: false, Error: message})
 }
 
 func (h *Handler) validateRequest(in *request, snapshot bool, token Token) ([]string, int, error) {

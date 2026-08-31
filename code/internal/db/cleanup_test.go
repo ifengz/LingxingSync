@@ -86,3 +86,9 @@ func TestCleanupTaskQueryOnlyDeletesTerminalRows(t *testing.T) {
 		}
 	}
 }
+
+func TestCleanupDatasetRequestQueryIsOrderedAndBounded(t *testing.T) {
+	if !strings.Contains(cleanupDatasetReqSQL, "ORDER BY created_at, id LIMIT ?") {
+		t.Fatalf("dataset request cleanup is not ordered and bounded: %s", cleanupDatasetReqSQL)
+	}
+}

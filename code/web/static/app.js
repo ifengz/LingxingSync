@@ -980,10 +980,11 @@ window.logsPage = function () {
   // 从 URL query 预填筛选（同步中心点击单元格跳转过来）
   const q = new URLSearchParams(window.location.search);
   return {
-    activeTab: ['sync', 'report', 'reconciliation'].includes(q.get('tab')) ? q.get('tab') : 'sync',
+    activeTab: ['sync', 'report', 'reconciliation', 'downstream'].includes(q.get('tab')) ? q.get('tab') : 'sync',
     tasks: [],
     reportTasks: [],
     reconciliations: [],
+    datasetRequests: [],
     total: 0,
     endpointNames: (window.__PAGE__ && window.__PAGE__.endpointNames) || [],
     accountIDs: (window.__PAGE__ && window.__PAGE__.accountIDs) || [],
@@ -1026,6 +1027,7 @@ window.logsPage = function () {
       try {
         if (this.activeTab === 'report') return await this.loadReportHistory();
         if (this.activeTab === 'reconciliation') return await this.loadReconciliations();
+        if (this.activeTab === 'downstream') return await this.loadDatasetRequests();
         const params = new URLSearchParams();
         for (const k of ['endpoint', 'account', 'status', 'date_from', 'date_to', 'page', 'page_size']) {
           const v = this.filters[k];
@@ -1067,6 +1069,19 @@ window.logsPage = function () {
       const d = await window.apiGet('/api/report-reconciliations?' + params.toString()).catch(window.toastError);
       if (!d) return;
       this.reconciliations = d.items || [];
+      this.total = d.total || 0;
+      this.lastUpdatedAt = this.nowText();
+    },
+    // 下游同步数据：下游项目经数据集 API 拉数的请求日志（dataset_request_logs）。
+    async loadDatasetRequests() {
+      const params = new URLSearchParams();
+      for (const k of ['status', 'date_from', 'date_to', 'page', 'page_size']) {
+        const v = this.filters[k];
+        if (v !== '' && v != null) params.set(k, v);
+      }
+      const d = await window.apiGet('/api/dataset-requests?' + params.toString()).catch(window.toastError);
+      if (!d) return;
+      this.datasetRequests = d.items || [];
       this.total = d.total || 0;
       this.lastUpdatedAt = this.nowText();
     },
@@ -1172,6 +1187,13 @@ window.logsPage = function () {
     },
     reportStatusText(status) {
       return ({ SUCCESS: '成功', ERROR: '失败', FATAL: '失败', CANCELLED: '已取消', PENDING: '等待创建', CREATING: '创建中', IN_QUEUE: '队列中', IN_PROGRESS: '下载中', DONE: '待下载', UNKNOWN: '未知', matched: '已匹配', corrected: '已修正', failed: '失败' })[status] || status;
+    },
+    // 下游请求日志：200=成功，其余按失败展示；endpoint 字段名含义与 reportStatusText 不同源。
+    datasetEndpointText(e) {
+      return ({ snapshot: '全量快照', changes: '增量变化', fields: '字段配置' })[e] || e;
+    },
+    datasetStatusOk(code) {
+      return Number(code) === 200;
     },
     openReportAudit(auditID) {
       this.activeTab = 'report';

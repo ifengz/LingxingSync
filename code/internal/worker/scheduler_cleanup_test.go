@@ -35,10 +35,12 @@ func TestRunCleanupLogsOneSuccessSummary(t *testing.T) {
 				t.Fatalf("retention args = %d/%d", taskLogsDays, tasksDays)
 			}
 			return db.CleanupResult{
-				TaskLogsDeleted: 1234,
-				TaskLogsBatches: 2,
-				TasksDeleted:    56,
-				TasksBatches:    1,
+				TaskLogsDeleted:   1234,
+				TaskLogsBatches:   2,
+				TasksDeleted:      56,
+				TasksBatches:      1,
+				DatasetReqDeleted: 7,
+				DatasetReqBatches: 1,
 			}, nil
 		},
 	}
@@ -58,6 +60,8 @@ func TestRunCleanupLogsOneSuccessSummary(t *testing.T) {
 		"task_logs_batches=2",
 		"tasks_deleted=56",
 		"tasks_batches=1",
+		"dataset_req_deleted=7",
+		"dataset_req_batches=1",
 	} {
 		if !strings.Contains(lines[0], want) {
 			t.Fatalf("success summary missing %q: %s", want, lines[0])

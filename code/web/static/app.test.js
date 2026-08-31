@@ -938,11 +938,30 @@ void (async () => {
   historyLogs.openReportAudit(93);
   assert.equal(historyCalls[2], '/api/report-exports/history?audit_id=93&account=sc_us&type=fba_customer_returns&date_from=2026-08-01&date_to=2026-08-25&page=1&page_size=20');
 
+  // 下游同步数据切卡：读 /api/dataset-requests，不把账号筛选混入（下游项目 ≠ 领星账号）。
+  {
+    const downstream = sandbox.window.logsPage();
+    downstream.filters.account = 'sc_us';
+    const downstreamCalls = [];
+    sandbox.window.apiGet = async (url) => {
+      downstreamCalls.push(url);
+      if (url.startsWith('/api/dataset-requests?')) return { items: [{ id: 1, dataset_id: 'listing-daily-v1', endpoint: 'snapshot', project_id: 'polabel2', status_code: 200, rows_returned: 7 }], total: 1 };
+      throw new Error('unexpected downstream URL ' + url);
+    };
+    await downstream.switchTab('downstream');
+    assert.equal(downstreamCalls[0], '/api/dataset-requests?date_from=&date_to=&page=1&page_size=20');
+    assert.equal(downstream.datasetRequests[0].project_id, 'polabel2');
+    assert.equal(downstream.datasetEndpointText('snapshot'), '全量快照');
+    assert.equal(downstream.datasetStatusOk(200), true);
+    assert.equal(downstream.datasetStatusOk(401), false);
+  }
+
   {
     const logsTemplate = fs.readFileSync(__dirname + '/../templates/logs.html', 'utf8');
     assert.match(logsTemplate, /接口同步数据/);
     assert.match(logsTemplate, /接口下载报告/);
     assert.match(logsTemplate, /核对数据/);
+    assert.match(logsTemplate, /下游同步数据/);
     assert.match(logsTemplate, /openReportAudit\(row\.report_audit_id\)/);
   }
 
