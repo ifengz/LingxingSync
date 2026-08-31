@@ -64,9 +64,11 @@ type Server struct {
 	reportStatus      reportStatusReader      // 正式报表任务与对账状态
 	reportStoreScope  reportStoreScopeReader  // 正式报表复用账号级店铺选择
 	reportHistory     reportHistoryReader     // 正式报告下载与核对历史
-	datasetRequestLog datasetRequestLogReader // 下游数据集请求日志查询
+datasetRequestLog datasetRequestLogReader // 下游数据集请求日志查询
 
-	// pages: 页面名 → 该页专属的已解析模板树。
+		rebuildStatus *rebuildStatus // 异步日维回刷状态
+
+		// pages: 页面名 → 该页专属的已解析模板树。
 	// 关键解耦：每页一棵独立模板树（layout + 该页 partial），这样各页的
 	// {{define "content"}} 互不覆盖；改一页只重渲染该页。
 	pages map[string]*template.Template
@@ -104,6 +106,7 @@ func New(cfg *config.Config, dbx *sqlx.DB, reg *worker.Registry, clients *api.Cl
 		configPath: configPath,
 		pages:      map[string]*template.Template{},
 	}
+	s.rebuildStatus = &rebuildStatus{}
 	if dbx != nil {
 		s.dailyPreview = sqlDailyPreviewReader{db: dbx}
 		s.reportStatus = sqlReportStatusReader{db: dbx}
@@ -390,6 +393,10 @@ func (s *Server) Routes() *http.ServeMux {
 
 	// ---- API 路由：对账 ----
 	mux.HandleFunc("POST /api/reconcile", s.apiReconcile)
+
+	// ---- API 路由：历史日维回刷（CLI 之外的 HTTP 入口，部署后触发）----
+	mux.HandleFunc("POST /api/rebuild-listing-daily", s.apiRebuildListingDaily)
+	mux.HandleFunc("GET /api/rebuild-listing-daily/status", s.apiRebuildStatus)
 
 	// ---- API 路由：代码注册的数据表 ----
 	s.registerDailyReportRoutes(mux)
