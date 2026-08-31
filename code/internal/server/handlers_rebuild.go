@@ -15,9 +15,8 @@ import (
 	"lingxing-sync/internal/rebuild"
 )
 
-// rebuildStatus tracks the state of an async listing-daily rebuild.
-type rebuildStatus struct {
-	mu          sync.Mutex
+// rebuildSnapshot 是 rebuildStatus 对外输出的纯值快照（不含互斥锁，可安全拷贝）。
+type rebuildSnapshot struct {
 	Running     bool      `json:"running"`
 	StartedAt   time.Time `json:"started_at,omitempty"`
 	CompletedAt time.Time `json:"completed_at,omitempty"`
@@ -30,7 +29,13 @@ type rebuildStatus struct {
 	Error       string    `json:"error,omitempty"`
 }
 
-// rebuildRequest is the JSON body for POST /api/rebuild-listing-daily.
+// rebuildStatus 持有异步日维回刷的运行态；mu 保护 snapshot，快照不带锁。
+type rebuildStatus struct {
+	mu       sync.Mutex
+	snapshot rebuildSnapshot
+}
+
+// rebuildRequest 是 POST /api/rebuild-listing-daily 的请求体。
 type rebuildRequest struct {
 	DateFrom  string `json:"date_from"`
 	DateTo    string `json:"date_to"`
@@ -38,12 +43,11 @@ type rebuildRequest struct {
 	StoreID   string `json:"store_id,omitempty"`
 }
 
-// apiRebuildListingDaily starts an async listing-daily rebuild for the given
-// date range. Optional account_id and store_id filter which accounts/stores
-// to rebuild; empty means all.
+// apiRebuildListingDaily 启动一次异步日维回刷。可选 account_id/store_id 过滤
+// 账号/店铺；为空表示全部。同一时间只允许一次回刷在跑。
 func (s *Server) apiRebuildListingDaily(w http.ResponseWriter, r *http.Request) {
 	s.rebuildStatus.mu.Lock()
-	if s.rebuildStatus.Running {
+	if s.rebuildStatus.snapshot.Running {
 		s.rebuildStatus.mu.Unlock()
 		errJSON(w, http.StatusConflict, "listing-daily rebuild is already in progress")
 		return
@@ -81,7 +85,7 @@ func (s *Server) apiRebuildListingDaily(w http.ResponseWriter, r *http.Request) 
 	}
 
 	s.rebuildStatus.mu.Lock()
-	s.rebuildStatus = &rebuildStatus{
+	s.rebuildStatus.snapshot = rebuildSnapshot{
 		Running:   true,
 		StartedAt: time.Now(),
 		AccountID: req.AccountID,
@@ -103,33 +107,32 @@ func (s *Server) apiRebuildListingDaily(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
-// apiRebuildStatus returns the current state of the async rebuild.
+// apiRebuildStatus 返回异步回刷的当前状态。
 func (s *Server) apiRebuildStatus(w http.ResponseWriter, r *http.Request) {
 	s.rebuildStatus.mu.Lock()
-	st := *s.rebuildStatus
+	st := s.rebuildStatus.snapshot
 	s.rebuildStatus.mu.Unlock()
 	okJSON(w, st)
 }
 
-// runRebuild is the background goroutine that performs the actual rebuild
-// using the shared internal/rebuild package.
+// runRebuild 是执行回刷的后台协程，复用 internal/rebuild 包。
 func (s *Server) runRebuild(ctx context.Context, dbx *sqlx.DB, cfg *config.Config, accountID, storeID string, from, to time.Time) {
 	setProgress := func(p string) {
 		s.rebuildStatus.mu.Lock()
-		s.rebuildStatus.Progress = p
+		s.rebuildStatus.snapshot.Progress = p
 		s.rebuildStatus.mu.Unlock()
 	}
 	setError := func(errMsg string) {
 		s.rebuildStatus.mu.Lock()
-		s.rebuildStatus.Error = errMsg
+		s.rebuildStatus.snapshot.Error = errMsg
 		s.rebuildStatus.mu.Unlock()
 		log.Printf("[rebuild] ERROR: %s", errMsg)
 	}
 
 	defer func() {
 		s.rebuildStatus.mu.Lock()
-		s.rebuildStatus.Running = false
-		s.rebuildStatus.CompletedAt = time.Now()
+		s.rebuildStatus.snapshot.Running = false
+		s.rebuildStatus.snapshot.CompletedAt = time.Now()
 		s.rebuildStatus.mu.Unlock()
 	}()
 
@@ -144,8 +147,8 @@ func (s *Server) runRebuild(ctx context.Context, dbx *sqlx.DB, cfg *config.Confi
 	}
 
 	s.rebuildStatus.mu.Lock()
-	s.rebuildStatus.RowsWritten = rowsWritten
-	s.rebuildStatus.Progress = "completed"
+	s.rebuildStatus.snapshot.RowsWritten = rowsWritten
+	s.rebuildStatus.snapshot.Progress = "completed"
 	s.rebuildStatus.mu.Unlock()
 	log.Printf("[rebuild] listing-daily rebuild complete: %d rows from=%s to=%s", rowsWritten, from.Format("2006-01-02"), to.Format("2006-01-02"))
 }
