@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -831,17 +832,50 @@ func reportRateLimitRetry(err error, httpStatus, apiCode, attempt int) (time.Dur
 			apiCode = fetchErr.APICode
 		}
 	}
-	if httpStatus != http.StatusTooManyRequests && apiCode != 3001008 {
+	// Lingxing returns rate limits both as HTTP 429 and as HTTP 200 with
+	// business code 429 / 3001008 (observed on report query in production).
+	if httpStatus != http.StatusTooManyRequests && apiCode != 3001008 && apiCode != http.StatusTooManyRequests {
 		return 0, false
 	}
 	if attempt >= len(reportRateLimitDelays) {
 		return 0, false
 	}
-	if fetchErr != nil && fetchErr.RetryAfter > 0 {
-		return fetchErr.RetryAfter, true
+	if fetchErr != nil {
+		if wait, ok := suggestedRateLimitWait(fetchErr.APIMessage); ok {
+			return wait, true
+		}
+		if fetchErr.RetryAfter > 0 {
+			return fetchErr.RetryAfter, true
+		}
 	}
 	return reportRateLimitDelays[attempt], true
 }
+
+// suggestedRateLimitWait reads the upstream hint embedded in error_details,
+// e.g. "SingleApiAndSellerIdLimitError[...]，请在20.274秒后重试". The hint is
+// authoritative for how long the same seller+path stays throttled.
+func suggestedRateLimitWait(message string) (time.Duration, bool) {
+	match := suggestedWaitPattern.FindStringSubmatch(message)
+	if match == nil {
+		return 0, false
+	}
+	seconds, err := strconv.ParseFloat(match[1], 64)
+	if err != nil || seconds <= 0 {
+		return 0, false
+	}
+	wait := time.Duration(seconds * float64(time.Second))
+	if wait < time.Second {
+		wait = time.Second
+	}
+	if wait > maxSuggestedRateLimitWait {
+		wait = maxSuggestedRateLimitWait
+	}
+	return wait, true
+}
+
+var suggestedWaitPattern = regexp.MustCompile(`请在([0-9]+(?:\.[0-9]+)?)秒后重试`)
+
+const maxSuggestedRateLimitWait = 5 * time.Minute
 
 func createBody(request Request) map[string]any {
 	body := map[string]any{"seller_id": request.SellerID, "report_type": normalizedReportType(request), "marketplace_ids": request.MarketplaceIDs, "region": request.Region}

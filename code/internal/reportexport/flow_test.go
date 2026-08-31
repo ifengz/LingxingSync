@@ -938,19 +938,38 @@ func TestDownloadPreservesReportContentType(t *testing.T) {
 	}
 }
 
-func TestReportCallDoesNotRetryHTTP200BusinessCode429(t *testing.T) {
+func TestReportCallRetriesHTTP200BusinessCode429(t *testing.T) {
 	calls := 0
 	client := signedClientFunc(func(_ context.Context, _, _ string, _ map[string]any) ([]byte, int, int, error) {
 		calls++
-		return nil, http.StatusOK, http.StatusTooManyRequests, api.NewFetchError(http.StatusOK, http.StatusTooManyRequests, "请求过于频繁", time.Millisecond, true)
+		if calls == 1 {
+			return nil, http.StatusOK, http.StatusTooManyRequests, api.NewFetchError(http.StatusOK, http.StatusTooManyRequests, "api error code=429 msg=\"请求过于频繁，请稍后重试\"; error_details=[\"SingleApiAndSellerIdLimitError[single_api_and_seller_id_limit]，请在20.274秒后重试\"]", 0, true)
+		}
+		return []byte(`{"code":0,"data":{"progress_status":"IN_PROGRESS"}}`), http.StatusOK, 0, nil
 	})
 	runner := Runner{Client: client}
-	_, err := runner.call(context.Background(), queryPath, map[string]any{"task_id": "task-1"})
-	if err == nil {
-		t.Fatal("call should return the HTTP 200 business error")
+	raw, err := runner.call(context.Background(), queryPath, map[string]any{"task_id": "task-1"})
+	if err != nil {
+		t.Fatalf("call after HTTP 200 business code 429 = %v", err)
 	}
-	if calls != 1 {
-		t.Fatalf("calls=%d, want one request for HTTP 200 business code 429", calls)
+	if calls != 2 {
+		t.Fatalf("calls=%d, want retry for HTTP 200 business code 429", calls)
+	}
+	if !strings.Contains(string(raw), "IN_PROGRESS") {
+		t.Fatalf("raw=%s", raw)
+	}
+}
+
+func TestSuggestedRateLimitWaitFromErrorDetails(t *testing.T) {
+	wait, ok := suggestedRateLimitWait(`api error code=429 msg="请求过于频繁" path=/basicOpen/report/query/reportExportTask; error_details=["SingleApiAndSellerIdLimitError[single_api_and_seller_id_limit]，请在20.274秒后重试"]`)
+	if !ok {
+		t.Fatal("expected suggested wait from error_details hint")
+	}
+	if wait != 20274*time.Millisecond {
+		t.Fatalf("wait=%s, want 20.274s", wait)
+	}
+	if _, ok := suggestedRateLimitWait("unrelated business error"); ok {
+		t.Fatal("unrelated message must not yield a suggested wait")
 	}
 }
 
