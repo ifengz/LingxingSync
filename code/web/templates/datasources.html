@@ -161,7 +161,24 @@
           </tr>
         </tbody>
       </template>
-      <tbody x-show="endpoints.length===0">
+      <!-- 状态区分：加载中 / 加载失败 / 真的没数据。
+           不能拿「未配置」冒充加载前的空态——endpoints 为空可能只是还没返回。 -->
+      <tbody x-show="endpointsLoading && endpoints.length===0">
+        <tr>
+          <td colspan="6" class="px-4 py-10 text-center text-sm text-slate-400">
+            <span :class="refreshing && 'animate-pulse'">正在加载数据源…</span>
+          </td>
+        </tr>
+      </tbody>
+      <tbody x-show="!endpointsLoading && endpointsError">
+        <tr>
+          <td colspan="6" class="px-4 py-8 text-center text-sm text-red-600">
+            加载失败：<span x-text="endpointsError"></span>
+            <button type="button" @click="refresh()" class="ml-2 font-medium text-brand-700 hover:underline">重试</button>
+          </td>
+        </tr>
+      </tbody>
+      <tbody x-show="!endpointsLoading && !endpointsError && endpoints.length===0">
         <tr>
           <td colspan="6" class="px-4 py-10 text-center text-sm text-slate-400">未配置任何数据源</td>
         </tr>

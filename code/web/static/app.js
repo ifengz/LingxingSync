@@ -1419,6 +1419,8 @@ function errorMessage(error, fallback) {
 window.dataSources = function () {
   return {
     endpoints: [],
+    endpointsLoading: false, // 主表首次加载中（区分「没配置」和「还没返回」）
+    endpointsError: '',      // 主表加载失败信息（不静默空表）
     expanded: null,
     metaLoading: false,
     columns: [],
@@ -1930,9 +1932,18 @@ window.dataSources = function () {
       }
     },
     async loadEndpoints() {
-      const eps = await window.apiGet('/api/endpoints').catch(window.toastError);
-      this.endpoints = eps || [];
-      return eps;
+      this.endpointsLoading = true;
+      this.endpointsError = '';
+      try {
+        const eps = await window.apiGet('/api/endpoints');
+        this.endpoints = eps || [];
+        return this.endpoints;
+      } catch (error) {
+        this.endpointsError = (error && error.message) ? error.message : String(error);
+        return null;
+      } finally {
+        this.endpointsLoading = false;
+      }
     },
     async loadDailyPreview() {
       if (this.dailyPreviewLoading) return;
@@ -1994,7 +2005,6 @@ window.dataSources = function () {
       try {
         const eps = await this.loadEndpoints();
         if (eps) {
-          this.endpoints = eps;
           this.expanded = null; // 列表刷新后收起展开行，避免 idx 错位
         }
       } finally {
