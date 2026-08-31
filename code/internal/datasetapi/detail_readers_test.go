@@ -335,9 +335,13 @@ func TestPageReadersUseSeparateFixedSources(t *testing.T) {
 		if tc.definition.fields[tc.field] == "" {
 			t.Fatalf("%s reader missing field %s", tc.name, tc.field)
 		}
+		fromClause := tc.definition.fromClause
+		if tc.definition.fromClauseForQuery != nil {
+			fromClause, _ = tc.definition.fromClauseForQuery(Query{})
+		}
 		for _, fragment := range tc.fragments {
-			if !strings.Contains(tc.definition.fromClause, fragment) {
-				t.Fatalf("%s reader source missing %q: %s", tc.name, fragment, tc.definition.fromClause)
+			if !strings.Contains(fromClause, fragment) {
+				t.Fatalf("%s reader source missing %q: %s", tc.name, fragment, fromClause)
 			}
 		}
 	}
@@ -357,6 +361,9 @@ func TestFBALinksReaderIncludesPublishedFBAListingDailyMetrics(t *testing.T) {
 	}
 	if !strings.Contains(queryer.query, "WHERE d.channel = 'sc_fba'") {
 		t.Fatalf("FBA Links must aggregate the published FBA daily channel: %s", queryer.query)
+	}
+	if !strings.Contains(queryer.query, "d.store_id IN (?)") || !strings.Contains(queryer.query, "l.sid IN (?)") || len(queryer.args) != 5 || queryer.args[0] != "store-a" || queryer.args[1] != "store-a" {
+		t.Fatalf("FBA Links metrics must be restricted to the requested store before aggregation: query=%s args=%#v", queryer.query, queryer.args)
 	}
 	if len(page.Rows) != 1 || page.Rows[0].Values["quantity_30d"] != int64(12) {
 		t.Fatalf("FBA daily metric was not returned: %+v", page)

@@ -159,6 +159,18 @@ func (r *SQLReader) read(ctx context.Context, query Query, snapshot bool) (Page,
 }
 
 func appendStoreFilter(where []string, args []any, column string, query Query) ([]string, []any) {
+	stores := queryStores(query)
+	if len(stores) == 0 {
+		return where, args
+	}
+	where = append(where, column+" IN ("+placeholders(len(stores))+")")
+	for _, store := range stores {
+		args = append(args, store)
+	}
+	return where, args
+}
+
+func queryStores(query Query) []string {
 	stores := make([]string, 0, len(query.Stores)+1)
 	seen := make(map[string]struct{}, len(query.Stores)+1)
 	for _, raw := range append(append([]string(nil), query.Stores...), query.Store) {
@@ -172,15 +184,11 @@ func appendStoreFilter(where []string, args []any, column string, query Query) (
 		seen[store] = struct{}{}
 		stores = append(stores, store)
 	}
-	if len(stores) == 0 {
-		return where, args
-	}
-	placeholders := strings.TrimRight(strings.Repeat("?,", len(stores)), ",")
-	where = append(where, column+" IN ("+placeholders+")")
-	for _, store := range stores {
-		args = append(args, store)
-	}
-	return where, args
+	return stores
+}
+
+func placeholders(count int) string {
+	return strings.TrimRight(strings.Repeat("?,", count), ",")
 }
 
 func fixedMetricFields(fields []string) ([]string, error) {

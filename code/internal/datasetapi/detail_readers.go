@@ -21,16 +21,48 @@ type DetailSQLReader struct {
 }
 
 type detailReaderDefinition struct {
-	sourceTable     string
-	fromClause      string
-	alias           string
-	storeColumn     string
-	baseColumns     []string
-	dateColumn      string
-	stableKeyColumn string
-	updatedAtColumn string
-	fields          map[string]string
-	stableKeyParts  int
+	sourceTable        string
+	fromClause         string
+	fromClauseForQuery func(Query) (string, []any)
+	alias              string
+	storeColumn        string
+	baseColumns        []string
+	dateColumn         string
+	stableKeyColumn    string
+	updatedAtColumn    string
+	fields             map[string]string
+	stableKeyParts     int
+}
+
+func fbaLinksFromClause(query Query) (string, []any) {
+	stores := queryStores(query)
+	metricsWhere := "d.channel = 'sc_fba'"
+	metricsArgs := make([]any, 0, len(stores))
+	if len(stores) > 0 {
+		metricsWhere += " AND d.store_id IN (" + placeholders(len(stores)) + ")"
+		for _, store := range stores {
+			metricsArgs = append(metricsArgs, store)
+		}
+	}
+	return `ls_sc_listing l
+JOIN ls_stores s
+  ON s.account_id = l.account_id AND s.sid = l.sid AND s.store_type = 'SC'
+LEFT JOIN (
+  SELECT d.store_id, d.asin, d.sku,
+         SUM(CASE WHEN m.business_date >= DATE_SUB(CURDATE(), INTERVAL 6 DAY) THEN m.sales_units END) AS quantity_7d,
+         SUM(CASE WHEN m.business_date >= DATE_SUB(CURDATE(), INTERVAL 29 DAY) THEN m.sales_units END) AS quantity_30d,
+         SUM(CASE WHEN m.business_date >= DATE_SUB(CURDATE(), INTERVAL 29 DAY) THEN m.sales_amount END) AS revenue_30d,
+         SUM(CASE WHEN m.business_date >= DATE_SUB(CURDATE(), INTERVAL 29 DAY) THEN m.returns_qty END) AS returns_30d,
+         SUM(CASE WHEN m.business_date >= DATE_SUB(CURDATE(), INTERVAL 6 DAY) THEN COALESCE(m.sp_orders, 0) + COALESCE(m.sd_orders, 0) + COALESCE(m.hsa_orders, 0) + COALESCE(m.sb_orders, 0) END) AS ad_orders_7d,
+         SUM(CASE WHEN m.business_date >= DATE_SUB(CURDATE(), INTERVAL 29 DAY) THEN COALESCE(m.sp_spend, 0) + COALESCE(m.sd_spend, 0) + COALESCE(m.hsa_spend, 0) + COALESCE(m.sb_spend, 0) END) AS ad_spend_30d,
+         MAX(m.business_date) AS latest_date,
+         MAX(m.updated_at) AS latest_sync_at
+    FROM listing_dimensions d
+    JOIN listing_daily_metrics m ON m.listing_dimension_id = d.id
+   WHERE ` + metricsWhere + `
+   GROUP BY d.store_id, d.asin, d.sku
+) metrics
+  ON metrics.store_id = l.sid AND metrics.asin = l.asin AND metrics.sku = l.seller_sku`, metricsArgs
 }
 
 var returnReasonDetailDefinition = detailReaderDefinition{
@@ -292,31 +324,13 @@ var vcPOLinesDefinition = detailReaderDefinition{
 }
 
 var fbaLinksDefinition = detailReaderDefinition{
-	fromClause: `ls_sc_listing l
-JOIN ls_stores s
-  ON s.account_id = l.account_id AND s.sid = l.sid AND s.store_type = 'SC'
-LEFT JOIN (
-  SELECT d.store_id, d.asin, d.sku,
-         SUM(CASE WHEN m.business_date >= DATE_SUB(CURDATE(), INTERVAL 6 DAY) THEN m.sales_units END) AS quantity_7d,
-         SUM(CASE WHEN m.business_date >= DATE_SUB(CURDATE(), INTERVAL 29 DAY) THEN m.sales_units END) AS quantity_30d,
-         SUM(CASE WHEN m.business_date >= DATE_SUB(CURDATE(), INTERVAL 29 DAY) THEN m.sales_amount END) AS revenue_30d,
-         SUM(CASE WHEN m.business_date >= DATE_SUB(CURDATE(), INTERVAL 29 DAY) THEN m.returns_qty END) AS returns_30d,
-         SUM(CASE WHEN m.business_date >= DATE_SUB(CURDATE(), INTERVAL 6 DAY) THEN COALESCE(m.sp_orders, 0) + COALESCE(m.sd_orders, 0) + COALESCE(m.hsa_orders, 0) + COALESCE(m.sb_orders, 0) END) AS ad_orders_7d,
-         SUM(CASE WHEN m.business_date >= DATE_SUB(CURDATE(), INTERVAL 29 DAY) THEN COALESCE(m.sp_spend, 0) + COALESCE(m.sd_spend, 0) + COALESCE(m.hsa_spend, 0) + COALESCE(m.sb_spend, 0) END) AS ad_spend_30d,
-         MAX(m.business_date) AS latest_date,
-         MAX(m.updated_at) AS latest_sync_at
-    FROM listing_dimensions d
-    JOIN listing_daily_metrics m ON m.listing_dimension_id = d.id
-   WHERE d.channel = 'sc_fba'
-   GROUP BY d.store_id, d.asin, d.sku
-) metrics
-  ON metrics.store_id = l.sid AND metrics.asin = l.asin AND metrics.sku = l.seller_sku`,
-	storeColumn:     "l.sid",
-	baseColumns:     []string{"l.account_id", "l.sid", "l.asin", "l.seller_sku", "DATE(l.synced_at)", "COALESCE(metrics.latest_sync_at, l.synced_at)", "CONCAT_WS('|', l.account_id, l.sid, l.seller_sku)"},
-	dateColumn:      "DATE(l.synced_at)",
-	stableKeyColumn: "CONCAT_WS('|', l.account_id, l.sid, l.seller_sku)",
-	updatedAtColumn: "COALESCE(metrics.latest_sync_at, l.synced_at)",
-	stableKeyParts:  3,
+	fromClauseForQuery: fbaLinksFromClause,
+	storeColumn:        "l.sid",
+	baseColumns:        []string{"l.account_id", "l.sid", "l.asin", "l.seller_sku", "DATE(l.synced_at)", "COALESCE(metrics.latest_sync_at, l.synced_at)", "CONCAT_WS('|', l.account_id, l.sid, l.seller_sku)"},
+	dateColumn:         "DATE(l.synced_at)",
+	stableKeyColumn:    "CONCAT_WS('|', l.account_id, l.sid, l.seller_sku)",
+	updatedAtColumn:    "COALESCE(metrics.latest_sync_at, l.synced_at)",
+	stableKeyParts:     3,
 	fields: map[string]string{
 		"store_name":               "s.store_name",
 		"country":                  "s.country",
@@ -1303,6 +1317,10 @@ func (r *DetailSQLReader) read(ctx context.Context, query Query, snapshot bool) 
 	selectColumns := append([]string(nil), r.definition.baseColumns...)
 	selectColumns = append(selectColumns, fields...)
 	fromClause := r.definition.fromClause
+	fromArgs := []any(nil)
+	if r.definition.fromClauseForQuery != nil {
+		fromClause, fromArgs = r.definition.fromClauseForQuery(query)
+	}
 	if fromClause == "" {
 		fromClause = r.definition.sourceTable + " " + r.definition.alias
 	}
@@ -1312,7 +1330,8 @@ func (r *DetailSQLReader) read(ctx context.Context, query Query, snapshot bool) 
 	}
 	queryText := "SELECT " + strings.Join(selectColumns, ", ") + " FROM " + fromClause
 	where := make([]string, 0, 3)
-	args := make([]any, 0, 6)
+	args := make([]any, 0, 6+len(fromArgs))
+	args = append(args, fromArgs...)
 	where, args = appendStoreFilter(where, args, storeColumn, query)
 	if snapshot {
 		where = append(where, r.definition.dateColumn+" BETWEEN ? AND ?")
