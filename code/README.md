@@ -179,7 +179,7 @@ cd code
 make build
 supervisorctl restart lingxing-sync
 
-# 程序启动时会自动执行 migrations/*.sql（幂等），无需手动导入
+# 程序启动时只执行 schema_migrations 中尚未记录的 migrations/*.sql
 ```
 
 ---

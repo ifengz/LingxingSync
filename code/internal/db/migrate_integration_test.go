@@ -30,4 +30,11 @@ func TestRunMigrationsIsRepeatableAgainstExistingSchema(t *testing.T) {
 			t.Fatalf("RunMigrations attempt %d: %v", attempt, err)
 		}
 	}
+	var applied int
+	if err := db.Get(&applied, "SELECT COUNT(*) FROM schema_migrations"); err != nil {
+		t.Fatalf("count schema_migrations: %v", err)
+	}
+	if applied == 0 {
+		t.Fatal("schema_migrations must record applied files")
+	}
 }

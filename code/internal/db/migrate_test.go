@@ -1,12 +1,24 @@
 package db
 
 import (
+	"encoding/hex"
 	"os"
 	"strings"
 	"testing"
 
 	"github.com/jmoiron/sqlx"
 )
+
+func TestMigrationChecksumUsesSHA256(t *testing.T) {
+	got := migrationChecksum([]byte("CREATE TABLE example (id INT);"))
+	want := "2ace808a8e7f00bda1e6e1697199f8cee4f3b52e738bc1805dc2527ebdba0b00"
+	if got != want {
+		t.Fatalf("checksum = %s, want %s", got, want)
+	}
+	if _, err := hex.DecodeString(got); err != nil {
+		t.Fatalf("checksum must be hexadecimal: %v", err)
+	}
+}
 
 func TestRenameAccountMigrationPreservesConflicts(t *testing.T) {
 	raw, err := os.ReadFile("../../migrations/009_rename_account.sql")

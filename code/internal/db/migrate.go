@@ -8,6 +8,8 @@
 package db
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -17,13 +19,18 @@ import (
 	"github.com/jmoiron/sqlx"
 )
 
-// RunMigrations 读取 dir 下所有 *.sql（按文件名升序），逐文件整段 Exec。
-//
-// 幂等性依赖 SQL 里的 IF NOT EXISTS / IF EXISTS，不维护 schema_versions 表——
-// 宪法 §2 明确这是单进程同步机，不需要演进式迁移，只需要「启动时把表建好」。
-//
-// 任何文件 Exec 失败立刻返回 error（fail-loud，启动断言）。
+// RunMigrations 读取 dir 下所有 *.sql（按完整文件名升序），只执行尚未记录的文件。
+// 迁移 SQL 仍须保持可重试；MySQL 多语句 DDL 不能依赖事务回滚。
 func RunMigrations(db *sqlx.DB, dir string) error {
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations (
+		filename VARCHAR(255) NOT NULL,
+		checksum CHAR(64) NOT NULL,
+		applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		PRIMARY KEY (filename)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`); err != nil {
+		return fmt.Errorf("db.RunMigrations: 创建 schema_migrations 失败: %w", err)
+	}
+
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return fmt.Errorf("db.RunMigrations: 读迁移目录 %s 失败: %w", dir, err)
@@ -47,19 +54,52 @@ func RunMigrations(db *sqlx.DB, dir string) error {
 		return fmt.Errorf("db.RunMigrations: 目录 %s 下没有任何 .sql 文件", dir)
 	}
 
+	applied := make(map[string]string, len(files))
+	rows, err := db.Queryx("SELECT filename, checksum FROM schema_migrations")
+	if err != nil {
+		return fmt.Errorf("db.RunMigrations: 读取 schema_migrations 失败: %w", err)
+	}
+	for rows.Next() {
+		var filename, checksum string
+		if err := rows.Scan(&filename, &checksum); err != nil {
+			return fmt.Errorf("db.RunMigrations: 读取 schema_migrations 记录失败: %w", err)
+		}
+		applied[filename] = checksum
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("db.RunMigrations: 遍历 schema_migrations 失败: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("db.RunMigrations: 关闭 schema_migrations 查询失败: %w", err)
+	}
+
 	for _, name := range files {
 		path := filepath.Join(dir, name)
 		raw, err := os.ReadFile(path)
 		if err != nil {
 			return fmt.Errorf("db.RunMigrations: 读 %s 失败: %w", path, err)
 		}
-		stmt := string(raw)
-		if strings.TrimSpace(stmt) == "" {
-			continue // 空文件跳过，不报错
+		checksum := migrationChecksum(raw)
+		if recorded, ok := applied[name]; ok {
+			if recorded != checksum {
+				return fmt.Errorf("db.RunMigrations: 已执行迁移 %s 的 checksum 不匹配", name)
+			}
+			continue
 		}
-		if _, err := db.Exec(stmt); err != nil {
-			return fmt.Errorf("db.RunMigrations: 执行 %s 失败: %w", name, err)
+		stmt := string(raw)
+		if strings.TrimSpace(stmt) != "" {
+			if _, err := db.Exec(stmt); err != nil {
+				return fmt.Errorf("db.RunMigrations: 执行 %s 失败: %w", name, err)
+			}
+		}
+		if _, err := db.Exec("INSERT INTO schema_migrations (filename, checksum) VALUES (?, ?)", name, checksum); err != nil {
+			return fmt.Errorf("db.RunMigrations: 记录 %s 失败: %w", name, err)
 		}
 	}
 	return nil
+}
+
+func migrationChecksum(raw []byte) string {
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:])
 }
