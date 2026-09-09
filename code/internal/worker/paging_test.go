@@ -1,10 +1,105 @@
 package worker
 
 import (
+	"strings"
 	"testing"
 
 	"lingxing-sync/internal/api"
 )
+
+func TestValidateAdPageRequiresExactTotal(t *testing.T) {
+	tests := []struct {
+		name          string
+		result        api.FetchResult
+		pageLen       int
+		fetched       int
+		expectedTotal int
+		wantErr       string
+	}{
+		{
+			name:          "empty page before total",
+			result:        api.FetchResult{Total: 401, TotalPresent: true},
+			pageLen:       0,
+			fetched:       200,
+			expectedTotal: 401,
+			wantErr:       "空页",
+		},
+		{
+			name:          "has_more false before total",
+			result:        api.FetchResult{Total: 401, TotalPresent: true, HasMorePresent: true},
+			pageLen:       200,
+			fetched:       200,
+			expectedTotal: 401,
+			wantErr:       "只抓取",
+		},
+		{
+			name:          "fetched exceeds total",
+			result:        api.FetchResult{Total: 200, TotalPresent: true},
+			pageLen:       200,
+			fetched:       201,
+			expectedTotal: 200,
+			wantErr:       "超过",
+		},
+		{
+			name:          "total changes",
+			result:        api.FetchResult{Total: 300, TotalPresent: true},
+			pageLen:       100,
+			fetched:       100,
+			expectedTotal: 301,
+			wantErr:       "变化",
+		},
+		{
+			name:          "exact final page",
+			result:        api.FetchResult{Total: 201, TotalPresent: true},
+			pageLen:       1,
+			fetched:       201,
+			expectedTotal: 201,
+		},
+		{
+			name:          "empty zero result",
+			result:        api.FetchResult{Total: 0, TotalPresent: true},
+			pageLen:       0,
+			fetched:       0,
+			expectedTotal: 0,
+		},
+		{
+			name:          "missing total",
+			result:        api.FetchResult{Total: 0},
+			pageLen:       0,
+			fetched:       0,
+			expectedTotal: 0,
+			wantErr:       "缺少 total",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateAdPage(&tt.result, tt.pageLen, tt.fetched, tt.expectedTotal)
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("validateAdPage returned error: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("validateAdPage error = %v, want substring %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestAdRowsHaveUniqueConfiguredKeys(t *testing.T) {
+	rows := []map[string]any{
+		{"sid": "store-1", "profile_id": "profile-1", "report_date": "2026-09-09", "ad_id": 10, "asin": "A"},
+		{"sid": "store-1", "profile_id": "profile-1", "report_date": "2026-09-09", "ad_id": 11, "asin": "A"},
+	}
+	if err := validateAdRows(rows, []string{"sid", "profile_id", "report_date", "ad_id"}); err != nil {
+		t.Fatalf("same ASIN with different ad IDs must be allowed: %v", err)
+	}
+	rows = append(rows, map[string]any{"sid": "store-1", "profile_id": "profile-1", "report_date": "2026-09-09", "ad_id": 10, "asin": "B"})
+	if err := validateAdRows(rows, []string{"sid", "profile_id", "report_date", "ad_id"}); err == nil {
+		t.Fatal("duplicate configured key must fail")
+	}
+}
 
 // TestShouldContinuePaging 锁定宪法 §4 分页终止契约（doc/core/08-api-reference.md）：
 // has_more==false 或 offset+length>=total 终止。历史 bug：worker 只认 has_more，

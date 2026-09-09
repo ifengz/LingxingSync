@@ -546,7 +546,7 @@ func (w *EndpointWorker) doSync(ctx context.Context, req triggerReq) {
 		return
 	}
 
-	if w.Endpoint.IterateByAdAccount {
+	if w.Endpoint.IterateByAdAccount && !w.Endpoint.Probe {
 		accounts, qerr := db.QueryEnabledAdAccountsForAccount(w.DB, w.Account.ID, w.Endpoint.AdAccountType)
 		if qerr != nil {
 			log.Printf("[worker:%s] QueryEnabledAdAccountsForAccount 失败: %v", w.Endpoint.Name, qerr)
@@ -694,16 +694,53 @@ func (w *EndpointWorker) doSync(ctx context.Context, req triggerReq) {
 	}
 }
 
-// fetchAllPages 翻页拉取一个（店铺的）全量数据并落库。
+// fetchAllPages 翻页拉取一个参数集合的全量数据并落库。
 // 返回 (records, pages, ok)；ok=false 表示中途出错（已记日志，调用方据此把 task 置 error）。
 //
-// 每页流程（宪法 §5）：
+// 普通接口的每页流程（广告接口会先缓存整日分区，验证完整后一次替换）：
 //  1. limiter.Wait（同 (quota_group, path) 共享桶）
 //  2. client.Fetch
 //  3. InsertTaskLog（每页一行，含 http_status/api_code/records/duration/err_raw）
 //  4. UpsertRows（account_id 注入由 db 层负责）
 //  5. 累计 pages/records；HasMore 则 offset+=pageSize 继续
 func (w *EndpointWorker) fetchAllPages(ctx context.Context, taskID int64, params map[string]any) (int, int, bool) {
+	if w.Endpoint.IterateByAdAccount && !w.Endpoint.Probe {
+		return w.fetchAdPartition(ctx, taskID, params)
+	}
+	return w.fetchAllPagesWithSink(ctx, taskID, params, nil)
+}
+
+// fetchAdPartition buffers one ad profile/date partition until every page is
+// verified. A failed or incomplete response therefore leaves the previous
+// complete partition untouched.
+func (w *EndpointWorker) fetchAdPartition(ctx context.Context, taskID int64, params map[string]any) (int, int, bool) {
+	rows := make([]map[string]any, 0)
+	records, pages, ok := w.fetchAllPagesWithSink(ctx, taskID, params, func(list []map[string]any) error {
+		rows = append(rows, list...)
+		return nil
+	})
+	if !ok {
+		return records, pages, false
+	}
+	if err := validateAdRows(rows, w.Endpoint.RecordIDFields); err != nil {
+		_ = db.InsertTaskLog(w.DB, taskID, pages+1, 0, 0, 0, 0, "ad rows: "+err.Error())
+		log.Printf("[worker:%s] 广告行唯一键校验失败: %v", w.Endpoint.Name, err)
+		return records, pages, false
+	}
+	sid := stringParam(params, "sid")
+	profileID := stringParam(params, "profile_id")
+	reportDate := stringParam(params, "report_date")
+	if err := db.ReplaceAdPartition(ctx, w.DB, w.Endpoint.Table, w.Account.ID, sid, profileID, reportDate, rows, w.Columns, w.JSONCols); err != nil {
+		_ = db.InsertTaskLog(w.DB, taskID, pages+1, 0, 0, 0, 0, "ad partition: "+err.Error())
+		log.Printf("[worker:%s] 广告分区替换失败: %v", w.Endpoint.Name, err)
+		return records, pages, false
+	}
+	return records, pages, true
+}
+
+// fetchAllPagesWithSink contains the shared page-fetch loop. A non-nil sink
+// selects the strict ad-report path and buffers rows instead of writing them.
+func (w *EndpointWorker) fetchAllPagesWithSink(ctx context.Context, taskID int64, params map[string]any, sink func([]map[string]any) error) (int, int, bool) {
 	limiter := w.Limiters.Get(w.Account.QuotaGroupOrID(), w.Endpoint.Path, w.Endpoint.Rate.Bucket, w.Endpoint.Rate.IntervalMs)
 	pageSize := api.DefaultPageSize
 	if pageSize <= 0 {
@@ -713,6 +750,7 @@ func (w *EndpointWorker) fetchAllPages(ctx context.Context, taskID int64, params
 	totalRecords := 0
 	pages := 0
 	offset := 0
+	expectedTotal := -1
 
 	for {
 		// 取消检查
@@ -770,7 +808,22 @@ func (w *EndpointWorker) fetchAllPages(ctx context.Context, taskID int64, params
 			_ = db.InsertTaskLog(w.DB, taskID, pages+1, httpStatus, apiCode, len(list), durationMs, "row date: "+uerr.Error())
 			return totalRecords, pages, false
 		}
-		if len(list) > 0 {
+		if sink != nil {
+			if expectedTotal < 0 {
+				expectedTotal = result.Total
+			}
+			fetched := offset + len(list)
+			if uerr := validateAdPage(result, len(list), fetched, expectedTotal); uerr != nil {
+				_ = db.InsertTaskLog(w.DB, taskID, pages+1, httpStatus, apiCode, len(list), durationMs, "pagination: "+uerr.Error())
+				log.Printf("[worker:%s] 广告分页校验失败 offset=%d: %v", w.Endpoint.Name, offset, uerr)
+				return totalRecords, pages, false
+			}
+			if uerr := sink(list); uerr != nil {
+				_ = db.InsertTaskLog(w.DB, taskID, pages+1, httpStatus, apiCode, len(list), durationMs, "buffer: "+uerr.Error())
+				log.Printf("[worker:%s] 广告分页缓存失败 offset=%d: %v", w.Endpoint.Name, offset, uerr)
+				return totalRecords, pages, false
+			}
+		} else if len(list) > 0 {
 			if uerr := db.UpsertRows(w.DB, w.Endpoint.Table, list, w.Columns, w.JSONCols, w.Account.ID); uerr != nil {
 				_ = db.InsertTaskLog(w.DB, taskID, pages+1, httpStatus, apiCode, len(list), durationMs, "upsert: "+uerr.Error())
 				log.Printf("[worker:%s] UpsertRows 出错 offset=%d: %v", w.Endpoint.Name, offset, uerr)
@@ -803,6 +856,71 @@ func (w *EndpointWorker) fetchAllPages(ctx context.Context, taskID int64, params
 		// 兼容短页；对满页接口等价于 offset+=pageSize，行为不变。
 		offset = fetched
 	}
+}
+
+// validateAdPage enforces the documented total-based completion contract for
+// advertising reports. A zero-row, zero-total response is the only valid empty
+// partition; every non-empty result must provide a positive, stable total.
+func validateAdPage(r *api.FetchResult, pageLen, fetched, expectedTotal int) error {
+	if r == nil {
+		return fmt.Errorf("响应为空")
+	}
+	if !r.TotalPresent {
+		return fmt.Errorf("响应缺少 total")
+	}
+	if r.Total < 0 {
+		return fmt.Errorf("total 非法: %d", r.Total)
+	}
+	if expectedTotal >= 0 && r.Total != expectedTotal {
+		return fmt.Errorf("total 发生变化: 期望 %d，实际 %d", expectedTotal, r.Total)
+	}
+	if r.Total == 0 {
+		if pageLen != 0 || fetched != 0 {
+			return fmt.Errorf("非空页的 total 为 0")
+		}
+		if r.HasMorePresent && r.HasMore {
+			return fmt.Errorf("total 为 0 但 has_more=true")
+		}
+		return nil
+	}
+	if fetched > r.Total {
+		return fmt.Errorf("已抓取 %d 行，超过 total %d", fetched, r.Total)
+	}
+	if pageLen == 0 && fetched < r.Total {
+		return fmt.Errorf("空页但只抓取 %d/%d 行", fetched, r.Total)
+	}
+	if r.HasMorePresent && !r.HasMore && fetched != r.Total {
+		return fmt.Errorf("has_more=false 但只抓取 %d/%d 行", fetched, r.Total)
+	}
+	if r.HasMorePresent && r.HasMore && fetched >= r.Total {
+		return fmt.Errorf("has_more=true 但已抓取 %d/%d 行", fetched, r.Total)
+	}
+	return nil
+}
+
+// validateAdRows rejects missing or duplicate configured keys before any raw
+// row reaches MySQL. ASIN is intentionally not part of this check.
+func validateAdRows(rows []map[string]any, keyFields []string) error {
+	if len(keyFields) == 0 {
+		return fmt.Errorf("未配置唯一键")
+	}
+	seen := make(map[string]struct{}, len(rows))
+	for i, row := range rows {
+		parts := make([]string, len(keyFields))
+		for j, field := range keyFields {
+			value, ok := row[field]
+			if !ok || value == nil || strings.TrimSpace(fmt.Sprint(value)) == "" {
+				return fmt.Errorf("第 %d 行缺少唯一键字段 %s", i+1, field)
+			}
+			parts[j] = fmt.Sprintf("%s=%v", field, value)
+		}
+		key := strings.Join(parts, "\x00")
+		if _, ok := seen[key]; ok {
+			return fmt.Errorf("第 %d 行重复唯一键 %s", i+1, key)
+		}
+		seen[key] = struct{}{}
+	}
+	return nil
 }
 
 // maxPagesPerSync 是单次（单店铺）翻页的安全上限，防止领星忽略 offset 或谎报

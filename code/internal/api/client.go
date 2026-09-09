@@ -36,6 +36,7 @@ type FetchResult struct {
 	List []map[string]any // data.list 展开成 []map（兼容 data 本身是数组的情况）
 	// Total 优先取 data.total；data 是裸数组时取响应顶层的 total（见 §顶层 total）。
 	Total          int
+	TotalPresent   bool            // data 或响应顶层是否明确出现了 total 字段
 	HasMore        bool            // data.has_more 的值；缺失则为 false（parse 层不推断）
 	HasMorePresent bool            // data 里是否"出现"了 has_more 字段（用于 worker 选择终止策略）
 	Raw            json.RawMessage // 原始响应体（落 sync_task_logs 证据，可选）
@@ -538,6 +539,9 @@ func (c *Client) fetchOnce(ctx context.Context, method, path string, params map[
 	}
 	// 10b. 顶层 total 兜底（见 applyTopLevelTotal）。
 	applyTopLevelTotal(result, ar.Total)
+	if jsonObjectHasField(raw, "total") {
+		result.TotalPresent = true
+	}
 	if err := normalizeStoreRows(path, result.List); err != nil {
 		return nil, resp.StatusCode, ar.Code.asInt(), fmt.Errorf("lingxing fetch: map store fields: %w, body=%s", err, truncateForLog(raw))
 	}
@@ -565,6 +569,15 @@ func applyTopLevelTotal(result *FetchResult, topLevelTotal int) {
 	if result.Total == 0 && topLevelTotal > 0 {
 		result.Total = topLevelTotal
 	}
+}
+
+func jsonObjectHasField(raw []byte, field string) bool {
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		return false
+	}
+	_, ok := obj[field]
+	return ok
 }
 
 // parseFetchResult 把 data（json.RawMessage）解析成 FetchResult。
@@ -639,6 +652,9 @@ func parseFetchResultWithShape(data json.RawMessage, responseShape string) (*Fet
 
 		// total（领星标准字段）
 		r.Total = readInt(obj, "total")
+		if _, ok := obj["total"]; ok {
+			r.TotalPresent = true
+		}
 		// has_more：领星标准字段；无该字段视为无更多（parse 层不推断）。
 		// 另记录字段是否"出现"，供 worker 决定用 has_more 还是 offset+len>=total 终止（宪法 §4）。
 		if _, ok := obj["has_more"]; ok {

@@ -12,9 +12,11 @@
 package db
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/jmoiron/sqlx"
 )
@@ -84,6 +86,10 @@ func currentDB(db *sqlx.DB) string {
 //   - 每行字段缺失 → 写 nil → SQL NULL
 //   - 单批失败立即返回 error（fail-loud：类型不兼容绝不能写进脏数据）
 func UpsertRows(db *sqlx.DB, table string, rows []map[string]any, allowedCols []string, jsonCols map[string]bool, accountID string) error {
+	return upsertRows(db, table, rows, allowedCols, jsonCols, accountID)
+}
+
+func upsertRows(exec sqlx.Ext, table string, rows []map[string]any, allowedCols []string, jsonCols map[string]bool, accountID string) error {
 	if len(rows) == 0 {
 		return nil
 	}
@@ -119,11 +125,85 @@ func UpsertRows(db *sqlx.DB, table string, rows []map[string]any, allowedCols []
 		}
 	}
 
-	if _, err := db.Exec(stmt, vals...); err != nil {
+	if _, err := exec.Exec(stmt, vals...); err != nil {
 		return fmt.Errorf("db.UpsertRows: 写表 %s 失败（%d 行，%d 列）: %w",
 			table, len(rows), len(cols), err)
 	}
 	return nil
+}
+
+// ReplaceAdPartition atomically replaces one complete advertising report
+// partition. The table list is explicit because its scope columns are part of
+// each verified raw-table contract; arbitrary configured table names are not
+// accepted here.
+func ReplaceAdPartition(ctx context.Context, dbx *sqlx.DB, table, accountID, sid, profileID, reportDate string, rows []map[string]any, allowedCols []string, jsonCols map[string]bool) error {
+	where, hasSID := adPartitionWhere(table)
+	if where == "" {
+		return fmt.Errorf("广告表 %s 不支持单日分区替换", table)
+	}
+	if strings.TrimSpace(accountID) == "" || strings.TrimSpace(profileID) == "" {
+		return fmt.Errorf("广告分区缺少 account_id 或 profile_id")
+	}
+	if hasSID && strings.TrimSpace(sid) == "" {
+		return fmt.Errorf("广告分区缺少 sid")
+	}
+	if _, err := time.Parse("2006-01-02", reportDate); err != nil {
+		return fmt.Errorf("广告分区 report_date 非法 %q: %w", reportDate, err)
+	}
+	args := []any{accountID}
+	if hasSID {
+		args = append(args, sid)
+	}
+	args = append(args, profileID, reportDate)
+
+	tx, err := dbx.BeginTxx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("广告分区开启事务失败: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	if _, err := tx.ExecContext(ctx, "DELETE FROM `"+table+"` WHERE "+where, args...); err != nil {
+		return fmt.Errorf("广告分区清理失败: %w", err)
+	}
+	if err := upsertRows(tx, table, rows, allowedCols, jsonCols, accountID); err != nil {
+		return fmt.Errorf("广告分区写入失败: %w", err)
+	}
+	var count int
+	if err := tx.GetContext(ctx, &count, "SELECT COUNT(*) FROM `"+table+"` WHERE "+where, args...); err != nil {
+		return fmt.Errorf("广告分区事务内计数失败: %w", err)
+	}
+	if count != len(rows) {
+		return fmt.Errorf("广告分区事务内计数不一致: 数据库 %d 行，响应 %d 行", count, len(rows))
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("广告分区提交失败: %w", err)
+	}
+	committed = true
+
+	var committedCount int
+	if err := dbx.GetContext(ctx, &committedCount, "SELECT COUNT(*) FROM `"+table+"` WHERE "+where, args...); err != nil {
+		return fmt.Errorf("广告分区提交后计数失败: %w", err)
+	}
+	if committedCount != len(rows) {
+		return fmt.Errorf("广告分区提交后计数不一致: 数据库 %d 行，响应 %d 行", committedCount, len(rows))
+	}
+	return nil
+}
+
+func adPartitionWhere(table string) (string, bool) {
+	switch table {
+	case "ls_ad_sp_product", "ls_ad_sp_campaign", "ls_ad_sd_product", "ls_ad_sd_campaign", "ls_ad_hsa_campaign":
+		return "`account_id` = ? AND `sid` = ? AND `profile_id` = ? AND `report_date` = ?", true
+	case "ls_ad_vc_sp_product", "ls_ad_vc_sd_product", "ls_ad_vc_hsa_product":
+		return "`account_id` = ? AND `profile_id` = ? AND `report_date` = ?", false
+	default:
+		return "", false
+	}
 }
 
 func containsColumn(columns []string, target string) bool {

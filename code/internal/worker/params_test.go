@@ -86,6 +86,27 @@ func TestSingleDayWindowBuildsDailyCompensationRange(t *testing.T) {
 	}
 }
 
+func TestSingleDayWindowBuildsSixtyDayAdLookback(t *testing.T) {
+	w := &EndpointWorker{Endpoint: config.Endpoint{
+		WindowDays: 60, SingleDayWindow: true, DateOffsetDays: 2,
+		WindowStartField: "report_date", WindowEndField: "report_date",
+	}}
+	now := time.Date(2026, time.September, 9, 23, 59, 59, 0, time.UTC)
+	sets, err := w.paramSetsForAt(triggerReq{kind: "cron"}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sets) != 60 {
+		t.Fatalf("ad lookback sets=%d, want 60", len(sets))
+	}
+	for i, params := range sets {
+		want := now.AddDate(0, 0, -2-i).Format("2006-01-02")
+		if params["report_date"] != want {
+			t.Fatalf("set %d report_date=%v, want %s", i, params["report_date"], want)
+		}
+	}
+}
+
 func TestSingleDayWindowAppliesDateOffset(t *testing.T) {
 	w := &EndpointWorker{Endpoint: config.Endpoint{
 		WindowDays: 1, SingleDayWindow: true, DateOffsetDays: 1,

@@ -141,7 +141,7 @@ func TestCatalogIncludesVerifiedSyncTemplates(t *testing.T) {
 			key: "ad_sp_product", path: "/pb/openapi/newad/spProductAdReports", table: "ls_ad_sp_product",
 			advanced: func(ep Endpoint) bool {
 				return ep.IterateByAdAccount && ep.AdAccountType == "seller" && ep.RequestHeaders["X-API-VERSION"] == "2" &&
-					ep.SingleDayWindow && ep.WindowDays == 7 && ep.DateOffsetDays == 2 &&
+					ep.SingleDayWindow && ep.WindowDays == 60 && ep.DateOffsetDays == 2 &&
 					ep.WindowStartField == "report_date" && ep.WindowEndField == "report_date" &&
 					reflect.DeepEqual(ep.ForceInjectParams, []string{"sid", "profile_id"})
 			},
@@ -149,7 +149,7 @@ func TestCatalogIncludesVerifiedSyncTemplates(t *testing.T) {
 		{
 			key: "ad_sp_campaign", path: "/pb/openapi/newad/spCampaignReports", table: "ls_ad_sp_campaign",
 			advanced: func(ep Endpoint) bool {
-				return ep.IterateByAdAccount && ep.AdAccountType == "seller" && ep.SingleDayWindow && ep.WindowDays == 7 &&
+				return ep.IterateByAdAccount && ep.AdAccountType == "seller" && ep.SingleDayWindow && ep.WindowDays == 60 &&
 					ep.DateOffsetDays == 2 && ep.WindowStartField == "report_date" && ep.WindowEndField == "report_date" &&
 					reflect.DeepEqual(ep.ForceInjectParams, []string{"sid", "profile_id"})
 			},
@@ -158,7 +158,7 @@ func TestCatalogIncludesVerifiedSyncTemplates(t *testing.T) {
 			key: "ad_sd_product", path: "/pb/openapi/newad/sdProductAdReports", table: "ls_ad_sd_product",
 			advanced: func(ep Endpoint) bool {
 				return ep.IterateByAdAccount && ep.AdAccountType == "seller" && ep.RequestHeaders["X-API-VERSION"] == "2" &&
-					ep.SingleDayWindow && ep.WindowDays == 7 && ep.DateOffsetDays == 2 &&
+					ep.SingleDayWindow && ep.WindowDays == 60 && ep.DateOffsetDays == 2 &&
 					ep.WindowStartField == "report_date" && ep.WindowEndField == "report_date" &&
 					reflect.DeepEqual(ep.ForceInjectParams, []string{"sid", "profile_id"})
 			},
@@ -207,7 +207,7 @@ func TestCatalogIncludesVerifiedVCAdTemplates(t *testing.T) {
 			if tc.key == "ad_accounts_vendor" {
 				return
 			}
-			if ep.SingleDayWindow != true || ep.WindowDays != 7 || ep.DateOffsetDays != 2 ||
+			if ep.SingleDayWindow != true || ep.WindowDays != 60 || ep.DateOffsetDays != 2 ||
 				ep.WindowStartField != "report_date" || ep.WindowEndField != "report_date" || ep.DateField != "" {
 				t.Fatalf("VC ad date contract = %#v", ep)
 			}
@@ -230,6 +230,21 @@ func TestCatalogAdRateBucketsMatchLingxingDocs(t *testing.T) {
 		}
 		if e.Rate.Bucket != 10 || e.Rate.IntervalMs != 1000 {
 			t.Fatalf("catalog %q rate = bucket %d interval %d, want bucket 10 interval 1000", key, e.Rate.Bucket, e.Rate.IntervalMs)
+		}
+	}
+}
+
+func TestCatalogAdReportsUseSixtyDayLookback(t *testing.T) {
+	for _, key := range []string{
+		"ad_sp_product", "ad_sp_campaign", "ad_sd_product", "ad_sd_campaign", "ad_hsa_campaign",
+		"ad_vc_sp_product", "ad_vc_sd_product", "ad_vc_hsa_product",
+	} {
+		e, err := FindCatalogEntry(key)
+		if err != nil {
+			t.Fatalf("FindCatalogEntry(%q): %v", key, err)
+		}
+		if e.WindowDays != 60 || !e.SingleDayWindow || e.DateOffsetDays != 2 {
+			t.Fatalf("catalog %q lookback = window=%d single_day=%v offset=%d, want 60/true/2", key, e.WindowDays, e.SingleDayWindow, e.DateOffsetDays)
 		}
 	}
 }
@@ -312,7 +327,7 @@ func TestCatalogIncludesVerifiedReportTemplates(t *testing.T) {
 			key: "ad_sd_campaign", path: "/pb/openapi/newad/sdCampaignReports", table: "ls_ad_sd_campaign",
 			ids: []string{"sid", "profile_id", "report_date", "campaign_id"},
 			contract: func(ep Endpoint) bool {
-				return ep.IterateByAdAccount && ep.AdAccountType == "seller" && ep.SingleDayWindow && ep.WindowDays == 7 &&
+				return ep.IterateByAdAccount && ep.AdAccountType == "seller" && ep.SingleDayWindow && ep.WindowDays == 60 &&
 					ep.WindowStartField == "report_date" && ep.WindowEndField == "report_date" &&
 					ep.ExtraParams["show_detail"] == 0 &&
 					reflect.DeepEqual(ep.ForceInjectParams, []string{"sid", "profile_id"})
@@ -323,7 +338,7 @@ func TestCatalogIncludesVerifiedReportTemplates(t *testing.T) {
 			ids: []string{"sid", "profile_id", "report_date", "campaign_id"},
 			contract: func(ep Endpoint) bool {
 				_, hasShowDetail := ep.ExtraParams["show_detail"]
-				return ep.IterateByAdAccount && ep.AdAccountType == "seller" && ep.SingleDayWindow && ep.WindowDays == 7 &&
+				return ep.IterateByAdAccount && ep.AdAccountType == "seller" && ep.SingleDayWindow && ep.WindowDays == 60 &&
 					ep.WindowStartField == "report_date" && ep.WindowEndField == "report_date" &&
 					!hasShowDetail && reflect.DeepEqual(ep.ForceInjectParams, []string{"sid", "profile_id"})
 			},

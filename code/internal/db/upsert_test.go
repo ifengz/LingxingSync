@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"os"
 	"reflect"
 	"strings"
@@ -9,6 +10,32 @@ import (
 
 	"github.com/jmoiron/sqlx"
 )
+
+func TestAdPartitionWhereUsesVerifiedScopes(t *testing.T) {
+	tests := []struct {
+		table  string
+		where  string
+		hasSID bool
+	}{
+		{table: "ls_ad_sp_product", where: "`account_id` = ? AND `sid` = ? AND `profile_id` = ? AND `report_date` = ?", hasSID: true},
+		{table: "ls_ad_sd_campaign", where: "`account_id` = ? AND `sid` = ? AND `profile_id` = ? AND `report_date` = ?", hasSID: true},
+		{table: "ls_ad_hsa_campaign", where: "`account_id` = ? AND `sid` = ? AND `profile_id` = ? AND `report_date` = ?", hasSID: true},
+		{table: "ls_ad_vc_sp_product", where: "`account_id` = ? AND `profile_id` = ? AND `report_date` = ?", hasSID: false},
+		{table: "ls_ad_vc_sd_product", where: "`account_id` = ? AND `profile_id` = ? AND `report_date` = ?", hasSID: false},
+		{table: "ls_ad_vc_hsa_product", where: "`account_id` = ? AND `profile_id` = ? AND `report_date` = ?", hasSID: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.table, func(t *testing.T) {
+			where, hasSID := adPartitionWhere(tt.table)
+			if where != tt.where || hasSID != tt.hasSID {
+				t.Fatalf("adPartitionWhere(%q) = %q, %v; want %q, %v", tt.table, where, hasSID, tt.where, tt.hasSID)
+			}
+		})
+	}
+	if where, ok := adPartitionWhere("ls_sales_orders"); ok || where != "" {
+		t.Fatalf("non-ad table accepted for partition replacement: %q, %v", where, ok)
+	}
+}
 
 func TestNormalizeUpsertValueIsColumnAware(t *testing.T) {
 	if got := normalizeUpsertValue("", true); got != nil {
@@ -121,5 +148,120 @@ PRIMARY KEY (account_id, sid, fnsku)
 				t.Fatalf("未返回行 synced_at=%s, want unchanged %s", row.SyncedAt, old)
 			}
 		}
+	}
+}
+
+func TestReplaceAdPartitionReplacesOnlyOneScope(t *testing.T) {
+	dsn := os.Getenv("LINGXING_MIGRATION_TEST_DSN")
+	if dsn == "" {
+		t.Skip("set LINGXING_MIGRATION_TEST_DSN to run the ad partition integration test")
+	}
+	dbx, err := sqlx.Connect("mysql", dsn)
+	if err != nil {
+		t.Fatalf("连接迁移测试数据库失败: %v", err)
+	}
+	defer dbx.Close()
+	dbx.SetMaxOpenConns(1)
+	dbx.SetMaxIdleConns(1)
+	_, err = dbx.Exec(`CREATE TEMPORARY TABLE ls_ad_sp_product (
+account_id VARCHAR(64) NOT NULL,
+sid VARCHAR(64) NOT NULL,
+profile_id VARCHAR(64) NOT NULL,
+report_date DATE NOT NULL,
+ad_id BIGINT NOT NULL,
+asin VARCHAR(32) NULL,
+synced_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+PRIMARY KEY (account_id, sid, profile_id, report_date, ad_id)
+)`)
+	if err != nil {
+		t.Fatalf("创建广告测试表失败: %v", err)
+	}
+	const accountID = "__ad_partition_test__"
+	const sid = "store-1"
+	const profileID = "profile-1"
+	const reportDate = "2026-09-09"
+	columns := []string{"account_id", "sid", "profile_id", "report_date", "ad_id", "asin", "synced_at"}
+	seed := []map[string]any{
+		{"sid": sid, "profile_id": profileID, "report_date": reportDate, "ad_id": 1, "asin": "OLD"},
+		{"sid": sid, "profile_id": profileID, "report_date": reportDate, "ad_id": 2, "asin": "KEEP?"},
+		{"sid": sid, "profile_id": profileID, "report_date": "2026-09-08", "ad_id": 3, "asin": "OTHER-DATE"},
+	}
+	if err := UpsertRows(dbx, "ls_ad_sp_product", seed, columns, nil, accountID); err != nil {
+		t.Fatalf("写入初始广告分区失败: %v", err)
+	}
+	rows := []map[string]any{
+		{"sid": sid, "profile_id": profileID, "report_date": reportDate, "ad_id": 2, "asin": "NEW"},
+		{"sid": sid, "profile_id": profileID, "report_date": reportDate, "ad_id": 4, "asin": "FRESH"},
+	}
+	if err := ReplaceAdPartition(context.Background(), dbx, "ls_ad_sp_product", accountID, sid, profileID, reportDate, rows, columns, nil); err != nil {
+		t.Fatalf("替换广告分区失败: %v", err)
+	}
+	var count int
+	if err := dbx.Get(&count, "SELECT COUNT(*) FROM ls_ad_sp_product WHERE account_id = ? AND sid = ? AND profile_id = ? AND report_date = ?", accountID, sid, profileID, reportDate); err != nil {
+		t.Fatalf("读取替换分区行数失败: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("替换分区行数=%d, want 2", count)
+	}
+	var oldCount int
+	if err := dbx.Get(&oldCount, "SELECT COUNT(*) FROM ls_ad_sp_product WHERE account_id = ? AND ad_id = ?", accountID, 1); err != nil {
+		t.Fatalf("读取旧行失败: %v", err)
+	}
+	if oldCount != 0 {
+		t.Fatalf("旧广告行仍存在: %d", oldCount)
+	}
+	if err := dbx.Get(&count, "SELECT COUNT(*) FROM ls_ad_sp_product WHERE account_id = ? AND report_date = ?", accountID, "2026-09-08"); err != nil {
+		t.Fatalf("读取其他日期失败: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("其他日期行数=%d, want 1", count)
+	}
+}
+
+func TestReplaceAdPartitionRollsBackWhenInsertFails(t *testing.T) {
+	dsn := os.Getenv("LINGXING_MIGRATION_TEST_DSN")
+	if dsn == "" {
+		t.Skip("set LINGXING_MIGRATION_TEST_DSN to run the ad partition rollback integration test")
+	}
+	dbx, err := sqlx.Connect("mysql", dsn)
+	if err != nil {
+		t.Fatalf("连接迁移测试数据库失败: %v", err)
+	}
+	defer dbx.Close()
+	dbx.SetMaxOpenConns(1)
+	dbx.SetMaxIdleConns(1)
+	_, err = dbx.Exec(`CREATE TEMPORARY TABLE ls_ad_sp_product (
+account_id VARCHAR(64) NOT NULL,
+sid VARCHAR(64) NOT NULL,
+profile_id VARCHAR(64) NOT NULL,
+report_date DATE NOT NULL,
+ad_id BIGINT NOT NULL,
+asin VARCHAR(32) NULL,
+synced_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+PRIMARY KEY (account_id, sid, profile_id, report_date, ad_id)
+)`)
+	if err != nil {
+		t.Fatalf("创建广告回滚测试表失败: %v", err)
+	}
+	const accountID = "__ad_partition_rollback__"
+	const sid = "store-1"
+	const profileID = "profile-1"
+	const reportDate = "2026-09-09"
+	validColumns := []string{"account_id", "sid", "profile_id", "report_date", "ad_id", "asin", "synced_at"}
+	seed := []map[string]any{{"sid": sid, "profile_id": profileID, "report_date": reportDate, "ad_id": 9, "asin": "OLD"}}
+	if err := UpsertRows(dbx, "ls_ad_sp_product", seed, validColumns, nil, accountID); err != nil {
+		t.Fatalf("写入回滚测试初始行失败: %v", err)
+	}
+	badColumns := append(validColumns, "missing_column")
+	rows := []map[string]any{{"sid": sid, "profile_id": profileID, "report_date": reportDate, "ad_id": 10, "asin": "NEW"}}
+	if err := ReplaceAdPartition(context.Background(), dbx, "ls_ad_sp_product", accountID, sid, profileID, reportDate, rows, badColumns, nil); err == nil {
+		t.Fatal("缺失列写入应失败")
+	}
+	var count int
+	if err := dbx.Get(&count, "SELECT COUNT(*) FROM ls_ad_sp_product WHERE account_id = ? AND sid = ? AND profile_id = ? AND report_date = ? AND ad_id = ?", accountID, sid, profileID, reportDate, 9); err != nil {
+		t.Fatalf("读取回滚旧行失败: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("事务失败后旧分区行数=%d, want 1", count)
 	}
 }

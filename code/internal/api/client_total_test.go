@@ -85,7 +85,34 @@ func TestApiResponseCapturesTopLevelTotal(t *testing.T) {
 	if result.Total != 905 {
 		t.Errorf("兜底后 Total = %d，期望 905", result.Total)
 	}
+	if !jsonObjectHasField(raw, "total") {
+		t.Fatal("响应顶层 total 未被识别")
+	}
 	if len(result.List) != 1 {
 		t.Errorf("List 长度 = %d，期望 1", len(result.List))
+	}
+}
+
+func TestParseFetchResultTracksDataTotalPresence(t *testing.T) {
+	tests := []struct {
+		name    string
+		data    string
+		present bool
+	}{
+		{name: "positive", data: `{"list":[],"total":3}`, present: true},
+		{name: "zero", data: `{"list":[],"total":0}`, present: true},
+		{name: "missing", data: `{"list":[]}`, present: false},
+		{name: "array", data: `[]`, present: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := parseFetchResult([]byte(tt.data))
+			if err != nil {
+				t.Fatalf("parseFetchResult: %v", err)
+			}
+			if result.TotalPresent != tt.present {
+				t.Fatalf("TotalPresent=%v, want %v", result.TotalPresent, tt.present)
+			}
+		})
 	}
 }
