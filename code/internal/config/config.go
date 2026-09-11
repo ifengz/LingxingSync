@@ -89,6 +89,10 @@ type ReportExport struct {
 	MarketplaceIDs []string `yaml:"marketplace_ids"`
 	Cron           string   `yaml:"cron"`
 	WindowDays     int      `yaml:"window_days"`
+	// ExpandStores 调度时把这一条配置按账号下启用同步的 SC 店铺展开成逐店任务；
+	// 每店的 seller_id / marketplace_id 取自 ls_stores，配置里的 seller_id/store_id
+	// 变成兜底（店铺缺该信息时使用）。false 保持一条配置一个店铺的旧行为。
+	ExpandStores bool `yaml:"expand_stores"`
 }
 
 // DatasetAPIConfig stores system-owned data-product publication contracts.

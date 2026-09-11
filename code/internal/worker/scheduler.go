@@ -167,40 +167,111 @@ func (s *Scheduler) registerReportJobsLocked(cfg *config.Config) error {
 		if s.customerReturnsRun == nil {
 			return fmt.Errorf("启用了正式报表计划，但未注入执行器")
 		}
-		report := report
-		job := cron.FuncJob(func() {
-			now := time.Now
-			if s.now != nil {
-				now = s.now
+		if report.ExpandStores {
+			expanded, err := s.expandReportStores(report)
+			if err != nil {
+				return fmt.Errorf("展开正式报表店铺范围失败 type=%s: %w", report.Type, err)
 			}
-			request, requestErr := customerReturnsRequest(report, now())
-			if requestErr != nil {
-				log.Printf("[scheduler] 正式报表窗口无效 type=%s: %v", report.Type, requestErr)
-				return
+			if len(expanded) == 0 {
+				log.Printf("[scheduler] 正式报表 %s 无启用 SC 店铺，未注册", report.Type)
+				continue
 			}
-			result, runErr := s.customerReturnsRun(s.ctx, request)
-			if runErr != nil {
-				log.Printf("[scheduler] 正式报表失败 type=%s account=%s store=%s: %v", report.Type, report.Account, report.StoreID, runErr)
-				return
+			for _, store := range expanded {
+				if err := s.registerReportJob(store); err != nil {
+					return err
+				}
 			}
-			log.Printf("[scheduler] 正式报表完成 type=%s account=%s store=%s audit=%d rows=%d", report.Type, report.Account, report.StoreID, result.AuditID, result.Rows)
-		})
-		gate := s.reportRunGate(report)
-		guardedJob := cron.FuncJob(func() {
-			select {
-			case token := <-gate:
-				defer func() { gate <- token }()
-				job.Run()
-			default:
-				cron.DefaultLogger.Info("skip")
-			}
-		})
-		entryID, err := s.cron.AddJob(report.Cron, cron.NewChain(cron.Recover(cron.DefaultLogger)).Then(guardedJob))
-		if err != nil {
-			return fmt.Errorf("注册正式报表 cron 失败 type=%s spec=%q: %w", report.Type, report.Cron, err)
+			log.Printf("[scheduler] 正式报表 %s 已按启用店铺展开: %d 家", report.Type, len(expanded))
+			continue
 		}
-		s.reportEntries[entryID] = struct{}{}
+		if err := s.registerReportJob(report); err != nil {
+			return err
+		}
 	}
+	return nil
+}
+
+// expandReportStores 把一条报告配置按账号下启用同步的 SC 店铺展开成逐店配置。
+// 店铺的 seller_id / marketplace_id 来自 ls_stores；店铺缺 seller_id 时沿用
+// 配置值兜底（同账号单 seller 场景）。没有 seller_id 的店铺无法创建正式报告，
+// 跳过并记日志。
+func (s *Scheduler) expandReportStores(report config.ReportExport) ([]config.ReportExport, error) {
+	if s.dbx == nil {
+		return nil, fmt.Errorf("调度器未注入数据库句柄")
+	}
+	sids, err := db.QueryEnabledSIDsForAccount(s.dbx, report.Account, "SC")
+	if err != nil {
+		return nil, err
+	}
+	stores, _, err := db.ListStoresForAccount(s.dbx, report.Account)
+	if err != nil {
+		return nil, err
+	}
+	bySID := make(map[string]db.StoreSummary, len(stores))
+	for _, store := range stores {
+		bySID[store.SID] = store
+	}
+	expanded := make([]config.ReportExport, 0, len(sids))
+	for _, sid := range sids {
+		store, ok := bySID[sid]
+		if !ok {
+			continue
+		}
+		sellerID := store.SellerID
+		if sellerID == "" {
+			sellerID = report.SellerID
+		}
+		if sellerID == "" {
+			log.Printf("[scheduler] 正式报表 %s 跳过店铺 %s：无 seller_id", report.Type, sid)
+			continue
+		}
+		marketplaces := append([]string(nil), report.MarketplaceIDs...)
+		if len(marketplaces) == 0 && store.MarketplaceID != "" {
+			marketplaces = []string{store.MarketplaceID}
+		}
+		clone := report
+		clone.SellerID = sellerID
+		clone.StoreID = sid
+		clone.MarketplaceIDs = marketplaces
+		expanded = append(expanded, clone)
+	}
+	return expanded, nil
+}
+
+func (s *Scheduler) registerReportJob(report config.ReportExport) error {
+	reportCopy := report
+	job := cron.FuncJob(func() {
+		now := time.Now
+		if s.now != nil {
+			now = s.now
+		}
+		request, requestErr := customerReturnsRequest(reportCopy, now())
+		if requestErr != nil {
+			log.Printf("[scheduler] 正式报表窗口无效 type=%s: %v", reportCopy.Type, requestErr)
+			return
+		}
+		result, runErr := s.customerReturnsRun(s.ctx, request)
+		if runErr != nil {
+			log.Printf("[scheduler] 正式报表失败 type=%s account=%s store=%s: %v", reportCopy.Type, reportCopy.Account, reportCopy.StoreID, runErr)
+			return
+		}
+		log.Printf("[scheduler] 正式报表完成 type=%s account=%s store=%s audit=%d rows=%d", reportCopy.Type, reportCopy.Account, reportCopy.StoreID, result.AuditID, result.Rows)
+	})
+	gate := s.reportRunGate(reportCopy)
+	guardedJob := cron.FuncJob(func() {
+		select {
+		case token := <-gate:
+			defer func() { gate <- token }()
+			job.Run()
+		default:
+			cron.DefaultLogger.Info("skip")
+		}
+	})
+	entryID, err := s.cron.AddJob(report.Cron, cron.NewChain(cron.Recover(cron.DefaultLogger)).Then(guardedJob))
+	if err != nil {
+		return fmt.Errorf("注册正式报表 cron 失败 type=%s spec=%q: %w", report.Type, report.Cron, err)
+	}
+	s.reportEntries[entryID] = struct{}{}
 	return nil
 }
 
