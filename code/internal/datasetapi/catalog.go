@@ -32,6 +32,14 @@ var definitions = map[string]Definition{
 		Source: "listing_dimensions + listing_daily_metrics", Grain: "store + channel + asin + sku + business_date",
 		InitialCursor: "0|1000-01-01",
 		FixedFields:   append([]string(nil), FixedFields...),
+		NextVersionID: "listing-daily-v2",
+	},
+	"listing-daily-v2": {
+		ID: "listing-daily-v2", Name: "Listing 日维指标表 v2", Kind: DatasetKindDaily,
+		Source: "listing_dimensions + listing_daily_metrics", Grain: "store + channel + identity_scope + asin + sku + business_date", ParentID: "listing-daily-v1",
+		InitialCursor: "0|1000-01-01",
+		FixedFields:   append([]string(nil), FixedFields...),
+		Fields:        append(append([]string(nil), availableSchemaFields...), "verified_fields"),
 	},
 	"return-reason-detail-v1": {
 		ID: "return-reason-detail-v1", Name: "退货原因明细表", Kind: DatasetKindDetail,

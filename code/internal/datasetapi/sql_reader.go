@@ -75,9 +75,13 @@ var metricColumns = map[string]string{
 	"review_count": "m.review_count", "review_count_source": "m.review_count_source",
 	"rating": "m.rating", "rating_source": "m.rating_source",
 	"sp_spend": "m.sp_spend", "sp_spend_source": "m.sp_spend_source", "sp_sales": "m.sp_sales", "sp_sales_source": "m.sp_sales_source", "sp_orders": "m.sp_orders", "sp_orders_source": "m.sp_orders_source",
+	"sp_impressions": "m.sp_impressions", "sp_impressions_source": "m.sp_impressions_source", "sp_clicks": "m.sp_clicks", "sp_clicks_source": "m.sp_clicks_source",
 	"sd_spend": "m.sd_spend", "sd_spend_source": "m.sd_spend_source", "sd_sales": "m.sd_sales", "sd_sales_source": "m.sd_sales_source", "sd_orders": "m.sd_orders", "sd_orders_source": "m.sd_orders_source",
+	"sd_impressions": "m.sd_impressions", "sd_impressions_source": "m.sd_impressions_source", "sd_clicks": "m.sd_clicks", "sd_clicks_source": "m.sd_clicks_source",
 	"hsa_spend": "m.hsa_spend", "hsa_spend_source": "m.hsa_spend_source", "hsa_sales": "m.hsa_sales", "hsa_sales_source": "m.hsa_sales_source", "hsa_orders": "m.hsa_orders", "hsa_orders_source": "m.hsa_orders_source",
+	"hsa_impressions": "m.hsa_impressions", "hsa_impressions_source": "m.hsa_impressions_source", "hsa_clicks": "m.hsa_clicks", "hsa_clicks_source": "m.hsa_clicks_source",
 	"sb_spend": "m.sb_spend", "sb_spend_source": "m.sb_spend_source", "sb_sales": "m.sb_sales", "sb_sales_source": "m.sb_sales_source", "sb_orders": "m.sb_orders", "sb_orders_source": "m.sb_orders_source",
+	"sb_impressions": "m.sb_impressions", "sb_impressions_source": "m.sb_impressions_source", "sb_clicks": "m.sb_clicks", "sb_clicks_source": "m.sb_clicks_source",
 	"is_provisional": "m.is_provisional", "is_verified": "m.is_verified", "verified_fields": "m.verified_fields", "report_verified_at": "m.report_verified_at",
 }
 

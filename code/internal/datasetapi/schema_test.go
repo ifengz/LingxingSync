@@ -320,3 +320,23 @@ func TestVCFactSchemasUseNumericAndBoundedTypes(t *testing.T) {
 		}
 	}
 }
+
+func TestListingDailyV2HasIndependentSchemaWithAdReach(t *testing.T) {
+	schema, ok := SchemaFor("listing-daily-v2")
+	if !ok || schema.TableName != "listing_daily_v2" {
+		t.Fatalf("v2 schema=%+v found=%t", schema, ok)
+	}
+	columns := make(map[string]Column, len(schema.Columns))
+	for _, column := range schema.Columns {
+		columns[column.Name] = column
+	}
+	for _, field := range []string{"sp_impressions", "sp_clicks", "sd_impressions", "sd_clicks", "hsa_impressions", "hsa_clicks", "sb_impressions", "sb_clicks", "verified_fields"} {
+		column, ok := columns[field]
+		if !ok {
+			t.Fatalf("v2 schema missing field %s", field)
+		}
+		if column.Nullable != true {
+			t.Fatalf("v2 field %s must be nullable, got %+v", field, column)
+		}
+	}
+}

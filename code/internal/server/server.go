@@ -167,7 +167,7 @@ func (s *Server) newDatasetHandler(cfg *config.Config, definition datasetapi.Def
 		})
 	}
 	switch definition.ID {
-	case datasetapi.DatasetID:
+	case datasetapi.DatasetID, "listing-daily-v2":
 		handler.SetReader(datasetapi.NewSQLReader(s.dbx))
 	case "return-reason-detail-v1", "return-reason-detail-v2":
 		handler.SetReader(datasetapi.NewReturnReasonDetailReader(s.dbx))

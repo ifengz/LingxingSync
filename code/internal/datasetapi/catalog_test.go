@@ -4,8 +4,8 @@ import "testing"
 
 func TestCatalogExposesOnlyRegisteredDataProducts(t *testing.T) {
 	definitions := Definitions()
-	if len(definitions) != 23 {
-		t.Fatalf("definitions=%d, want 23", len(definitions))
+	if len(definitions) != 24 {
+		t.Fatalf("definitions=%d, want 24", len(definitions))
 	}
 
 	po, ok := DefinitionFor("vc-po-detail-v1")
@@ -190,6 +190,27 @@ func TestVersionedDatasetDefinitionsExposeFixedDraftContracts(t *testing.T) {
 	v1, _ := DefinitionFor("return-reason-detail-v1")
 	if v1.NextVersionID != "return-reason-detail-v2" || len(v1.CatalogFields) <= len(v1.Fields) {
 		t.Fatalf("v1 version metadata/candidate catalog=%+v", v1)
+	}
+}
+
+func TestListingDailyV2KeepsV1ImmutableAndAddsAdReachContract(t *testing.T) {
+	v1, ok := DefinitionFor("listing-daily-v1")
+	if !ok || v1.NextVersionID != "listing-daily-v2" || v1.ParentID != "" {
+		t.Fatalf("v1 version metadata=%+v found=%t", v1, ok)
+	}
+	for _, field := range []string{"sp_impressions", "sp_clicks", "sd_impressions", "hsa_clicks"} {
+		if containsField(v1.Fields, field) {
+			t.Fatalf("v1 must stay immutable but declares %q", field)
+		}
+	}
+	v2, ok := DefinitionFor("listing-daily-v2")
+	if !ok || v2.ParentID != "listing-daily-v1" || v2.NextVersionID != "" {
+		t.Fatalf("v2 version metadata=%+v found=%t", v2, ok)
+	}
+	for _, field := range []string{"sp_spend", "sp_impressions", "sp_clicks", "sd_spend", "sd_impressions", "sd_clicks", "hsa_spend", "hsa_impressions", "hsa_clicks", "sb_spend", "sb_impressions", "sb_clicks", "verified_fields"} {
+		if !containsField(v2.Fields, field) {
+			t.Fatalf("v2 field %q is missing", field)
+		}
 	}
 }
 

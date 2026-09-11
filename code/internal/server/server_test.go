@@ -653,3 +653,14 @@ func TestSCAccountAdDailyV2ReaderIsRegisteredWhenPublished(t *testing.T) {
 		t.Fatal("published sc-account-ad-daily-v2 handler is not registered")
 	}
 }
+
+func TestListingDailyV2ReaderIsRegisteredWhenPublished(t *testing.T) {
+	cfg := validDatasetProjectTestConfig()
+	cfg.DatasetAPI.FieldAllowlists = map[string][]string{
+		"listing-daily-v2": {"sales_units", "sp_spend", "sp_impressions", "sp_clicks", "sd_impressions", "sd_clicks", "hsa_impressions", "hsa_clicks", "sb_impressions", "sb_clicks", "verified_fields"},
+	}
+	s := New(cfg, nil, nil, nil, "", Assets{FS: renderTestFS, TemplateFS: "testdata", StaticFS: "testdata"}, nil, nil, nil, "")
+	if _, ok := s.datasetAPIs["listing-daily-v2"]; !ok {
+		t.Fatal("published listing-daily-v2 handler is not registered")
+	}
+}
