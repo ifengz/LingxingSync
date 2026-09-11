@@ -205,6 +205,7 @@ type reportExportConfigDTO struct {
 	MarketplaceIDs []string `json:"marketplace_ids"`
 	Cron           string   `json:"cron"`
 	WindowDays     int      `json:"window_days"`
+	ExpandStores   bool     `json:"expand_stores"`
 }
 
 type reportExportsPutIn struct {
@@ -278,11 +279,11 @@ func reportExportAPIType(value string) string {
 }
 
 func reportExportToDTO(report config.ReportExport) reportExportConfigDTO {
-	return reportExportConfigDTO{Type: report.Type, Enabled: report.Enabled, Account: report.Account, SellerID: report.SellerID, StoreID: report.StoreID, Region: report.Region, MarketplaceIDs: append([]string(nil), report.MarketplaceIDs...), Cron: report.Cron, WindowDays: report.WindowDays}
+	return reportExportConfigDTO{Type: report.Type, Enabled: report.Enabled, Account: report.Account, SellerID: report.SellerID, StoreID: report.StoreID, Region: report.Region, MarketplaceIDs: append([]string(nil), report.MarketplaceIDs...), Cron: report.Cron, WindowDays: report.WindowDays, ExpandStores: report.ExpandStores}
 }
 
 func reportExportFromDTO(report reportExportConfigDTO) config.ReportExport {
-	return config.ReportExport{Type: report.Type, Enabled: report.Enabled, Account: report.Account, SellerID: report.SellerID, StoreID: report.StoreID, Region: report.Region, MarketplaceIDs: append([]string(nil), report.MarketplaceIDs...), Cron: report.Cron, WindowDays: report.WindowDays}
+	return config.ReportExport{Type: report.Type, Enabled: report.Enabled, Account: report.Account, SellerID: report.SellerID, StoreID: report.StoreID, Region: report.Region, MarketplaceIDs: append([]string(nil), report.MarketplaceIDs...), Cron: report.Cron, WindowDays: report.WindowDays, ExpandStores: report.ExpandStores}
 }
 
 func (s *Server) apiGetReportExportConfig(w http.ResponseWriter, _ *http.Request) {
