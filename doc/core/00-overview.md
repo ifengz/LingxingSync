@@ -90,6 +90,7 @@ make migrate && make build
 7. **证据不互改**：API 与正式报告分别落自己的 `ls_*` 原始表；正式报告只在解析、对账成功后优先进入有效日维结果。
 8. **只准一个日维事实集**：`listing_daily_metrics` 固定为 store/channel/ASIN/SKU/business-date 粒度；未知覆盖保持 `NULL`，PO 等不同粒度域独立。
 9. **发布边界固定**：内部消费者只走版本化 HTTPS `snapshot` / `changes`，按项目 token 和 dataset/store scope 授权；禁止远程 SQL、任意表名和数据库直连。
+10. **领星即业务真相（2026-09-12 用户定版）**：领星返回的数据等同亚马逊后台真相，是本项目的唯一数据源头；不要求、不建设针对广告等数据源的第三方报表交叉对账层。系统准确性合同的终点是「与领星返回精确一致」（fail-closed total 合同 + 对账纠正机制）。
 
 ---
 
