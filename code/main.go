@@ -322,7 +322,8 @@ func main() {
 		return client.TokenHolder().ForceRefresh(ctx)
 	})
 	reportLimiter := worker.NewLimiter(1, 1000)
-	sched.SetCustomerReturnsRunner(customerReturnsRun(cfg, clients, db.NewReportStore(dbx), reportLimiter, dailyReader, dailyStore))
+	sharedReportRunner := customerReturnsRun(cfg, clients, db.NewReportStore(dbx), reportLimiter, dailyReader, dailyStore)
+	sched.SetCustomerReturnsRunner(sharedReportRunner)
 	if err := sched.Start(ctx); err != nil {
 		log.Fatalf("[main] 启动调度器失败: %v", err)
 	}
@@ -339,6 +340,7 @@ func main() {
 	// 配置写入层：UI 增删改 config.yaml 经它做校验+备份+原子写（宪法 §7.5）
 	store := config.NewStore(*configPath, cfg)
 	srv := server.New(cfg, dbx, registry, clients, *baseURL, assets, store, sched, limiterReg, *configPath)
+	srv.SetReportRunner(sharedReportRunner)
 
 	// HTTP 在后台跑；主 goroutine 等信号优雅退出。
 	// 监听失败（如端口被占）必须 FATAL：否则进程留在「Worker 照跑、UI 打不开」的

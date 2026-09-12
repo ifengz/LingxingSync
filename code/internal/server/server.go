@@ -14,6 +14,7 @@
 package server
 
 import (
+	"context"
 	"embed"
 	"encoding/json"
 	"fmt"
@@ -30,6 +31,7 @@ import (
 	"lingxing-sync/internal/config"
 	"lingxing-sync/internal/datasetapi"
 	"lingxing-sync/internal/db"
+	"lingxing-sync/internal/reportexport"
 	"lingxing-sync/internal/worker"
 )
 
@@ -60,15 +62,16 @@ type Server struct {
 	configPath        string                  // config.yaml 路径（消息展示用）
 	datasetAPI        *datasetapi.Handler     // listing-daily-v1 兼容入口
 	datasetAPIs       map[string]*datasetapi.Handler
-	dailyPreview      dailyPreviewReader      // 固定日维预览查询
-	reportStatus      reportStatusReader      // 正式报表任务与对账状态
-	reportStoreScope  reportStoreScopeReader  // 正式报表复用账号级店铺选择
-	reportHistory     reportHistoryReader     // 正式报告下载与核对历史
-datasetRequestLog datasetRequestLogReader // 下游数据集请求日志查询
+	dailyPreview      dailyPreviewReader                                                       // 固定日维预览查询
+	reportStatus      reportStatusReader                                                       // 正式报表任务与对账状态
+	reportStoreScope  reportStoreScopeReader                                                   // 正式报表复用账号级店铺选择
+	reportHistory     reportHistoryReader                                                      // 正式报告下载与核对历史
+	datasetRequestLog datasetRequestLogReader                                                  // 下游数据集请求日志查询
+	reportRun         func(context.Context, reportexport.Request) (reportexport.Result, error) // 单次正式报表执行（HTTP 触发）
 
-		rebuildStatus *rebuildStatus // 异步日维回刷状态
+	rebuildStatus *rebuildStatus // 异步日维回刷状态
 
-		// pages: 页面名 → 该页专属的已解析模板树。
+	// pages: 页面名 → 该页专属的已解析模板树。
 	// 关键解耦：每页一棵独立模板树（layout + 该页 partial），这样各页的
 	// {{define "content"}} 互不覆盖；改一页只重渲染该页。
 	pages map[string]*template.Template
@@ -263,6 +266,11 @@ func (s *Server) SetDatasetReader(reader datasetapi.Reader) {
 	}
 }
 
+// SetReportRunner 注入单次正式报表执行器（与调度器共用同一 runner 实现）。
+func (s *Server) SetReportRunner(run func(context.Context, reportexport.Request) (reportexport.Result, error)) {
+	s.reportRun = run
+}
+
 // sharedFuncs 是所有模板树共享的 FuncMap。
 func sharedFuncs() template.FuncMap {
 	return template.FuncMap{
@@ -393,6 +401,9 @@ func (s *Server) Routes() *http.ServeMux {
 
 	// ---- API 路由：对账 ----
 	mux.HandleFunc("POST /api/reconcile", s.apiReconcile)
+
+	// ---- API 路由：单次正式报表执行（历史月份回填用，走同一 runner/limiter）----
+	mux.HandleFunc("POST /api/report-exports/run", s.apiReportExportRun)
 
 	// ---- API 路由：历史日维回刷（CLI 之外的 HTTP 入口，部署后触发）----
 	mux.HandleFunc("POST /api/rebuild-listing-daily", s.apiRebuildListingDaily)
