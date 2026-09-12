@@ -23,6 +23,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jmoiron/sqlx"
@@ -68,6 +69,8 @@ type Server struct {
 	reportHistory     reportHistoryReader                                                      // 正式报告下载与核对历史
 	datasetRequestLog datasetRequestLogReader                                                  // 下游数据集请求日志查询
 	reportRun         func(context.Context, reportexport.Request) (reportexport.Result, error) // 单次正式报表执行（HTTP 触发）
+	reportRunMu       sync.Mutex
+	reportRunBusy     bool
 
 	rebuildStatus *rebuildStatus // 异步日维回刷状态
 

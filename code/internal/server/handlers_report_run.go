@@ -1,8 +1,8 @@
 package server
 
 import (
-	"encoding/json"
-	"fmt"
+	"context"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -10,14 +10,23 @@ import (
 	"lingxing-sync/internal/reportexport"
 )
 
-// apiReportExportRun 同步执行一笔正式报表（创建→终态→下载→解析→raw/日维投影）。
+// apiReportExportRun 异步执行一笔正式报表（创建→终态→下载→解析→raw/日维投影）。
 // 用途：历史月份回填（如 1-3 月销售报表）；日常调度仍走 scheduler 的 cron。
-// 执行可能持续数分钟（含领星轮询），客户端需容忍长响应。
+// 领星轮询可能持续数分钟，同步等待会撞反向代理超时，因此后台执行、立即返回；
+// 进度经 /api/report-reconciliations 与报告历史查。同一时间只允许一笔在飞。
 func (s *Server) apiReportExportRun(w http.ResponseWriter, r *http.Request) {
 	if s.reportRun == nil {
 		errJSON(w, http.StatusServiceUnavailable, "正式报表执行器未注入")
 		return
 	}
+	s.reportRunMu.Lock()
+	if s.reportRunBusy {
+		s.reportRunMu.Unlock()
+		errJSON(w, http.StatusConflict, "已有一笔报表回填在执行中，请稍后再试")
+		return
+	}
+	s.reportRunBusy = true
+	s.reportRunMu.Unlock()
 	var in struct {
 		Type           string `json:"type"`
 		Account        string `json:"account"`
@@ -93,25 +102,31 @@ func (s *Server) apiReportExportRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, runErr := s.reportRun(r.Context(), request)
-	resp := map[string]any{
+	go func() {
+		defer func() {
+			s.reportRunMu.Lock()
+			s.reportRunBusy = false
+			s.reportRunMu.Unlock()
+			if rec := recover(); rec != nil {
+				log.Printf("[report-run] panic: %v", rec)
+			}
+		}()
+		runCtx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+		defer cancel()
+		result, runErr := s.reportRun(runCtx, request)
+		if runErr != nil {
+			log.Printf("[report-run] 失败 type=%s store=%s %s..%s: %v", request.ReportType, request.StoreID, request.DateFrom[:10], request.DateTo[:10], runErr)
+			return
+		}
+		log.Printf("[report-run] 完成 type=%s store=%s %s..%s audit=%d rows=%d", request.ReportType, request.StoreID, request.DateFrom[:10], request.DateTo[:10], result.AuditID, result.Rows)
+	}()
+	okJSON(w, map[string]any{
+		"status":      "started",
 		"report_type": request.ReportType,
-		"account":     request.AccountID,
 		"store_id":    request.StoreID,
 		"date_from":   request.DateFrom,
 		"date_to":     request.DateTo,
-		"audit_id":    result.AuditID,
-		"rows":        result.Rows,
-		"status":      result.Status,
-	}
-	if runErr != nil {
-		resp["error"] = runErr.Error()
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
-		_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "data": resp, "error": fmt.Sprintf("报表执行失败: %v", runErr)})
-		return
-	}
-	okJSON(w, resp)
+	})
 }
 
 func regionOrDefault(region string) string {
