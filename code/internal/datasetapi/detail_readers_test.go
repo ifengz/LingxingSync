@@ -426,7 +426,7 @@ func TestOperationsLogV2ReaderRejectsMalformedVerificationJSON(t *testing.T) {
 func TestFBAInventorySnapshotReaderUsesHistoricalSnapshotDate(t *testing.T) {
 	updated := time.Date(2026, 8, 15, 3, 4, 5, 0, time.UTC)
 	queryer := &fixedQueryer{rows: &fixedRows{values: []any{
-		"sc-us-1", "store-a", "ASIN1", "SKU1", "2026-08-15", updated, "sc-us-1|store-a|FNSKU1", "FNSKU1", int64(7), int64(3),
+		"sc-us-1", "store-a", "ASIN1", "SKU1", "2026-08-15", updated, "sc-us-1|store-a|FNSKU1|2026-08-15", "FNSKU1", int64(7), int64(3),
 	}}}
 	reader := &DetailSQLReader{queryer: queryer, definition: fbaInventorySnapshotDefinition}
 	page, err := reader.Snapshot(context.Background(), Query{
@@ -461,6 +461,21 @@ func TestFBAInventorySnapshotReaderChangesAcceptsDatedStableKey(t *testing.T) {
 	}
 	if !strings.Contains(queryer.query, "i.updated_at > ?") || len(page.Rows) != 1 || page.Rows[0].StableKey != "sc-us-1|store-a|FNSKU1|2026-08-17" {
 		t.Fatalf("dated FBA changes query=%s page=%+v", queryer.query, page)
+	}
+}
+
+func TestFBAInventorySnapshotReaderRejectsBlankFNSKUStableKey(t *testing.T) {
+	updated := time.Date(2026, 8, 17, 3, 4, 5, 0, time.UTC)
+	queryer := &fixedQueryer{rows: &fixedRows{values: []any{
+		"sc-us-1", "store-a", "ASIN1", "SKU1", "2026-08-17", updated, "sc-us-1|store-a||2026-08-17", "",
+	}}}
+	reader := &DetailSQLReader{queryer: queryer, definition: fbaInventorySnapshotDefinition}
+	_, err := reader.Changes(context.Background(), Query{
+		Store: "store-a", Fields: []string{"fnsku"}, PageSize: 10,
+		Cursor: &CursorKey{UpdatedAt: updated.Add(-time.Second), StableKey: "0|0|0|1000-01-01"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "invalid stable key") {
+		t.Fatalf("blank FNSKU row error=%v, want invalid stable key", err)
 	}
 }
 

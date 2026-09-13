@@ -1355,6 +1355,9 @@ func (r *DetailSQLReader) read(ctx context.Context, query Query, snapshot bool) 
 		if err != nil {
 			return Page{}, err
 		}
+		if r.definition.sourceTable == "fba_inventory_daily_snapshots" && !r.validStableKey(row.StableKey) {
+			return Page{}, fmt.Errorf("detail row has invalid stable key")
+		}
 		page.Rows = append(page.Rows, row)
 		if len(page.Rows) > query.PageSize {
 			page.HasMore = true

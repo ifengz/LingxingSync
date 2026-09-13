@@ -17,6 +17,11 @@ type FBAInventorySnapshotTarget struct {
 const fbaInventorySnapshotDeleteSQL = `DELETE FROM fba_inventory_daily_snapshots
 WHERE account_id = ? AND sid = ? AND snapshot_date = ?`
 
+const fbaInventorySnapshotInvalidFNSKUCountSQL = `SELECT COUNT(*)
+FROM ls_fba_inventory i
+WHERE i.account_id = ? AND i.sid = ? AND i.synced_at >= ?
+  AND NULLIF(TRIM(i.fnsku), '') IS NULL`
+
 const fbaInventorySnapshotInsertSQL = `INSERT INTO fba_inventory_daily_snapshots (
 account_id, snapshot_date,
 afn_erp_real_shipped_quantity, afn_fulfillable_quantity, afn_fulfillable_quantity_multi,
@@ -76,6 +81,13 @@ func CaptureFBAInventorySnapshots(ctx context.Context, dbx *sqlx.DB, accountID s
 			continue
 		}
 		seen[key] = struct{}{}
+		var invalidFNSKUCount int
+		if err := tx.GetContext(ctx, &invalidFNSKUCount, fbaInventorySnapshotInvalidFNSKUCountSQL, accountID, target.Store, target.StartedAt); err != nil {
+			return fmt.Errorf("FBA inventory snapshot: validate %s/%s FNSKU: %w", target.Store, date, err)
+		}
+		if invalidFNSKUCount > 0 {
+			return fmt.Errorf("FBA inventory snapshot: %s/%s has %d rows with empty FNSKU", target.Store, date, invalidFNSKUCount)
+		}
 		if _, err := tx.ExecContext(ctx, fbaInventorySnapshotDeleteSQL, accountID, target.Store, date); err != nil {
 			return fmt.Errorf("FBA inventory snapshot: replace %s/%s: %w", target.Store, date, err)
 		}

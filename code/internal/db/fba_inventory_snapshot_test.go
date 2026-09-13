@@ -28,6 +28,14 @@ func TestFBAInventorySnapshotSQLRebuildsOnlyTheRequestedDay(t *testing.T) {
 	}
 }
 
+func TestFBAInventorySnapshotSQLValidatesBlankFNSKU(t *testing.T) {
+	for _, want := range []string{"SELECT COUNT(*)", "NULLIF(TRIM(i.fnsku), '') IS NULL"} {
+		if !strings.Contains(fbaInventorySnapshotInvalidFNSKUCountSQL, want) {
+			t.Fatalf("FBA snapshot validation SQL missing %q: %s", want, fbaInventorySnapshotInvalidFNSKUCountSQL)
+		}
+	}
+}
+
 func TestCaptureFBAInventorySnapshotsIsDatedAndIdempotent(t *testing.T) {
 	dsn := os.Getenv("LINGXING_MIGRATION_TEST_DSN")
 	if dsn == "" {
