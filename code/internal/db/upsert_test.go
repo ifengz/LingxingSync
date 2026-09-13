@@ -87,6 +87,15 @@ func TestOnlyCurrentStateFBAInventoryUsesSnapshotTouch(t *testing.T) {
 	}
 }
 
+func TestUpsertRowsRejectsBlankFNSKUForFBAInventory(t *testing.T) {
+	for _, fnsku := range []any{"", nil} {
+		rows := []map[string]any{{"sid": "store-1", "fnsku": fnsku}}
+		if err := validateFBAInventoryRows("ls_fba_inventory", []string{"sid", "fnsku"}, rows); err == nil || !strings.Contains(err.Error(), "empty FNSKU") {
+			t.Fatalf("blank FNSKU=%#v error=%v, want explicit rejection", fnsku, err)
+		}
+	}
+}
+
 func TestUpsertRowsTouchesOnlySnapshotRowsReturnedToday(t *testing.T) {
 	dsn := os.Getenv("LINGXING_MIGRATION_TEST_DSN")
 	if dsn == "" {

@@ -93,6 +93,9 @@ func upsertRows(exec sqlx.Ext, table string, rows []map[string]any, allowedCols 
 	if len(rows) == 0 {
 		return nil
 	}
+	if err := validateFBAInventoryRows(table, allowedCols, rows); err != nil {
+		return err
+	}
 
 	// 1. 计算最终列集合：account_id 在最前，去掉 synced_at（由 DB 管理），去掉重复的 account_id。
 	cols := buildUpsertColumns(allowedCols)
@@ -128,6 +131,19 @@ func upsertRows(exec sqlx.Ext, table string, rows []map[string]any, allowedCols 
 	if _, err := exec.Exec(stmt, vals...); err != nil {
 		return fmt.Errorf("db.UpsertRows: 写表 %s 失败（%d 行，%d 列）: %w",
 			table, len(rows), len(cols), err)
+	}
+	return nil
+}
+
+func validateFBAInventoryRows(table string, allowedCols []string, rows []map[string]any) error {
+	if table != "ls_fba_inventory" || !containsColumn(allowedCols, "fnsku") {
+		return nil
+	}
+	for index, row := range rows {
+		value, ok := row["fnsku"]
+		if !ok || value == nil || strings.TrimSpace(fmt.Sprint(value)) == "" {
+			return fmt.Errorf("db.UpsertRows: %s row %d has empty FNSKU", table, index+1)
+		}
 	}
 	return nil
 }
