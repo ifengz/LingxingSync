@@ -83,10 +83,6 @@ CREATE TABLE IF NOT EXISTS listing_daily_metrics (
     sessions_mobile_source   VARCHAR(16) NOT NULL DEFAULT '',
     sessions_total           BIGINT NULL,
     sessions_total_source    VARCHAR(16) NOT NULL DEFAULT '',
-    cate_rank                BIGINT NULL,
-    cate_rank_source         VARCHAR(16) NOT NULL DEFAULT '',
-    small_cate_rank          BIGINT NULL,
-    small_cate_rank_source   VARCHAR(16) NOT NULL DEFAULT '',
     review_count             BIGINT NULL,
     review_count_source      VARCHAR(16) NOT NULL DEFAULT '',
     rating                   DECIMAL(10,4) NULL,
@@ -155,8 +151,6 @@ CREATE TABLE IF NOT EXISTS listing_daily_metrics (
         sessions_desktop_source IN ('', 'api', 'report') AND
         sessions_mobile_source IN ('', 'api', 'report') AND
         sessions_total_source IN ('', 'api', 'report') AND
-        cate_rank_source IN ('', 'api', 'report') AND
-        small_cate_rank_source IN ('', 'api', 'report') AND
         review_count_source IN ('', 'api', 'report') AND
         rating_source IN ('', 'api', 'report') AND
         sp_spend_source IN ('', 'api', 'report') AND
