@@ -36,6 +36,11 @@ var schemas = map[string]Schema{
 		DataNote:   "日维数据 v2；继承 v1 全部字段，新增广告曝光/点击（sp/sd/hsa/sb）与 verified_fields。",
 		PrimaryKey: []string{"store", "stable_key"},
 	},
+	"listing-daily-v3": {
+		DatasetID: "listing-daily-v3", TableName: "listing_daily_v3",
+		DataNote:   "日维数据 v3；继承 v2 全部字段，补齐大类排名和小类排名。",
+		PrimaryKey: []string{"store", "stable_key"},
+	},
 	"return-reason-detail-v1": {
 		DatasetID: "return-reason-detail-v1", TableName: "return_reason_detail_v1", DataNote: "退货原因明细；按退货记录稳定键增量读取。",
 		Columns:    detailSchemaColumns([]Column{{Name: "store", SQLType: "VARCHAR(64)", Nullable: false}, {Name: "record_date", SQLType: "DATE", Nullable: true}, {Name: "stable_key", SQLType: "VARCHAR(255)", Nullable: false}, {Name: "updated_at", SQLType: "DATETIME(6)", Nullable: false}}),

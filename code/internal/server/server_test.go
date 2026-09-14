@@ -664,3 +664,14 @@ func TestListingDailyV2ReaderIsRegisteredWhenPublished(t *testing.T) {
 		t.Fatal("published listing-daily-v2 handler is not registered")
 	}
 }
+
+func TestListingDailyV3ReaderIsRegisteredWhenPublished(t *testing.T) {
+	cfg := validDatasetProjectTestConfig()
+	cfg.DatasetAPI.FieldAllowlists = map[string][]string{
+		"listing-daily-v3": {"sales_units", "cate_rank", "small_cate_rank", "review_count", "rating", "verified_fields"},
+	}
+	s := New(cfg, nil, nil, nil, "", Assets{FS: renderTestFS, TemplateFS: "testdata", StaticFS: "testdata"}, nil, nil, nil, "")
+	if _, ok := s.datasetAPIs["listing-daily-v3"]; !ok {
+		t.Fatal("published listing-daily-v3 handler is not registered")
+	}
+}

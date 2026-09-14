@@ -40,6 +40,14 @@ var definitions = map[string]Definition{
 		InitialCursor: "0|1000-01-01",
 		FixedFields:   append([]string(nil), FixedFields...),
 		Fields:        append(append([]string(nil), availableSchemaFields...), "verified_fields"),
+		NextVersionID: "listing-daily-v3",
+	},
+	"listing-daily-v3": {
+		ID: "listing-daily-v3", Name: "Listing 日维指标表 v3", Kind: DatasetKindDaily,
+		Source: "listing_dimensions + listing_daily_metrics", Grain: "store + channel + identity_scope + asin + sku + business_date", ParentID: "listing-daily-v2",
+		InitialCursor: "0|1000-01-01",
+		FixedFields:   append([]string(nil), FixedFields...),
+		Fields:        append(append([]string(nil), availableSchemaFields...), "verified_fields"),
 	},
 	"return-reason-detail-v1": {
 		ID: "return-reason-detail-v1", Name: "退货原因明细表", Kind: DatasetKindDetail,

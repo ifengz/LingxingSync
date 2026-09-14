@@ -4,8 +4,8 @@ import "testing"
 
 func TestCatalogExposesOnlyRegisteredDataProducts(t *testing.T) {
 	definitions := Definitions()
-	if len(definitions) != 24 {
-		t.Fatalf("definitions=%d, want 24", len(definitions))
+	if len(definitions) != 25 {
+		t.Fatalf("definitions=%d, want 25", len(definitions))
 	}
 
 	po, ok := DefinitionFor("vc-po-detail-v1")
@@ -204,12 +204,21 @@ func TestListingDailyV2KeepsV1ImmutableAndAddsAdReachContract(t *testing.T) {
 		}
 	}
 	v2, ok := DefinitionFor("listing-daily-v2")
-	if !ok || v2.ParentID != "listing-daily-v1" || v2.NextVersionID != "" {
+	if !ok || v2.ParentID != "listing-daily-v1" || v2.NextVersionID != "listing-daily-v3" {
 		t.Fatalf("v2 version metadata=%+v found=%t", v2, ok)
 	}
 	for _, field := range []string{"sp_spend", "sp_impressions", "sp_clicks", "sd_spend", "sd_impressions", "sd_clicks", "hsa_spend", "hsa_impressions", "hsa_clicks", "sb_spend", "sb_impressions", "sb_clicks", "cate_rank", "small_cate_rank", "verified_fields"} {
 		if !containsField(v2.Fields, field) {
 			t.Fatalf("v2 field %q is missing", field)
+		}
+	}
+	v3, ok := DefinitionFor("listing-daily-v3")
+	if !ok || v3.ParentID != "listing-daily-v2" || v3.NextVersionID != "" {
+		t.Fatalf("v3 version metadata=%+v found=%t", v3, ok)
+	}
+	for _, field := range []string{"sp_impressions", "sp_clicks", "cate_rank", "small_cate_rank", "verified_fields"} {
+		if !containsField(v3.Fields, field) {
+			t.Fatalf("v3 field %q is missing", field)
 		}
 	}
 }

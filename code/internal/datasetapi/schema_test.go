@@ -361,3 +361,23 @@ func TestListingDailyV2SupportsRankFieldTypes(t *testing.T) {
 		}
 	}
 }
+
+func TestListingDailyV3HasRankFields(t *testing.T) {
+	schema, ok := SchemaFor("listing-daily-v3")
+	if !ok || schema.TableName != "listing_daily_v3" {
+		t.Fatalf("v3 schema=%+v found=%t", schema, ok)
+	}
+	columns := make(map[string]Column, len(schema.Columns))
+	for _, column := range schema.Columns {
+		columns[column.Name] = column
+	}
+	for _, field := range []string{"cate_rank", "small_cate_rank", "review_count", "rating"} {
+		column, ok := columns[field]
+		if !ok {
+			t.Fatalf("v3 schema field %s = %+v", field, column)
+		}
+		if field != "rating" && column.SQLType != "BIGINT" {
+			t.Fatalf("v3 schema field %s type=%q, want BIGINT", field, column.SQLType)
+		}
+	}
+}
