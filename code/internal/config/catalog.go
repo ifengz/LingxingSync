@@ -21,6 +21,7 @@ import (
 // CatalogEntry 是一个「接口模板」：一条领星接口的完整接入合同，
 // 除了「账号」这一个变量外，其余字段都已定死。字段语义与 Endpoint 对应字段一致。
 type CatalogEntry struct {
+	MetricScope   string // combined=日维访问量 + 当天表现快照
 	Key           string // 模板唯一标识（英文小写下划线），启用时拼进 Endpoint.Name
 	Display       string // UI 展示名（中文）
 	Summary       string // 一句话说明这个接口拉的是什么，给用户在清单里看
@@ -66,6 +67,7 @@ type CatalogEntry struct {
 // 重试无需在此设置：它是 worker 层的固定策略（网络/429/5xx 指数退避），不入 Endpoint 配置。
 func (e CatalogEntry) ToEndpoint(accountID string) Endpoint {
 	return Endpoint{
+		MetricScope:          e.MetricScope,
 		Name:                 e.Key + "_" + accountID,
 		Display:              e.Display,
 		Account:              accountID,
@@ -320,6 +322,7 @@ var catalogEntries = []CatalogEntry{
 		ForceInjectParams: []string{"sid"},
 	},
 	{
+		MetricScope:     "combined",
 		Key:             "sc_performance",
 		Display:         "SC 产品表现（ASIN）",
 		Summary:         "按 SC 店铺逐日补偿最近 7 天的 ASIN 日维产品表现。",

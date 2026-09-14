@@ -58,6 +58,8 @@ type Values struct {
 	SessionsDesktop                 *int64
 	SessionsMobile                  *int64
 	SessionsTotal                   *int64
+	CateRank                        *int64
+	SmallCateRank                   *int64
 	ReviewCount                     *int64
 	Rating                          *float64
 	SPSpend                         *float64
@@ -299,6 +301,12 @@ func knownFields(values Values) []string {
 	if values.SessionsTotal != nil {
 		fields = append(fields, "sessions_total")
 	}
+	if values.CateRank != nil {
+		fields = append(fields, "cate_rank")
+	}
+	if values.SmallCateRank != nil {
+		fields = append(fields, "small_cate_rank")
+	}
 	if values.ReviewCount != nil {
 		fields = append(fields, "review_count")
 	}
@@ -438,6 +446,8 @@ func mergeValues(base, incoming Values, overwrite bool) Values {
 		SessionsDesktop:                 choose(base.SessionsDesktop, incoming.SessionsDesktop, overwrite),
 		SessionsMobile:                  choose(base.SessionsMobile, incoming.SessionsMobile, overwrite),
 		SessionsTotal:                   choose(base.SessionsTotal, incoming.SessionsTotal, overwrite),
+		CateRank:                        choose(base.CateRank, incoming.CateRank, overwrite),
+		SmallCateRank:                   choose(base.SmallCateRank, incoming.SmallCateRank, overwrite),
 		ReviewCount:                     choose(base.ReviewCount, incoming.ReviewCount, overwrite),
 		Rating:                          choose(base.Rating, incoming.Rating, overwrite),
 		SPSpend:                         choose(base.SPSpend, incoming.SPSpend, overwrite),

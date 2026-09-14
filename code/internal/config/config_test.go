@@ -807,6 +807,14 @@ func TestClassifyChangeTreatsSingleDayFieldsAsHot(t *testing.T) {
 	}
 }
 
+func TestClassifyChangeTreatsMetricScopeAsHot(t *testing.T) {
+	oldCfg := &Config{Endpoints: []Endpoint{{Name: "performance", WindowDays: 7}}}
+	newCfg := &Config{Endpoints: []Endpoint{{Name: "performance", WindowDays: 7, MetricScope: "combined"}}}
+	if got := ClassifyChange(oldCfg, newCfg); got != ChangeHot {
+		t.Fatalf("metric scope change = %v, want hot reload", got)
+	}
+}
+
 func TestValidateSingleDayRowDateFieldConflicts(t *testing.T) {
 	endpoint := Endpoint{
 		Name: "performance", Account: "sc_us_1", Path: "/performance", Method: "POST", Table: "ls_performance",

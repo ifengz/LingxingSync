@@ -25,18 +25,31 @@ func TestInventoryProjectionContractsSeparateVCDailyAndSCSnapshotSources(t *test
 	}
 }
 
-func TestSCPerformanceDailyContractMapsTrafficAndReviews(t *testing.T) {
-	for _, want := range []string{"FROM ls_sc_performance_daily", "business_date = ?", "sessions", "sessions_mobile", "sessions_total", "reviews_count", "avg_star"} {
+func TestSCPerformanceDailyContractMapsTrafficReviewsAndRanks(t *testing.T) {
+	for _, want := range []string{"FROM ls_sc_performance_daily", "business_date = ?", "sessions", "sessions_mobile", "sessions_total", "cate_rank", "small_cate_rank", "reviews_count", "avg_star"} {
 		if !strings.Contains(scPerformanceDailySQL, want) {
 			t.Fatalf("SC performance daily query missing %q: %s", want, scPerformanceDailySQL)
 		}
 	}
-	values := scPerformanceValues(
+	values, err := scPerformanceValues(
 		sql.NullInt64{Int64: 10, Valid: true}, sql.NullInt64{Int64: 4, Valid: true}, sql.NullInt64{Int64: 14, Valid: true},
+		sql.NullInt64{Int64: 11, Valid: true}, sql.NullString{String: `[{"rank":7}]`, Valid: true},
 		sql.NullInt64{Int64: 8, Valid: true}, sql.NullFloat64{Float64: 4.5, Valid: true},
 	)
-	if *values.SessionsDesktop != 10 || *values.SessionsMobile != 4 || *values.SessionsTotal != 14 || *values.ReviewCount != 8 || *values.Rating != 4.5 {
+	if err != nil {
+		t.Fatalf("SC performance ranks: %v", err)
+	}
+	if *values.SessionsDesktop != 10 || *values.SessionsMobile != 4 || *values.SessionsTotal != 14 || *values.CateRank != 11 || *values.SmallCateRank != 7 || *values.ReviewCount != 8 || *values.Rating != 4.5 {
 		t.Fatalf("SC performance mapping = %#v", values)
+	}
+}
+
+func TestSCPerformanceRankParserKeepsNullAndRejectsMalformedValues(t *testing.T) {
+	if got, err := parseSmallCateRank(sql.NullString{}); err != nil || got != nil {
+		t.Fatalf("null small rank = %v, %v", got, err)
+	}
+	if _, err := parseSmallCateRank(sql.NullString{String: `[{"rank":"bad"}]`, Valid: true}); err == nil {
+		t.Fatal("malformed small rank was accepted")
 	}
 }
 

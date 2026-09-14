@@ -203,6 +203,7 @@ type Rate struct {
 
 // Endpoint 是一个「账号+接口」的同步任务定义。
 type Endpoint struct {
+	MetricScope     string         `yaml:"metric_scope"`
 	Name            string         `yaml:"name"`             // 全局唯一任务标识
 	Display         string         `yaml:"display"`          // UI 展示名
 	Account         string         `yaml:"account"`          // 必须匹配某个 Account.ID
@@ -560,6 +561,12 @@ func (c *Config) validate() error {
 		}
 		if e.StoreType != "" && e.StoreType != "SC" && e.StoreType != "VC" {
 			return fmt.Errorf("endpoint %s 的 store_type=%q 非法：只能是 SC / VC / 空", e.Name, e.StoreType)
+		}
+		if e.MetricScope != "" && e.MetricScope != "combined" {
+			return fmt.Errorf("endpoint %s 的 metric_scope=%q 非法：目前只能是 combined 或空", e.Name, e.MetricScope)
+		}
+		if e.MetricScope == "combined" && e.Table != "ls_sc_performance_daily" {
+			return fmt.Errorf("endpoint %s 的 combined metric_scope 目前只允许用于 ls_sc_performance_daily", e.Name)
 		}
 		if e.IterateByStore && e.IterateByAdAccount {
 			return fmt.Errorf("endpoint %s 不能同时启用 iterate_by_store 与 iterate_by_ad_account", e.Name)

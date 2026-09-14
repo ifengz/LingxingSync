@@ -140,7 +140,7 @@ func TestMetricArgsContainsEveryAuthorizedFieldAndProvenance(t *testing.T) {
 	values := Values{
 		SalesUnits: ptrInt(1), SalesAmount: ptrFloat(2), ReturnsQty: ptrInt(3), InventorySellable: ptrInt(4), InventoryInbound: ptrInt(5), InventoryReserved: ptrInt(6), InventoryUnfulfillable: ptrInt(7), InventoryLocalWarehouse: ptrInt(8), InventoryUnhealthyUnits: ptrInt(9), InventoryAged90SellableUnits: ptrInt(10), InventorySellThroughRate: ptrFloat(11), InventoryReceiveFillRate: ptrFloat(12), InventoryVendorConfirmationRate: ptrFloat(13), InventoryAvgLeadTimeDays: ptrFloat(14), InventorySellableCost: ptrFloat(15), InventoryUnfulfillableCost: ptrFloat(16), InventoryAged90Cost: ptrFloat(17), InventoryUnhealthyCost: ptrFloat(18), InventoryInboundCost: ptrFloat(19), InventoryCurrency: ptrString("USD"),
 		InventoryInboundReceiving: ptrInt(20), InventoryInboundShipped: ptrInt(21), InventoryInboundWorking: ptrInt(22), InventoryReservedCustomerOrders: ptrInt(23), InventoryReservedFCProcessing: ptrInt(24), InventoryReservedFCTransfers: ptrInt(25),
-		SessionsDesktop: ptrInt(26), SessionsMobile: ptrInt(27), SessionsTotal: ptrInt(28), ReviewCount: ptrInt(29), Rating: ptrFloat(4.2),
+		SessionsDesktop: ptrInt(26), SessionsMobile: ptrInt(27), SessionsTotal: ptrInt(28), CateRank: ptrInt(29), SmallCateRank: ptrInt(30), ReviewCount: ptrInt(31), Rating: ptrFloat(4.2),
 		SPSpend: ptrFloat(30), SPSales: ptrFloat(31), SPOrders: ptrInt(32), SPImpressions: ptrInt(33), SPClicks: ptrInt(34),
 		SDSpend: ptrFloat(35), SDSales: ptrFloat(36), SDOrders: ptrInt(37), SDImpressions: ptrInt(38), SDClicks: ptrInt(39),
 		HSASpend: ptrFloat(40), HSASales: ptrFloat(41), HSAOrders: ptrInt(42), HSAImpressions: ptrInt(43), HSAClicks: ptrInt(44),
@@ -150,8 +150,8 @@ func TestMetricArgsContainsEveryAuthorizedFieldAndProvenance(t *testing.T) {
 	for _, field := range knownFields(values) {
 		row.Sources[field] = SourceAPI
 	}
-	if got := metricArgs(1, row); len(got) != 108 {
-		t.Fatalf("metric args = %d, want 108", len(got))
+	if got := metricArgs(1, row); len(got) != 112 {
+		t.Fatalf("metric args = %d, want 112", len(got))
 	}
 }
 

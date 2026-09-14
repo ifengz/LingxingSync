@@ -330,13 +330,34 @@ func TestListingDailyV2HasIndependentSchemaWithAdReach(t *testing.T) {
 	for _, column := range schema.Columns {
 		columns[column.Name] = column
 	}
-	for _, field := range []string{"sp_impressions", "sp_clicks", "sd_impressions", "sd_clicks", "hsa_impressions", "hsa_clicks", "sb_impressions", "sb_clicks", "verified_fields"} {
+	for _, field := range []string{"cate_rank", "small_cate_rank", "sp_impressions", "sp_clicks", "sd_impressions", "sd_clicks", "hsa_impressions", "hsa_clicks", "sb_impressions", "sb_clicks", "verified_fields"} {
 		column, ok := columns[field]
 		if !ok {
 			t.Fatalf("v2 schema missing field %s", field)
 		}
 		if column.Nullable != true {
 			t.Fatalf("v2 field %s must be nullable, got %+v", field, column)
+		}
+	}
+}
+
+func TestListingDailyV2SupportsRankFieldTypes(t *testing.T) {
+	schema, ok := SchemaFor("listing-daily-v2")
+	if !ok {
+		t.Fatal("listing daily v2 schema missing")
+	}
+	for _, field := range []string{"cate_rank", "small_cate_rank"} {
+		found := false
+		for _, column := range schema.Columns {
+			if column.Name == field {
+				found = true
+				if column.SQLType != "BIGINT" || !column.Nullable {
+					t.Fatalf("listing daily v2 field %s = %+v, want nullable BIGINT", field, column)
+				}
+			}
+		}
+		if !found {
+			t.Fatalf("listing daily v2 schema missing %s", field)
 		}
 	}
 }

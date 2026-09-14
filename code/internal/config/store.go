@@ -226,6 +226,7 @@ func ClassifyChange(oldCfg, newCfg *Config) ChangeKind {
 		newE := newEndpoints[name]
 		if oldE.Enabled != newE.Enabled ||
 			oldE.Cron != newE.Cron ||
+			oldE.MetricScope != newE.MetricScope ||
 			!reflect.DeepEqual(oldE.Rate, newE.Rate) ||
 			oldE.WindowDays != newE.WindowDays ||
 			oldE.SingleDayWindow != newE.SingleDayWindow ||

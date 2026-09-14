@@ -72,6 +72,8 @@ var metricColumns = map[string]string{
 	"sessions_desktop": "m.sessions_desktop", "sessions_desktop_source": "m.sessions_desktop_source",
 	"sessions_mobile": "m.sessions_mobile", "sessions_mobile_source": "m.sessions_mobile_source",
 	"sessions_total": "m.sessions_total", "sessions_total_source": "m.sessions_total_source",
+	"cate_rank": "m.cate_rank", "cate_rank_source": "m.cate_rank_source",
+	"small_cate_rank": "m.small_cate_rank", "small_cate_rank_source": "m.small_cate_rank_source",
 	"review_count": "m.review_count", "review_count_source": "m.review_count_source",
 	"rating": "m.rating", "rating_source": "m.rating_source",
 	"sp_spend": "m.sp_spend", "sp_spend_source": "m.sp_spend_source", "sp_sales": "m.sp_sales", "sp_sales_source": "m.sp_sales_source", "sp_orders": "m.sp_orders", "sp_orders_source": "m.sp_orders_source",

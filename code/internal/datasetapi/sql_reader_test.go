@@ -153,6 +153,16 @@ func TestSQLReaderRejectsUnknownFieldBeforeQuery(t *testing.T) {
 	}
 }
 
+func TestSQLReaderAcceptsSCPerformanceRankFields(t *testing.T) {
+	fields, err := fixedMetricFields([]string{"cate_rank", "small_cate_rank"})
+	if err != nil {
+		t.Fatalf("rank fields rejected: %v", err)
+	}
+	if len(fields) != 2 || !strings.Contains(fields[0], "m.cate_rank") || !strings.Contains(fields[1], "m.small_cate_rank") {
+		t.Fatalf("rank field projections = %#v", fields)
+	}
+}
+
 func TestChangesHTTPThroughSQLReaderReturnsExplicitNilDeletedAt(t *testing.T) {
 	updated := time.Date(2026, 8, 1, 3, 4, 5, 0, time.UTC)
 	queryer := &fixedQueryer{rows: &fixedRows{values: []any{

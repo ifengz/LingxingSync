@@ -639,18 +639,12 @@ func (w *EndpointWorker) doSync(ctx context.Context, req triggerReq) {
 				status = "cancelled"
 				return
 			}
-			sets, paramErr := w.paramSetsFor(req)
+			rec, pages, ok, sets, paramErr := w.fetchMetricPlans(syncCtx, taskID, req, sid, paramName)
 			if paramErr != nil {
 				log.Printf("[worker:%s] 请求日期参数无效: %v", w.Endpoint.Name, paramErr)
 				status = "error"
 				return
 			}
-			for _, params := range sets {
-				params[paramName] = sid
-			}
-			rec, pages, ok := forEachParamSet(sets, func(params map[string]any) (int, int, bool) {
-				return w.fetchAllPages(syncCtx, taskID, params)
-			})
 			totalRecords += rec
 			totalPages += pages
 			if !ok {
@@ -672,15 +666,12 @@ func (w *EndpointWorker) doSync(ctx context.Context, req triggerReq) {
 	}
 
 	// 单店铺：直接一次 fetchAllPages
-	sets, paramErr := w.paramSetsFor(req)
+	rec, pages, ok, sets, paramErr := w.fetchMetricPlans(syncCtx, taskID, req, "", "")
 	if paramErr != nil {
 		log.Printf("[worker:%s] 请求日期参数无效: %v", w.Endpoint.Name, paramErr)
 		status = "error"
 		return
 	}
-	rec, pages, ok := forEachParamSet(sets, func(params map[string]any) (int, int, bool) {
-		return w.fetchAllPages(syncCtx, taskID, params)
-	})
 	totalRecords = rec
 	totalPages = pages
 	if !ok {
@@ -694,6 +685,33 @@ func (w *EndpointWorker) doSync(ctx context.Context, req triggerReq) {
 	}
 }
 
+// fetchMetricPlans executes a normal endpoint's date plans. Combined
+// performance runs execute the daily and snapshot legs separately so each leg
+// only updates the columns whose semantics it owns.
+func (w *EndpointWorker) fetchMetricPlans(ctx context.Context, taskID int64, req triggerReq, store, storeParam string) (records, pages int, ok bool, allSets []map[string]any, err error) {
+	plans, err := w.metricPlansFor(req)
+	if err != nil {
+		return 0, 0, false, nil, err
+	}
+	for _, plan := range plans {
+		for _, params := range plan.Params {
+			if storeParam != "" {
+				params[storeParam] = store
+			}
+		}
+		rec, pageCount, planOK := forEachParamSet(plan.Params, func(params map[string]any) (int, int, bool) {
+			return w.fetchAllPagesWithColumns(ctx, taskID, params, w.columnsForMetricScope(plan.Scope))
+		})
+		records += rec
+		pages += pageCount
+		allSets = append(allSets, plan.Params...)
+		if !planOK {
+			return records, pages, false, allSets, nil
+		}
+	}
+	return records, pages, true, allSets, nil
+}
+
 // fetchAllPages 翻页拉取一个参数集合的全量数据并落库。
 // 返回 (records, pages, ok)；ok=false 表示中途出错（已记日志，调用方据此把 task 置 error）。
 //
@@ -704,21 +722,29 @@ func (w *EndpointWorker) doSync(ctx context.Context, req triggerReq) {
 //  4. UpsertRows（account_id 注入由 db 层负责）
 //  5. 累计 pages/records；HasMore 则 offset+=pageSize 继续
 func (w *EndpointWorker) fetchAllPages(ctx context.Context, taskID int64, params map[string]any) (int, int, bool) {
+	return w.fetchAllPagesWithColumns(ctx, taskID, params, w.Columns)
+}
+
+func (w *EndpointWorker) fetchAllPagesWithColumns(ctx context.Context, taskID int64, params map[string]any, columns []string) (int, int, bool) {
 	if w.Endpoint.IterateByAdAccount && !w.Endpoint.Probe {
-		return w.fetchAdPartition(ctx, taskID, params)
+		return w.fetchAdPartitionWithColumns(ctx, taskID, params, columns)
 	}
-	return w.fetchAllPagesWithSink(ctx, taskID, params, nil)
+	return w.fetchAllPagesWithSink(ctx, taskID, params, nil, columns)
 }
 
 // fetchAdPartition buffers one ad profile/date partition until every page is
 // verified. A failed or incomplete response therefore leaves the previous
 // complete partition untouched.
 func (w *EndpointWorker) fetchAdPartition(ctx context.Context, taskID int64, params map[string]any) (int, int, bool) {
+	return w.fetchAdPartitionWithColumns(ctx, taskID, params, w.Columns)
+}
+
+func (w *EndpointWorker) fetchAdPartitionWithColumns(ctx context.Context, taskID int64, params map[string]any, columns []string) (int, int, bool) {
 	rows := make([]map[string]any, 0)
 	records, pages, ok := w.fetchAllPagesWithSink(ctx, taskID, params, func(list []map[string]any) error {
 		rows = append(rows, list...)
 		return nil
-	})
+	}, columns)
 	if !ok {
 		return records, pages, false
 	}
@@ -730,7 +756,7 @@ func (w *EndpointWorker) fetchAdPartition(ctx context.Context, taskID int64, par
 	sid := stringParam(params, "sid")
 	profileID := stringParam(params, "profile_id")
 	reportDate := stringParam(params, "report_date")
-	if err := db.ReplaceAdPartition(ctx, w.DB, w.Endpoint.Table, w.Account.ID, sid, profileID, reportDate, rows, w.Columns, w.JSONCols); err != nil {
+	if err := db.ReplaceAdPartition(ctx, w.DB, w.Endpoint.Table, w.Account.ID, sid, profileID, reportDate, rows, columns, w.JSONCols); err != nil {
 		_ = db.InsertTaskLog(w.DB, taskID, pages+1, 0, 0, 0, 0, "ad partition: "+err.Error())
 		log.Printf("[worker:%s] 广告分区替换失败: %v", w.Endpoint.Name, err)
 		return records, pages, false
@@ -740,7 +766,7 @@ func (w *EndpointWorker) fetchAdPartition(ctx context.Context, taskID int64, par
 
 // fetchAllPagesWithSink contains the shared page-fetch loop. A non-nil sink
 // selects the strict ad-report path and buffers rows instead of writing them.
-func (w *EndpointWorker) fetchAllPagesWithSink(ctx context.Context, taskID int64, params map[string]any, sink func([]map[string]any) error) (int, int, bool) {
+func (w *EndpointWorker) fetchAllPagesWithSink(ctx context.Context, taskID int64, params map[string]any, sink func([]map[string]any) error, columns []string) (int, int, bool) {
 	limiter := w.Limiters.Get(w.Account.QuotaGroupOrID(), w.Endpoint.Path, w.Endpoint.Rate.Bucket, w.Endpoint.Rate.IntervalMs)
 	pageSize := api.DefaultPageSize
 	if pageSize <= 0 {
@@ -824,7 +850,7 @@ func (w *EndpointWorker) fetchAllPagesWithSink(ctx context.Context, taskID int64
 				return totalRecords, pages, false
 			}
 		} else if len(list) > 0 {
-			if uerr := db.UpsertRows(w.DB, w.Endpoint.Table, list, w.Columns, w.JSONCols, w.Account.ID); uerr != nil {
+			if uerr := db.UpsertRows(w.DB, w.Endpoint.Table, list, columns, w.JSONCols, w.Account.ID); uerr != nil {
 				_ = db.InsertTaskLog(w.DB, taskID, pages+1, httpStatus, apiCode, len(list), durationMs, "upsert: "+uerr.Error())
 				log.Printf("[worker:%s] UpsertRows 出错 offset=%d: %v", w.Endpoint.Name, offset, uerr)
 				return totalRecords, pages, false
@@ -1068,6 +1094,17 @@ func (w *EndpointWorker) baseParamsFor(req triggerReq) (map[string]any, error) {
 
 func (w *EndpointWorker) paramSetsFor(req triggerReq) ([]map[string]any, error) {
 	return w.paramSetsForAt(req, time.Now())
+}
+
+func (w *EndpointWorker) metricPlansFor(req triggerReq) ([]metricPlan, error) {
+	return metricPlansForAt(w.Endpoint, w.Endpoint.MetricScope, req, time.Now())
+}
+
+func (w *EndpointWorker) columnsForMetricScope(scope string) []string {
+	if w.Endpoint.MetricScope != "combined" {
+		return w.Columns
+	}
+	return combinedMetricColumns(scope, w.Columns, w.Endpoint.RecordIDFields)
 }
 
 const maxSingleDayManualRangeDays = 92

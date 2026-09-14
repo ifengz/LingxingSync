@@ -437,6 +437,7 @@ endpoints:
 
   - name: sc_performance
     display: "SC 产品表现（ASIN）"
+    metric_scope: "combined"
     account: "sc_us"
     path: "/bd/productPerformance/openApi/asinList"
     method: "POST"

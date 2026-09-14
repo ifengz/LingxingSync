@@ -207,7 +207,7 @@ func TestListingDailyV2KeepsV1ImmutableAndAddsAdReachContract(t *testing.T) {
 	if !ok || v2.ParentID != "listing-daily-v1" || v2.NextVersionID != "" {
 		t.Fatalf("v2 version metadata=%+v found=%t", v2, ok)
 	}
-	for _, field := range []string{"sp_spend", "sp_impressions", "sp_clicks", "sd_spend", "sd_impressions", "sd_clicks", "hsa_spend", "hsa_impressions", "hsa_clicks", "sb_spend", "sb_impressions", "sb_clicks", "verified_fields"} {
+	for _, field := range []string{"sp_spend", "sp_impressions", "sp_clicks", "sd_spend", "sd_impressions", "sd_clicks", "hsa_spend", "hsa_impressions", "hsa_clicks", "sb_spend", "sb_impressions", "sb_clicks", "cate_rank", "small_cate_rank", "verified_fields"} {
 		if !containsField(v2.Fields, field) {
 			t.Fatalf("v2 field %q is missing", field)
 		}

@@ -111,6 +111,16 @@ func TestCatalogSCProductsContract(t *testing.T) {
 	}
 }
 
+func TestCatalogSCPerformanceUsesCombinedMetricScope(t *testing.T) {
+	e, err := FindCatalogEntry("sc_performance")
+	if err != nil {
+		t.Fatalf("FindCatalogEntry: %v", err)
+	}
+	if e.MetricScope != "combined" || e.ToEndpoint("sc_us").MetricScope != "combined" {
+		t.Fatalf("SC performance metric scope = %q / %q, want combined", e.MetricScope, e.ToEndpoint("sc_us").MetricScope)
+	}
+}
+
 // 016-022 已完成真实请求、落库验证；除需账号专属 VC 店铺 ID 的 vc_listing 外，
 // 其余模板必须能在部署后的清单中按账号直接启用，不能依赖本地 ignored config.yaml。
 func TestCatalogIncludesVerifiedSyncTemplates(t *testing.T) {

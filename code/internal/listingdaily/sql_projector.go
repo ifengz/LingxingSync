@@ -3,6 +3,7 @@ package listingdaily
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -541,7 +542,7 @@ func (r SQLSourceReader) readReturns(ctx context.Context, out *SQLProjection, ac
 	return nil
 }
 
-const scPerformanceDailySQL = "SELECT asin, sessions, sessions_mobile, sessions_total, reviews_count, avg_star FROM ls_sc_performance_daily WHERE account_id = ? AND sid = ? AND business_date = ?"
+const scPerformanceDailySQL = "SELECT asin, sessions, sessions_mobile, sessions_total, cate_rank, small_cate_rank, reviews_count, avg_star FROM ls_sc_performance_daily WHERE account_id = ? AND sid = ? AND business_date = ?"
 
 func (r SQLSourceReader) readSCPerformance(ctx context.Context, out *SQLProjection, accountID, storeID, channel string, date time.Time, skus map[string]string) error {
 	var rows []struct {
@@ -549,6 +550,8 @@ func (r SQLSourceReader) readSCPerformance(ctx context.Context, out *SQLProjecti
 		Sessions       sql.NullInt64   `db:"sessions"`
 		SessionsMobile sql.NullInt64   `db:"sessions_mobile"`
 		SessionsTotal  sql.NullInt64   `db:"sessions_total"`
+		CateRank       sql.NullInt64   `db:"cate_rank"`
+		SmallCateRank  sql.NullString  `db:"small_cate_rank"`
 		ReviewsCount   sql.NullInt64   `db:"reviews_count"`
 		AvgStar        sql.NullFloat64 `db:"avg_star"`
 	}
@@ -561,13 +564,60 @@ func (r SQLSourceReader) readSCPerformance(ctx context.Context, out *SQLProjecti
 			out.Unknown = append(out.Unknown, CoverageUnknown{"ls_sc_performance_daily", storeID, row.ASIN, date, "missing or ambiguous ls_sc_listing seller_sku"})
 			continue
 		}
-		out.Records = append(out.Records, RawRecord{Source: SourceAPI, Input: Input{Key: Key{Store: storeID, Channel: channel, ASIN: row.ASIN, SKU: sku, BusinessDate: date}, Scope: ScopeListing, Values: scPerformanceValues(row.Sessions, row.SessionsMobile, row.SessionsTotal, row.ReviewsCount, row.AvgStar)}})
+		values, err := scPerformanceValues(row.Sessions, row.SessionsMobile, row.SessionsTotal, row.CateRank, row.SmallCateRank, row.ReviewsCount, row.AvgStar)
+		if err != nil {
+			return fmt.Errorf("listing daily: parse ls_sc_performance_daily ranks for asin %s: %w", row.ASIN, err)
+		}
+		out.Records = append(out.Records, RawRecord{Source: SourceAPI, Input: Input{Key: Key{Store: storeID, Channel: channel, ASIN: row.ASIN, SKU: sku, BusinessDate: date}, Scope: ScopeListing, Values: values}})
 	}
 	return nil
 }
 
-func scPerformanceValues(sessions, sessionsMobile, sessionsTotal, reviewsCount sql.NullInt64, avgStar sql.NullFloat64) Values {
-	return Values{SessionsDesktop: nullableInt(sessions), SessionsMobile: nullableInt(sessionsMobile), SessionsTotal: nullableInt(sessionsTotal), ReviewCount: nullableInt(reviewsCount), Rating: nullableFloat(avgStar)}
+func scPerformanceValues(sessions, sessionsMobile, sessionsTotal, cateRank sql.NullInt64, smallCateRank sql.NullString, reviewsCount sql.NullInt64, avgStar sql.NullFloat64) (Values, error) {
+	smallRank, err := parseSmallCateRank(smallCateRank)
+	if err != nil {
+		return Values{}, err
+	}
+	return Values{SessionsDesktop: nullableInt(sessions), SessionsMobile: nullableInt(sessionsMobile), SessionsTotal: nullableInt(sessionsTotal), CateRank: nullableInt(cateRank), SmallCateRank: smallRank, ReviewCount: nullableInt(reviewsCount), Rating: nullableFloat(avgStar)}, nil
+}
+
+func parseSmallCateRank(value sql.NullString) (*int64, error) {
+	if !value.Valid || strings.TrimSpace(value.String) == "" || strings.TrimSpace(value.String) == "null" {
+		return nil, nil
+	}
+	decoder := json.NewDecoder(strings.NewReader(value.String))
+	decoder.UseNumber()
+	var raw any
+	if err := decoder.Decode(&raw); err != nil {
+		return nil, fmt.Errorf("invalid small_cate_rank JSON: %w", err)
+	}
+	if list, ok := raw.([]any); ok {
+		if len(list) == 0 {
+			return nil, nil
+		}
+		item, ok := list[0].(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("small_cate_rank[0] must be an object")
+		}
+		raw = item["rank"]
+	}
+	if raw == nil {
+		return nil, fmt.Errorf("small_cate_rank rank is missing")
+	}
+	var text string
+	switch parsed := raw.(type) {
+	case json.Number:
+		text = parsed.String()
+	case string:
+		text = strings.TrimSpace(parsed)
+	default:
+		return nil, fmt.Errorf("small_cate_rank rank must be an integer")
+	}
+	rank, err := strconv.ParseInt(text, 10, 64)
+	if err != nil || rank < 0 {
+		return nil, fmt.Errorf("small_cate_rank rank must be a non-negative integer")
+	}
+	return &rank, nil
 }
 
 const scInventorySQL = "SELECT asin, sku, fnsku, afn_fulfillable_quantity, afn_inbound_receiving_quantity, afn_inbound_shipped_quantity, afn_inbound_working_quantity, reserved_customerorders, reserved_fc_processing, reserved_fc_transfers, afn_unsellable_quantity FROM ls_fba_inventory WHERE account_id = ? AND sid = ? AND DATE(synced_at) = ?"
