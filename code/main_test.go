@@ -22,7 +22,7 @@ import (
 func TestCustomerReturnsRunUsesConfiguredAccount(t *testing.T) {
 	cfg := &config.Config{Accounts: []config.Account{{ID: "sc_us", AppKey: "key", AppSecret: "secret"}}}
 	clients := api.NewClientRegistry(cfg.Accounts, "http://example.test")
-	run := customerReturnsRun(cfg, clients, db.NewReportStore(nil), worker.NewLimiter(1, 1), nil, nil)
+	run := customerReturnsRun(cfg, clients, db.NewReportStore(nil), worker.NewLimiter(1, 1), nil, nil, nil)
 	_, err := run(context.Background(), reportexport.Request{AccountID: "missing"})
 	if err == nil || !strings.Contains(err.Error(), "missing") {
 		t.Fatalf("unknown report account error = %v", err)

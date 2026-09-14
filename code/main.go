@@ -201,6 +201,7 @@ func main() {
 			// shares one serial limiter across create/query/renew calls.
 			Limiter: worker.NewLimiter(1, 1000),
 		}
+		runner.SellerLimiter = reportexport.NewSellerRateLimiter(runner.Limiter)
 		var result reportexport.Result
 		if *resumeReportAudit > 0 {
 			result, err = runner.Resume(context.Background(), *resumeReportAudit)
@@ -322,7 +323,8 @@ func main() {
 		return client.TokenHolder().ForceRefresh(ctx)
 	})
 	reportLimiter := worker.NewLimiter(1, 1000)
-	sharedReportRunner := customerReturnsRun(cfg, clients, db.NewReportStore(dbx), reportLimiter, dailyReader, dailyStore)
+	reportSellerLimiter := reportexport.NewSellerRateLimiter(reportLimiter)
+	sharedReportRunner := customerReturnsRun(cfg, clients, db.NewReportStore(dbx), reportLimiter, reportSellerLimiter, dailyReader, dailyStore)
 	sched.SetCustomerReturnsRunner(sharedReportRunner)
 	if err := sched.Start(ctx); err != nil {
 		log.Fatalf("[main] 启动调度器失败: %v", err)
@@ -384,7 +386,7 @@ func formatInventoryPlanningProbeFailure(result reportexport.ContractProbeResult
 	)
 }
 
-func customerReturnsRun(cfg *config.Config, clients *api.ClientRegistry, store reportexport.Store, limiter reportexport.Limiter, dailyReader listingdaily.SourceReader, dailyStore listingdaily.ReconciliationStore) func(context.Context, reportexport.Request) (reportexport.Result, error) {
+func customerReturnsRun(cfg *config.Config, clients *api.ClientRegistry, store reportexport.Store, limiter reportexport.Limiter, sellerLimiter reportexport.SellerLimiter, dailyReader listingdaily.SourceReader, dailyStore listingdaily.ReconciliationStore) func(context.Context, reportexport.Request) (reportexport.Result, error) {
 	return func(ctx context.Context, request reportexport.Request) (reportexport.Result, error) {
 		account := cfg.FindAccount(request.AccountID)
 		if account == nil {
@@ -395,7 +397,7 @@ func customerReturnsRun(cfg *config.Config, clients *api.ClientRegistry, store r
 		if client == nil {
 			return reportexport.Result{}, fmt.Errorf("Customer Returns 报表账号 Client 不存在: %s", account.ID)
 		}
-		runner := reportexport.Runner{Client: client, Store: store, Limiter: limiter}
+		runner := reportexport.Runner{Client: client, Store: store, Limiter: limiter, SellerLimiter: sellerLimiter}
 		result, err := runner.Run(ctx, request)
 		if err != nil {
 			return result, err

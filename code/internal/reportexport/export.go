@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
@@ -42,6 +43,89 @@ type SignedJSONClient interface {
 
 type Limiter interface {
 	Wait(context.Context) error
+}
+
+// SellerLimiter adds the upstream seller-level cooldown that formal report
+// queries require. It is intentionally optional so existing focused callers
+// and non-report paths keep their current limiter contract.
+type SellerLimiter interface {
+	WaitSeller(context.Context, string) error
+	CooldownSeller(string, time.Duration)
+}
+
+// SellerRateLimiter coordinates formal-report requests by seller while
+// delegating the existing process-wide report limiter for the actual request
+// spacing. A cooldown learned from one seller query blocks every other query
+// for that seller in this process, regardless of report/store scope.
+type SellerRateLimiter struct {
+	base  Limiter
+	mu    sync.Mutex
+	until map[string]time.Time
+}
+
+func NewSellerRateLimiter(base Limiter) *SellerRateLimiter {
+	return &SellerRateLimiter{base: base, until: make(map[string]time.Time)}
+}
+
+func (l *SellerRateLimiter) Wait(ctx context.Context) error {
+	if l == nil || l.base == nil {
+		return nil
+	}
+	return l.base.Wait(ctx)
+}
+
+func (l *SellerRateLimiter) WaitSeller(ctx context.Context, sellerID string) error {
+	for {
+		wait := l.cooldownRemaining(sellerID)
+		if wait > 0 {
+			timer := time.NewTimer(wait)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return ctx.Err()
+			case <-timer.C:
+			}
+		}
+		if err := l.Wait(ctx); err != nil {
+			return err
+		}
+		// A cooldown may have been learned while the base limiter was waiting.
+		// Re-check before sending so queued same-seller requests cannot bypass it.
+		if l.cooldownRemaining(sellerID) == 0 {
+			return nil
+		}
+	}
+}
+
+func (l *SellerRateLimiter) CooldownSeller(sellerID string, duration time.Duration) {
+	if l == nil || strings.TrimSpace(sellerID) == "" || duration <= 0 {
+		return
+	}
+	until := time.Now().Add(duration)
+	l.mu.Lock()
+	if until.After(l.until[sellerID]) {
+		l.until[sellerID] = until
+	}
+	l.mu.Unlock()
+}
+
+func (l *SellerRateLimiter) cooldownRemaining(sellerID string) time.Duration {
+	if l == nil || strings.TrimSpace(sellerID) == "" {
+		return 0
+	}
+	l.mu.Lock()
+	until := l.until[sellerID]
+	if until.IsZero() {
+		l.mu.Unlock()
+		return 0
+	}
+	remaining := time.Until(until)
+	if remaining <= 0 {
+		delete(l.until, sellerID)
+		remaining = 0
+	}
+	l.mu.Unlock()
+	return remaining
 }
 
 type Request struct {
@@ -191,12 +275,14 @@ type Result struct {
 }
 
 type Runner struct {
-	Client       SignedJSONClient
-	Store        Store
-	HTTP         *http.Client
-	Limiter      Limiter
-	PollInterval time.Duration
-	PollTimeout  time.Duration
+	Client        SignedJSONClient
+	Store         Store
+	HTTP          *http.Client
+	Limiter       Limiter
+	SellerLimiter SellerLimiter
+	PollInterval  time.Duration
+	PollTimeout   time.Duration
+	sleep         func(context.Context, time.Duration) error
 }
 
 func (r *Runner) Run(ctx context.Context, request Request) (result Result, err error) {
@@ -799,7 +885,11 @@ func newDownloadClient() *http.Client {
 
 func (r *Runner) call(ctx context.Context, path string, body map[string]any) ([]byte, error) {
 	for attempt := 0; ; attempt++ {
-		if r.Limiter != nil {
+		if path == queryPath && r.SellerLimiter != nil {
+			if err := r.SellerLimiter.WaitSeller(ctx, reportSellerID(body)); err != nil {
+				return nil, fmt.Errorf("report export: rate limiter: %w", err)
+			}
+		} else if r.Limiter != nil {
 			if err := r.Limiter.Wait(ctx); err != nil {
 				return nil, fmt.Errorf("report export: rate limiter: %w", err)
 			}
@@ -809,8 +899,17 @@ func (r *Runner) call(ctx context.Context, path string, body map[string]any) ([]
 			return raw, nil
 		}
 		delay, retry := reportRateLimitRetry(err, httpStatus, apiCode, attempt)
+		if path == queryPath && r.SellerLimiter != nil && delay > 0 {
+			r.SellerLimiter.CooldownSeller(reportSellerID(body), delay)
+		}
 		if !retry {
 			return raw, err
+		}
+		if r.sleep != nil {
+			if err := r.sleep(ctx, delay); err != nil {
+				return nil, err
+			}
+			continue
 		}
 		timer := time.NewTimer(delay)
 		select {
@@ -820,6 +919,17 @@ func (r *Runner) call(ctx context.Context, path string, body map[string]any) ([]
 		case <-timer.C:
 		}
 	}
+}
+
+func reportSellerID(body map[string]any) string {
+	if body == nil {
+		return ""
+	}
+	value, ok := body["seller_id"]
+	if !ok || value == nil {
+		return ""
+	}
+	return strings.TrimSpace(fmt.Sprint(value))
 }
 
 func reportRateLimitRetry(err error, httpStatus, apiCode, attempt int) (time.Duration, bool) {
@@ -837,18 +947,26 @@ func reportRateLimitRetry(err error, httpStatus, apiCode, attempt int) (time.Dur
 	if httpStatus != http.StatusTooManyRequests && apiCode != 3001008 && apiCode != http.StatusTooManyRequests {
 		return 0, false
 	}
-	if attempt >= len(reportRateLimitDelays) {
-		return 0, false
-	}
+	var delay time.Duration
 	if fetchErr != nil {
 		if wait, ok := suggestedRateLimitWait(fetchErr.APIMessage); ok {
-			return wait, true
+			delay = wait
 		}
-		if fetchErr.RetryAfter > 0 {
-			return fetchErr.RetryAfter, true
+		if delay <= 0 && fetchErr.RetryAfter > 0 {
+			delay = fetchErr.RetryAfter
 		}
 	}
-	return reportRateLimitDelays[attempt], true
+	if delay <= 0 {
+		index := attempt
+		if index >= len(reportRateLimitDelays) {
+			index = len(reportRateLimitDelays) - 1
+		}
+		delay = reportRateLimitDelays[index]
+	}
+	if attempt >= len(reportRateLimitDelays) {
+		return delay, false
+	}
+	return delay, true
 }
 
 // suggestedRateLimitWait reads the upstream hint embedded in error_details,
