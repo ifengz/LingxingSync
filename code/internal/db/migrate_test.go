@@ -141,6 +141,29 @@ func TestSCRevenueMigrationKeepsMetricInSeparateRawTable(t *testing.T) {
 	}
 }
 
+func TestSCMSKUSalesMigrationKeepsExactListingIdentity(t *testing.T) {
+	raw, err := os.ReadFile("../../migrations/076_add_sc_msku_sales_tables.sql")
+	if err != nil {
+		t.Fatalf("读取 SC MSKU 销量迁移失败: %v", err)
+	}
+	sql := strings.ToUpper(string(raw))
+	for _, want := range []string{
+		"CREATE TABLE IF NOT EXISTS LS_SC_SALES_REPORT_MSKU",
+		"CREATE TABLE IF NOT EXISTS LS_SC_SALES_REVENUE_MSKU",
+		"SELLER_SKU    VARCHAR(255) NOT NULL",
+		"PRIMARY KEY (ACCOUNT_ID, SID, R_DATE, ASIN, SELLER_SKU)",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("SC MSKU 销量迁移缺少 %q", want)
+		}
+	}
+	for _, destructive := range []string{"DROP TABLE", "DELETE FROM", "TRUNCATE"} {
+		if strings.Contains(sql, destructive) {
+			t.Fatalf("SC MSKU 销量迁移不得使用破坏性语句 %s", destructive)
+		}
+	}
+}
+
 func TestStockAndAddressMigrationsPreserveVerifiedBusinessKeys(t *testing.T) {
 	tests := []struct {
 		file  string

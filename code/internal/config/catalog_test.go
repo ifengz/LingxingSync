@@ -268,21 +268,21 @@ func TestCatalogIncludesVerifiedReportTemplates(t *testing.T) {
 		contract func(Endpoint) bool
 	}{
 		{
-			key: "sc_sales_report", path: "/erp/sc/data/sales_report/asinDailyLists", table: "ls_sc_sales_report",
-			ids: []string{"sid", "r_date", "asin"},
+			key: "sc_sales_report", path: "/erp/sc/data/sales_report/asinDailyLists", table: "ls_sc_sales_report_msku",
+			ids: []string{"sid", "r_date", "asin", "seller_sku"},
 			contract: func(ep Endpoint) bool {
 				return ep.Cron == "*/30 * * * *" && ep.SingleDayWindow && ep.WindowDays == 7 && ep.DateOffsetDays == 2 &&
 					ep.WindowStartField == "event_date" && ep.WindowEndField == "event_date" && ep.DateField == "" &&
-					ep.IterateByStore && ep.StoreType == "SC" && ep.ExtraParams["type"] == 2
+					ep.IterateByStore && ep.StoreType == "SC" && ep.ExtraParams["type"] == 2 && ep.ExtraParams["asin_type"] == 2
 			},
 		},
 		{
-			key: "sc_sales_revenue", path: "/erp/sc/data/sales_report/asinDailyLists", table: "ls_sc_sales_revenue",
-			ids: []string{"sid", "r_date", "asin"},
+			key: "sc_sales_revenue", path: "/erp/sc/data/sales_report/asinDailyLists", table: "ls_sc_sales_revenue_msku",
+			ids: []string{"sid", "r_date", "asin", "seller_sku"},
 			contract: func(ep Endpoint) bool {
 				return ep.Cron == "*/30 * * * *" && ep.SingleDayWindow && ep.WindowDays == 7 && ep.DateOffsetDays == 2 &&
 					ep.WindowStartField == "event_date" && ep.WindowEndField == "event_date" && ep.DateField == "" &&
-					ep.IterateByStore && ep.StoreType == "SC" && ep.ExtraParams["type"] == 1
+					ep.IterateByStore && ep.StoreType == "SC" && ep.ExtraParams["type"] == 1 && ep.ExtraParams["asin_type"] == 2
 			},
 		},
 		{

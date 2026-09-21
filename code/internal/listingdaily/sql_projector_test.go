@@ -134,6 +134,34 @@ func TestVCSalesContractUsesShippedMetricsAndSameDomainListing(t *testing.T) {
 	}
 }
 
+func TestSCSalesMetricUsesResponseSellerSKU(t *testing.T) {
+	date := time.Date(2026, 9, 19, 0, 0, 0, 0, time.UTC)
+	value := sql.NullString{String: "7", Valid: true}
+	record, err := scSalesMetric("12154", "sc_fba", date, "B0G1483DB7", "LIXIN-GM-1030R-1224", value, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Input.Key.ASIN != "B0G1483DB7" || record.Input.Key.SKU != "LIXIN-GM-1030R-1224" {
+		t.Fatalf("SC sales identity = %#v", record.Input.Key)
+	}
+	if record.Input.Values.SalesUnits == nil || *record.Input.Values.SalesUnits != 7 {
+		t.Fatalf("SC sales units = %#v", record.Input.Values.SalesUnits)
+	}
+	if record.Input.Values.SalesAmount != nil {
+		t.Fatalf("quantity response unexpectedly set sales amount = %#v", record.Input.Values.SalesAmount)
+	}
+	revenue, err := scSalesMetric("12154", "sc_fba", date, "B0G1483DB7", "LIXIN-GM-1030R-1224", sql.NullString{String: "19.95", Valid: true}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if revenue.Input.Values.SalesAmount == nil || *revenue.Input.Values.SalesAmount != 19.95 || revenue.Input.Values.SalesUnits != nil {
+		t.Fatalf("SC revenue values = %#v", revenue.Input.Values)
+	}
+	if _, err := scSalesMetric("12154", "sc_fba", date, "B0G1483DB7", "", value, true); err == nil {
+		t.Fatal("SC sales row without seller_sku was accepted")
+	}
+}
+
 func TestAdProjectionMapsPerTypeReachAndPreservesUnknownFields(t *testing.T) {
 	date := time.Date(2026, 8, 12, 0, 0, 0, 0, time.UTC)
 	db := sql.OpenDB(adFixtureConnector{})

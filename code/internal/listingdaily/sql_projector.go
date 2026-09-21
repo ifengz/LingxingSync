@@ -163,7 +163,7 @@ func (r SQLSourceReader) Read(ctx context.Context, accountID, storeID, channel s
 		if err != nil {
 			return projection, err
 		}
-		if err := r.readSCSales(ctx, &projection, accountID, storeID, channel, date, sku); err != nil {
+		if err := r.readSCSales(ctx, &projection, accountID, storeID, channel, date); err != nil {
 			return projection, err
 		}
 		if err := r.readReturns(ctx, &projection, accountID, storeID, channel, date, sku); err != nil {
@@ -474,48 +474,65 @@ func (r SQLSourceReader) readVCSales(ctx context.Context, out *SQLProjection, ac
 	return nil
 }
 
-func (r SQLSourceReader) readSCSales(ctx context.Context, out *SQLProjection, accountID, storeID, channel string, date time.Time, skus map[string]string) error {
+func (r SQLSourceReader) readSCSales(ctx context.Context, out *SQLProjection, accountID, storeID, channel string, date time.Time) error {
 	var units []struct {
-		ASIN  string         `db:"asin"`
-		Date  string         `db:"r_date"`
-		Value sql.NullString `db:"map_value"`
+		ASIN      string         `db:"asin"`
+		SellerSKU string         `db:"seller_sku"`
+		Value     sql.NullString `db:"map_value"`
 	}
-	if err := r.DB.SelectContext(ctx, &units, "SELECT asin, r_date, map_value FROM ls_sc_sales_report WHERE account_id = ? AND sid = ? AND r_date = ?", accountID, storeID, date.Format("2006-01-02")); err != nil {
-		return fmt.Errorf("listing daily: read ls_sc_sales_report: %w", err)
+	if err := r.DB.SelectContext(ctx, &units, "SELECT asin, seller_sku, map_value FROM ls_sc_sales_report_msku WHERE account_id = ? AND sid = ? AND r_date = ?", accountID, storeID, date.Format("2006-01-02")); err != nil {
+		return fmt.Errorf("listing daily: read ls_sc_sales_report_msku: %w", err)
 	}
 	for _, row := range units {
-		sku := skus[row.ASIN]
-		if sku == "" {
-			out.Unknown = append(out.Unknown, CoverageUnknown{"ls_sc_sales_report", storeID, row.ASIN, date, "missing or ambiguous ls_sc_listing seller_sku"})
-			continue
-		}
-		value, err := integer(row.Value)
+		record, err := scSalesMetric(storeID, channel, date, row.ASIN, row.SellerSKU, row.Value, true)
 		if err != nil {
-			return fmt.Errorf("listing daily: parse SC sales quantity asin=%s: %w", row.ASIN, err)
+			return fmt.Errorf("listing daily: project SC sales quantity asin=%s seller_sku=%s: %w", row.ASIN, row.SellerSKU, err)
 		}
-		out.Records = append(out.Records, RawRecord{Source: SourceAPI, Input: Input{Key: Key{Store: storeID, Channel: channel, ASIN: row.ASIN, SKU: sku, BusinessDate: date}, Scope: ScopeListing, Values: Values{SalesUnits: &value}}})
+		out.Records = append(out.Records, record)
 	}
 	var revenue []struct {
-		ASIN  string         `db:"asin"`
-		Date  string         `db:"r_date"`
-		Value sql.NullString `db:"map_value"`
+		ASIN      string         `db:"asin"`
+		SellerSKU string         `db:"seller_sku"`
+		Value     sql.NullString `db:"map_value"`
 	}
-	if err := r.DB.SelectContext(ctx, &revenue, "SELECT asin, r_date, map_value FROM ls_sc_sales_revenue WHERE account_id = ? AND sid = ? AND r_date = ?", accountID, storeID, date.Format("2006-01-02")); err != nil {
-		return fmt.Errorf("listing daily: read ls_sc_sales_revenue: %w", err)
+	if err := r.DB.SelectContext(ctx, &revenue, "SELECT asin, seller_sku, map_value FROM ls_sc_sales_revenue_msku WHERE account_id = ? AND sid = ? AND r_date = ?", accountID, storeID, date.Format("2006-01-02")); err != nil {
+		return fmt.Errorf("listing daily: read ls_sc_sales_revenue_msku: %w", err)
 	}
 	for _, row := range revenue {
-		sku := skus[row.ASIN]
-		if sku == "" {
-			out.Unknown = append(out.Unknown, CoverageUnknown{"ls_sc_sales_revenue", storeID, row.ASIN, date, "missing or ambiguous ls_sc_listing seller_sku"})
-			continue
-		}
-		value, err := decimal(row.Value)
+		record, err := scSalesMetric(storeID, channel, date, row.ASIN, row.SellerSKU, row.Value, false)
 		if err != nil {
-			return fmt.Errorf("listing daily: parse SC sales amount asin=%s: %w", row.ASIN, err)
+			return fmt.Errorf("listing daily: project SC sales amount asin=%s seller_sku=%s: %w", row.ASIN, row.SellerSKU, err)
 		}
-		out.Records = append(out.Records, RawRecord{Source: SourceAPI, Input: Input{Key: Key{Store: storeID, Channel: channel, ASIN: row.ASIN, SKU: sku, BusinessDate: date}, Scope: ScopeListing, Values: Values{SalesAmount: &value}}})
+		out.Records = append(out.Records, record)
 	}
 	return nil
+}
+
+func scSalesMetric(storeID, channel string, date time.Time, asin, sellerSKU string, rawValue sql.NullString, units bool) (RawRecord, error) {
+	asin = strings.TrimSpace(asin)
+	sellerSKU = strings.TrimSpace(sellerSKU)
+	if asin == "" || sellerSKU == "" {
+		return RawRecord{}, fmt.Errorf("missing SC sales ASIN/MSKU identity")
+	}
+	values := Values{}
+	if units {
+		value, err := integer(rawValue)
+		if err != nil {
+			return RawRecord{}, err
+		}
+		values.SalesUnits = &value
+	} else {
+		value, err := decimal(rawValue)
+		if err != nil {
+			return RawRecord{}, err
+		}
+		values.SalesAmount = &value
+	}
+	return RawRecord{Source: SourceAPI, Input: Input{
+		Key:    Key{Store: storeID, Channel: channel, ASIN: asin, SKU: sellerSKU, BusinessDate: date},
+		Scope:  ScopeListing,
+		Values: values,
+	}}, nil
 }
 
 func (r SQLSourceReader) readReturns(ctx context.Context, out *SQLProjection, accountID, storeID, channel string, date time.Time, skus map[string]string) error {

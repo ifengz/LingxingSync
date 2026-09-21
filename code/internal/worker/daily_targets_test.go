@@ -17,7 +17,9 @@ func TestDailyProjectionChannelIsLimitedToFactSources(t *testing.T) {
 		ok      bool
 	}{
 		{"ls_sc_sales_report", "sc_fba", true},
+		{"ls_sc_sales_report_msku", "sc_fba", true},
 		{"ls_sc_sales_revenue", "sc_fba", true},
+		{"ls_sc_sales_revenue_msku", "sc_fba", true},
 		{"ls_sc_refunds", "sc_fba", true},
 		{"ls_fba_inventory", "sc_fba", true},
 		{"ls_vc_sales_report", "vc", true},

@@ -1174,16 +1174,18 @@ type DailyProjectionTarget struct {
 
 func dailyProjectionChannel(table string) (string, bool) {
 	channels := map[string]string{
-		"ls_sc_sales_report":      "sc_fba",
-		"ls_sc_sales_revenue":     "sc_fba",
-		"ls_sc_refunds":           "sc_fba",
-		"ls_fba_inventory":        "sc_fba",
-		"ls_sc_performance_daily": "sc_fba",
-		"ls_ad_sp_product":        "sc_fba",
-		"ls_ad_sd_product":        "sc_fba",
-		"ls_vc_sales_report":      "vc",
-		"ls_vc_inventory":         "vc",
-		"ls_ad_hsa_campaign":      "hsa",
+		"ls_sc_sales_report":       "sc_fba",
+		"ls_sc_sales_report_msku":  "sc_fba",
+		"ls_sc_sales_revenue":      "sc_fba",
+		"ls_sc_sales_revenue_msku": "sc_fba",
+		"ls_sc_refunds":            "sc_fba",
+		"ls_fba_inventory":         "sc_fba",
+		"ls_sc_performance_daily":  "sc_fba",
+		"ls_ad_sp_product":         "sc_fba",
+		"ls_ad_sd_product":         "sc_fba",
+		"ls_vc_sales_report":       "vc",
+		"ls_vc_inventory":          "vc",
+		"ls_ad_hsa_campaign":       "hsa",
 	}
 	channel, ok := channels[table]
 	return channel, ok
