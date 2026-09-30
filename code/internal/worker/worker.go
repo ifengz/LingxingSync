@@ -818,7 +818,9 @@ func (w *EndpointWorker) fetchAllPagesWithSink(ctx context.Context, taskID int64
 			return totalRecords, pages, true
 		}
 
-		// 落库（空列表跳过）
+		// 落库（空列表跳过）。分页必须按上游原始行数推进；库存接口会把 FBM
+		// 行混在 FBA 响应里，过滤后不能把空的业务行当成上游空页，否则会提前终止翻页。
+		rawPageLen := len(result.List)
 		list := result.List
 		// 行整形（宪法 §1.3 零代码：全部由 field_paths / inject_params 配置驱动）：
 		//   - field_paths：把嵌套里的身份字段提到顶层（如 asins[0].asin → asin）
@@ -833,6 +835,18 @@ func (w *EndpointWorker) fetchAllPagesWithSink(ctx context.Context, taskID int64
 		if uerr := injectRowDate(list, w.Endpoint.RowDateField, w.Endpoint.WindowStartFieldOrDefault(), pageParams); uerr != nil {
 			_ = db.InsertTaskLog(w.DB, taskID, pages+1, httpStatus, apiCode, len(list), durationMs, "row date: "+uerr.Error())
 			return totalRecords, pages, false
+		}
+		if w.Endpoint.Table == "ls_fba_inventory" {
+			filtered, dropped, ferr := filterFBAInventoryRows(w.Endpoint.Table, list)
+			if ferr != nil {
+				_ = db.InsertTaskLog(w.DB, taskID, pages+1, httpStatus, apiCode, len(list), durationMs, "filter: "+ferr.Error())
+				log.Printf("[worker:%s] FBA 库存行过滤失败 offset=%d: %v", w.Endpoint.Name, offset, ferr)
+				return totalRecords, pages, false
+			}
+			if dropped > 0 {
+				log.Printf("[worker:%s] FBA 库存丢弃 %d 条 FBM 行 offset=%d", w.Endpoint.Name, dropped, offset)
+			}
+			list = filtered
 		}
 		if sink != nil {
 			if expectedTotal < 0 {
@@ -863,8 +877,8 @@ func (w *EndpointWorker) fetchAllPagesWithSink(ctx context.Context, taskID int64
 
 		// 翻页判定（宪法 §4 doc/core/08-api-reference.md：has_more==false 或
 		// offset+length>=total 终止）。fetched = 旧 offset + 本页行数 = 已累计记录数。
-		fetched := offset + len(list)
-		if !shouldContinuePaging(result, len(list), fetched) {
+		fetched := offset + rawPageLen
+		if !shouldContinuePaging(result, rawPageLen, fetched) {
 			return totalRecords, pages, true
 		}
 
@@ -878,7 +892,7 @@ func (w *EndpointWorker) fetchAllPagesWithSink(ctx context.Context, taskID int64
 			return totalRecords, pages, false
 		}
 
-		// offset 是「行游标」（宪法 §4 offset+length），按实际取得行数前进，
+		// offset 是「行游标」（宪法 §4 offset+length），按上游实际取得行数前进，
 		// 兼容短页；对满页接口等价于 offset+=pageSize，行为不变。
 		offset = fetched
 	}
@@ -981,6 +995,35 @@ func shouldContinuePaging(r *api.FetchResult, pageLen, fetched int) bool {
 		return fetched < r.Total
 	}
 	return false
+}
+
+// filterFBAInventoryRows enforces the ls_fba_inventory source contract.
+// The upstream endpoint currently mixes FBA and FBM rows; this table only owns
+// FBA facts, so FBM rows are excluded before the NOT NULL FNSKU guard. Unknown
+// or missing channel values fail closed instead of being silently classified.
+func filterFBAInventoryRows(table string, rows []map[string]any) ([]map[string]any, int, error) {
+	if table != "ls_fba_inventory" {
+		return rows, 0, nil
+	}
+
+	filtered := make([]map[string]any, 0, len(rows))
+	dropped := 0
+	for index, row := range rows {
+		value, ok := row["fulfillment_channel_name"]
+		channel := strings.TrimSpace(fmt.Sprint(value))
+		if !ok || value == nil || channel == "" || channel == "<nil>" {
+			return nil, dropped, fmt.Errorf("ls_fba_inventory row %d has unknown fulfillment channel", index+1)
+		}
+		switch strings.ToUpper(channel) {
+		case "FBA":
+			filtered = append(filtered, row)
+		case "FBM":
+			dropped++
+		default:
+			return nil, dropped, fmt.Errorf("ls_fba_inventory row %d has unsupported fulfillment channel %q", index+1, channel)
+		}
+	}
+	return filtered, dropped, nil
 }
 
 // probeSample 把探测模式抓到的结果拼成一段可读字符串存进 task_logs.error_raw，
