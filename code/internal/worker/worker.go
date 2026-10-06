@@ -850,7 +850,7 @@ func (w *EndpointWorker) fetchAllPagesWithSink(ctx context.Context, taskID int64
 			// 原文必须留在 task_logs 里，否则「少采了什么」永久无从追溯。
 			if len(unkeyed) > 0 {
 				detail := ""
-				if sample, merr := json.Marshal(unkeyed); merr == nil {
+				if sample, merr := json.Marshal(summarizeUnkeyedRows(unkeyed)); merr == nil {
 					detail = string(sample)
 				} else {
 					detail = "marshal failed: " + merr.Error()
@@ -1045,6 +1045,31 @@ func filterFBAInventoryRows(table string, rows []map[string]any) ([]map[string]a
 		}
 	}
 	return filtered, dropped, unkeyed, nil
+}
+
+// unkeyedRowFields 是跳过留痕保留的字段：够认出是哪条 listing，也够证明它没有库存。
+var unkeyedRowFields = []string{
+	"sid", "asin", "sku", "msku", "fnsku", "fulfillment_channel_name",
+	"afn_fulfillable_quantity", "afn_reserved_quantity", "afn_unsellable_quantity",
+	"afn_inbound_shipped_quantity", "afn_inbound_working_quantity", "afn_inbound_receiving_quantity",
+	"afn_researching_quantity", "afn_erp_real_shipped_quantity",
+}
+
+// summarizeUnkeyedRows 投影跳过行，因为 error_raw 是 TEXT（65535 字节硬上限）而
+// 一行有 52 个字段：整行留痕会在跳过最多的那一页先被截断，等于证据在最需要它的
+// 地方失效。投影后一页上百行也留得下。
+func summarizeUnkeyedRows(rows []map[string]any) []map[string]any {
+	out := make([]map[string]any, 0, len(rows))
+	for _, row := range rows {
+		item := make(map[string]any, len(unkeyedRowFields))
+		for _, field := range unkeyedRowFields {
+			if value, ok := row[field]; ok {
+				item[field] = value
+			}
+		}
+		out = append(out, item)
+	}
+	return out
 }
 
 // probeSample 把探测模式抓到的结果拼成一段可读字符串存进 task_logs.error_raw，
