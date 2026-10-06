@@ -837,7 +837,7 @@ func (w *EndpointWorker) fetchAllPagesWithSink(ctx context.Context, taskID int64
 			return totalRecords, pages, false
 		}
 		if w.Endpoint.Table == "ls_fba_inventory" {
-			filtered, dropped, ferr := filterFBAInventoryRows(w.Endpoint.Table, list)
+			filtered, dropped, unkeyed, ferr := filterFBAInventoryRows(w.Endpoint.Table, list)
 			if ferr != nil {
 				_ = db.InsertTaskLog(w.DB, taskID, pages+1, httpStatus, apiCode, len(list), durationMs, "filter: "+ferr.Error())
 				log.Printf("[worker:%s] FBA 库存行过滤失败 offset=%d: %v", w.Endpoint.Name, offset, ferr)
@@ -845,6 +845,19 @@ func (w *EndpointWorker) fetchAllPagesWithSink(ctx context.Context, taskID int64
 			}
 			if dropped > 0 {
 				log.Printf("[worker:%s] FBA 库存丢弃 %d 条 FBM 行 offset=%d", w.Endpoint.Name, dropped, offset)
+			}
+			// 无 FNSKU 的 FBA 行在这张表里没有合法主键，跳过而不是拒掉整页；
+			// 原文必须留在 task_logs 里，否则「少采了什么」永久无从追溯。
+			if len(unkeyed) > 0 {
+				detail := ""
+				if sample, merr := json.Marshal(unkeyed); merr == nil {
+					detail = string(sample)
+				} else {
+					detail = "marshal failed: " + merr.Error()
+				}
+				_ = db.InsertTaskLog(w.DB, taskID, pages+1, httpStatus, apiCode, len(filtered), durationMs,
+					truncateUTF8(fmt.Sprintf("skipped %d FBA rows without FNSKU: %s", len(unkeyed), detail), probeSampleMaxBytes))
+				log.Printf("[worker:%s] FBA 库存跳过 %d 条无 FNSKU 行 offset=%d", w.Endpoint.Name, len(unkeyed), offset)
 			}
 			list = filtered
 		}
@@ -998,32 +1011,40 @@ func shouldContinuePaging(r *api.FetchResult, pageLen, fetched int) bool {
 }
 
 // filterFBAInventoryRows enforces the ls_fba_inventory source contract.
-// The upstream endpoint currently mixes FBA and FBM rows; this table only owns
-// FBA facts, so FBM rows are excluded before the NOT NULL FNSKU guard. Unknown
-// or missing channel values fail closed instead of being silently classified.
-func filterFBAInventoryRows(table string, rows []map[string]any) ([]map[string]any, int, error) {
+// The upstream endpoint mixes three row shapes but this table's key is
+// (account_id, sid, fnsku), so only FBA rows that carry a FNSKU have a legal
+// identity here. FBM rows and FBA rows without a FNSKU are both excluded; the
+// latter are returned as unkeyed so the caller can keep their raw content.
+// Unknown or missing channel values fail closed instead of being silently
+// classified.
+func filterFBAInventoryRows(table string, rows []map[string]any) ([]map[string]any, int, []map[string]any, error) {
 	if table != "ls_fba_inventory" {
-		return rows, 0, nil
+		return rows, 0, nil, nil
 	}
 
 	filtered := make([]map[string]any, 0, len(rows))
+	unkeyed := make([]map[string]any, 0)
 	dropped := 0
 	for index, row := range rows {
 		value, ok := row["fulfillment_channel_name"]
 		channel := strings.TrimSpace(fmt.Sprint(value))
 		if !ok || value == nil || channel == "" || channel == "<nil>" {
-			return nil, dropped, fmt.Errorf("ls_fba_inventory row %d has unknown fulfillment channel", index+1)
+			return nil, dropped, nil, fmt.Errorf("ls_fba_inventory row %d has unknown fulfillment channel", index+1)
 		}
 		switch strings.ToUpper(channel) {
 		case "FBA":
+			if fnsku, ok := row["fnsku"]; !ok || fnsku == nil || strings.TrimSpace(fmt.Sprint(fnsku)) == "" {
+				unkeyed = append(unkeyed, row)
+				continue
+			}
 			filtered = append(filtered, row)
 		case "FBM":
 			dropped++
 		default:
-			return nil, dropped, fmt.Errorf("ls_fba_inventory row %d has unsupported fulfillment channel %q", index+1, channel)
+			return nil, dropped, nil, fmt.Errorf("ls_fba_inventory row %d has unsupported fulfillment channel %q", index+1, channel)
 		}
 	}
-	return filtered, dropped, nil
+	return filtered, dropped, unkeyed, nil
 }
 
 // probeSample 把探测模式抓到的结果拼成一段可读字符串存进 task_logs.error_raw，
