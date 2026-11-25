@@ -33,7 +33,7 @@ jobs:
         run: |
           deployed=""
           for attempt in $(seq 1 120); do
-            response="$(curl -fsS --max-time 10 https://sync.usfan.net/api/settings || true)"
+            response="$(curl -fsS --max-time 10 -H "X-Sync-Secret: ${{ secrets.SYNC_SECRET }}" https://sync.usfan.net/api/settings || true)"
             deployed="$(jq -r '.data.deploy_commit // empty' <<<"$response" 2>/dev/null || true)"
             db_connected="$(jq -r '.data.db_connected // false' <<<"$response" 2>/dev/null || true)"
             if [ "$deployed" = "$GITHUB_SHA" ] && [ "$db_connected" = "true" ]; then
