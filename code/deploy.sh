@@ -93,25 +93,31 @@ log "6/7 校验生产配置（不连接数据库、不启动服务）"
 mv -f "${NEXT_APP}" "${APP}"
 trap - EXIT
 
-log "7/7 重启服务（supervisor）"
-# 必须带 -c：宝塔的 supervisord 是用 -c /etc/supervisor/supervisord.conf 起的，
-# 裸 supervisorctl 读默认配置，可能连到另一个（或空的）实例，报「no such process」
-# 而让人误以为进程名写错了。实测踩过这个坑。
-command -v supervisorctl >/dev/null 2>&1 || fail "找不到 supervisorctl，请手动重启 ${PROG}"
-SVC=(supervisorctl -c "${SUPERVISOR_CONF}")
-if ! "${SVC[@]}" restart "${PROG}"; then
-  # program 定义在宝塔插件目录（/www/server/panel/plugin/supervisor/profile/*.ini），
-  # 新增或改过之后 supervisord 内存里可能还没有它 → reread 读盘、update 加载，再重试。
-  log "restart 失败，reread/update 重新加载 program 定义后重试"
-  "${SVC[@]}" reread || true
-  "${SVC[@]}" update || true
-  "${SVC[@]}" restart "${PROG}" || "${SVC[@]}" start "${PROG}" \
-    || fail "supervisorctl 起不来 ${PROG}：检查 ${SUPERVISOR_CONF} 的 [include] 是否覆盖 /www/server/panel/plugin/supervisor/profile/*.ini"
+log "7/7 重启服务（systemd 优先，supervisor 兜底）"
+if systemctl list-unit-files 2>/dev/null | grep -q '^lingxing-sync.service'; then
+  # 2026-11 迁移到新机后该服务由 systemd 托管（lingxing-sync.service），新机没有宝塔 supervisor 插件，
+  # 原 supervisorctl 分支不可用，故优先走 systemctl。
+  systemctl restart lingxing-sync.service || fail "systemctl restart lingxing-sync.service 失败"
+  status_output="$(systemctl is-active lingxing-sync.service 2>&1)" || true
+  printf '%s\n' "${status_output}"
+  [ "${status_output}" = "active" ] || fail "lingxing-sync.service 未进入 active（${status_output}），拒绝通过部署"
+else
+  # 旧机（宝塔 supervisor 托管）沿用原逻辑，必须带 -c 避免连到别的 supervisord 实例。
+  command -v supervisorctl >/dev/null 2>&1 || fail "找不到 supervisorctl，请手动重启 ${PROG}"
+  SVC=(supervisorctl -c "${SUPERVISOR_CONF}")
+  if ! "${SVC[@]}" restart "${PROG}"; then
+    # program 定义在宝塔插件目录（/www/server/panel/plugin/supervisor/profile/*.ini），
+    # 新增或改过之后 supervisord 内存里可能还没有它 → reread 读盘、update 加载，再重试。
+    log "restart 失败，reread/update 重新加载 program 定义后重试"
+    "${SVC[@]}" reread || true
+    "${SVC[@]}" update || true
+    "${SVC[@]}" restart "${PROG}" || "${SVC[@]}" start "${PROG}" \
+      || fail "supervisorctl 起不来 ${PROG}：检查 ${SUPERVISOR_CONF} 的 [include] 是否覆盖 /www/server/panel/plugin/supervisor/profile/*.ini"
+  fi
+  status_output="$("${SVC[@]}" status "${PROG}" 2>&1)" || fail "Supervisor 查询失败：${status_output}"
+  printf '%s\n' "${status_output}"
+  printf '%s\n' "${status_output}" | grep -q 'RUNNING' || fail "Supervisor 未进入 RUNNING，拒绝通过部署"
 fi
-
-status_output="$("${SVC[@]}" status "${PROG}" 2>&1)" || fail "Supervisor 查询失败：${status_output}"
-printf '%s\n' "${status_output}"
-printf '%s\n' "${status_output}" | grep -q 'RUNNING' || fail "Supervisor 未进入 RUNNING，拒绝通过部署"
 
 log "健康检查（:${PORT}${HEALTH_PATH}）"
 # 探测点用 /api/settings：一个真实存在的 GET 路由。
